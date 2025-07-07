@@ -1,0 +1,30 @@
+# Sub-PRD 3: Conversational Analysis & Reporting Engine
+Owner: Developer 3 (The Analyst)
+Epic: The Analysis Co-pilot
+Goal: To empower users to analyze their data and generate insights using natural language, removing the need for complex coding.
+## 1. Feature Overview
+This is the core "talk to your data" module. Once data is ingested and cleaned, the user can enter an analysis workspace. Here, they can chat with an AI agent that has full context of their data and experiment plan, asking it to perform calculations, generate visualizations, and summarize findings.
+## 2. User Stories
+As a researcher, I want to select a dataset and open a chat interface to begin my analysis.
+As a researcher, I want to ask simple questions in plain English (e.g., "What is the average age of participants?") and get a direct, accurate answer.
+As a researcher, I want to request a visualization (e.g., "Create a bar chart showing the distribution of participants by country") and see the chart rendered directly in the application.
+As a researcher, I want the agent to be able to perform more complex tasks, like running a statistical test (e.g., "Run a t-test between group A and group B on the 'score' variable").
+As a researcher, I want to click a "Generate Report" button that compiles my conversation, the generated charts, and a summary of findings into a single, downloadable document (e.g., Markdown or PDF).
+## 3. Functional Requirements
+An analysis workspace UI that includes a chat window and a display area for outputs like tables and charts.
+The chat interface must support streaming responses from the agent.
+Integration with a charting library (e.g., Recharts) to dynamically render visualizations based on agent output.
+A "Download Report" button that triggers a backend process to compile the report.
+The agent must have access to the ExperimentPlan.json and the cleaned data for full context.
+## 4. Technical Considerations
+LangGraph Agent: This will be the most complex agent. It needs to be designed with a "router" that can delegate tasks to different tools:
+Code Interpreter Tool: A tool that can write and execute Python/Pandas code in a sandboxed environment to perform data analysis. This is the core of the analysis engine.
+Visualization Tool: A tool that takes a user's request and data, and returns the specification for a chart in a format the frontend can understand (e.g., JSON for Recharts).
+Web Search Tool: (Optional stretch goal) A tool that can query an external API like Google Scholar to find related articles.
+Frontend: The UI must be able to handle various types of messages from the agent: text, tables, and chart specifications.
+Prompt Engineering: Prompts must be carefully designed to translate natural language questions into executable data analysis code and to generate insightful summaries.
+## 5. Acceptance Criteria
+A user can ask for a simple statistic (e.g., mean, median) and get the correct answer.
+A user can request a bar chart and a scatter plot, and both are rendered correctly in the UI.
+The "Generate Report" function produces a coherent Markdown document containing at least one text summary and one visualization from the chat session.
+The agent correctly uses the context from the ExperimentPlan.json in its responses (e.g., "I see you are running an A/B test...").
