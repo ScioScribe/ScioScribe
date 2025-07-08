@@ -24,11 +24,17 @@ from agents.dataclean.models import (
     FileMetadata
 )
 from agents.dataclean.file_processor import FileProcessingAgent
+from agents.dataclean.quality_agent import DataQualityAgent
+from config import get_openai_client, validate_openai_config
 
 router = APIRouter(prefix="/api/dataclean", tags=["data-cleaning"])
 
 # Initialize the file processing agent
 file_processor = FileProcessingAgent()
+
+# Initialize the AI-powered data quality agent
+openai_client = get_openai_client()
+quality_agent = DataQualityAgent(openai_client) if openai_client else None
 
 # In-memory storage for demo purposes (replace with Firestore later)
 data_artifacts: Dict[str, DataArtifact] = {}
@@ -216,7 +222,7 @@ async def finalize_data(artifact_id: str):
 
 async def process_file_background(artifact_id: str, file_path: str):
     """
-    Background task for processing uploaded files.
+    Background task for processing uploaded files with AI analysis.
     
     Args:
         artifact_id: ID of the data artifact
@@ -226,39 +232,66 @@ async def process_file_background(artifact_id: str, file_path: str):
         # Get the artifact
         artifact = data_artifacts[artifact_id]
         
-        # Process the file
+        # Step 1: Process the file
         result = await file_processor.process_file(file_path, artifact.original_file.mime_type)
         
-        if result.success:
-            # Update artifact with processing results
+        if result.success and result.data_preview:
+            print(f"File processing completed for artifact {artifact_id}")
+            
+            # Step 2: AI-powered data quality analysis (if available)
+            if quality_agent and openai_client:
+                try:
+                    # Convert data preview back to DataFrame for AI analysis
+                    sample_data = result.data_preview['sample_rows']
+                    if sample_data:
+                        # Create a small DataFrame from sample data for analysis
+                        import pandas as pd
+                        df_sample = pd.DataFrame(sample_data)
+                        
+                        print(f"Starting AI quality analysis for artifact {artifact_id}")
+                        
+                        # Analyze data quality issues
+                        quality_issues = await quality_agent.analyze_data(df_sample)
+                        print(f"Found {len(quality_issues)} quality issues")
+                        
+                        # Generate AI suggestions
+                        suggestions = await quality_agent.generate_suggestions(quality_issues, df_sample)
+                        print(f"Generated {len(suggestions)} AI suggestions")
+                        
+                        # Update artifact with AI-generated suggestions
+                        artifact.suggestions = suggestions
+                        
+                        # Calculate quality score based on issues found
+                        total_rows = df_sample.shape[0]
+                        total_issues = sum(issue.affected_rows for issue in quality_issues)
+                        quality_score = max(0.0, 1.0 - (total_issues / max(total_rows, 1)))
+                        artifact.quality_score = round(quality_score, 2)
+                        
+                        print(f"Quality score: {artifact.quality_score}")
+                        
+                except Exception as ai_error:
+                    print(f"AI analysis failed for artifact {artifact_id}: {str(ai_error)}")
+                    # Continue without AI suggestions - still mark as pending review
+                    
+            else:
+                print("OpenAI not configured - skipping AI analysis")
+                
+            # Update artifact status
             artifact.status = ProcessingStatus.PENDING_REVIEW
             artifact.updated_at = datetime.now()
             
-            # For now, add a simple mock suggestion
-            # (Replace with actual AI analysis later)
-            mock_suggestion = {
-                "suggestion_id": str(uuid.uuid4()),
-                "type": "convert_datatype",
-                "column": "example_column",
-                "description": "Convert text column to numeric",
-                "confidence": 0.85,
-                "risk_level": "low",
-                "transformation": {"action": "convert", "target_type": "float"},
-                "explanation": "This column appears to contain numeric values stored as text"
-            }
-            
-            # Note: This is a simplified mock - actual suggestions would come from AI analysis
             print(f"Processing completed for artifact {artifact_id}")
-            print(f"Data preview: {result.data_preview}")
             
         else:
             # Handle processing error
             artifact.status = ProcessingStatus.ERROR
-            artifact.error_message = result.error_message
+            artifact.error_message = result.error_message or "File processing failed"
             artifact.updated_at = datetime.now()
+            print(f"File processing failed for artifact {artifact_id}: {artifact.error_message}")
             
     except Exception as e:
         # Handle unexpected errors
+        print(f"Unexpected error processing artifact {artifact_id}: {str(e)}")
         artifact = data_artifacts[artifact_id]
         artifact.status = ProcessingStatus.ERROR
         artifact.error_message = f"Processing failed: {str(e)}"
@@ -267,4 +300,5 @@ async def process_file_background(artifact_id: str, file_path: str):
     finally:
         # Clean up temporary file
         if os.path.exists(file_path):
-            os.remove(file_path) 
+            os.remove(file_path)
+            print(f"Cleaned up temporary file: {file_path}") 
