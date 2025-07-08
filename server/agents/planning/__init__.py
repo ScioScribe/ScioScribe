@@ -63,7 +63,16 @@ from .tools import (
     SearchResponse,
     search_for_research,
     search_for_protocol,
-    search_for_safety
+    search_for_safety,
+    StatisticalCalculator,
+    StatisticalTestType,
+    EffectSize,
+    PowerAnalysisResult,
+    SampleSizeResult,
+    calculate_sample_size_ttest,
+    calculate_power_ttest,
+    recommend_tests_for_design,
+    validate_design_power
 )
 
 __all__ = [
@@ -134,5 +143,16 @@ __all__ = [
     "SearchResponse",
     "search_for_research",
     "search_for_protocol",
-    "search_for_safety"
+    "search_for_safety",
+    
+    # Statistical tools
+    "StatisticalCalculator",
+    "StatisticalTestType",
+    "EffectSize",
+    "PowerAnalysisResult",
+    "SampleSizeResult",
+    "calculate_sample_size_ttest",
+    "calculate_power_ttest",
+    "recommend_tests_for_design",
+    "validate_design_power"
 ] 
