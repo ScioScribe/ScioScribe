@@ -16,14 +16,42 @@ from .objective_prompts import (
     validate_objective_completeness
 )
 
+from .variable_prompts import (
+    VARIABLE_SYSTEM_PROMPT,
+    INDEPENDENT_VARIABLE_QUESTIONS,
+    DEPENDENT_VARIABLE_QUESTIONS,
+    CONTROL_VARIABLE_QUESTIONS,
+    get_variable_domain_guidance,
+    format_variable_response,
+    validate_variable_set
+)
+
+from .design_prompts import (
+    DESIGN_SYSTEM_PROMPT,
+    EXPERIMENTAL_GROUP_QUESTIONS,
+    CONTROL_GROUP_QUESTIONS,
+    SAMPLE_SIZE_QUESTIONS,
+    get_design_domain_guidance,
+    format_design_response,
+    validate_experimental_design
+)
+
+from .methodology_prompts import (
+    METHODOLOGY_SYSTEM_PROMPT,
+    METHODOLOGY_DEVELOPMENT_QUESTIONS,
+    PROTOCOL_GENERATION_QUESTIONS,
+    MATERIALS_EQUIPMENT_QUESTIONS,
+    get_methodology_domain_guidance,
+    format_methodology_response,
+    validate_methodology_completeness
+)
+
 # Additional prompts will be added as implemented
-# from .variable_prompts import VARIABLE_SYSTEM_PROMPT, VARIABLE_SUGGESTION_PROMPT
-# from .design_prompts import DESIGN_SYSTEM_PROMPT, DESIGN_OPTIMIZATION_PROMPT
-# from .methodology_prompts import METHODOLOGY_SYSTEM_PROMPT, METHODOLOGY_GENERATION_PROMPT
 # from .data_prompts import DATA_SYSTEM_PROMPT, DATA_ANALYSIS_PROMPT
 # from .review_prompts import REVIEW_SYSTEM_PROMPT, REVIEW_VALIDATION_PROMPT
 
 __all__ = [
+    # Objective prompts
     "OBJECTIVE_SYSTEM_PROMPT",
     "INITIAL_CLARIFICATION_QUESTIONS",
     "SMART_OBJECTIVE_QUESTIONS",
@@ -31,5 +59,33 @@ __all__ = [
     "get_domain_guidance",
     "format_objective_response",
     "validate_objective_completeness",
+    
+    # Variable prompts
+    "VARIABLE_SYSTEM_PROMPT",
+    "INDEPENDENT_VARIABLE_QUESTIONS",
+    "DEPENDENT_VARIABLE_QUESTIONS",
+    "CONTROL_VARIABLE_QUESTIONS",
+    "get_variable_domain_guidance",
+    "format_variable_response",
+    "validate_variable_set",
+    
+    # Design prompts
+    "DESIGN_SYSTEM_PROMPT",
+    "EXPERIMENTAL_GROUP_QUESTIONS",
+    "CONTROL_GROUP_QUESTIONS",
+    "SAMPLE_SIZE_QUESTIONS",
+    "get_design_domain_guidance",
+    "format_design_response",
+    "validate_experimental_design",
+    
+    # Methodology prompts
+    "METHODOLOGY_SYSTEM_PROMPT",
+    "METHODOLOGY_DEVELOPMENT_QUESTIONS",
+    "PROTOCOL_GENERATION_QUESTIONS",
+    "MATERIALS_EQUIPMENT_QUESTIONS",
+    "get_methodology_domain_guidance",
+    "format_methodology_response",
+    "validate_methodology_completeness",
+    
     # Additional exports will be added as implemented
 ] 

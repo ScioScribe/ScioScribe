@@ -10,16 +10,19 @@ from .base_agent import BaseAgent
 
 # Agent imports
 from .objective_agent import ObjectiveAgent
+from .variable_agent import VariableAgent
+from .design_agent import DesignAgent
+from .methodology_agent import MethodologyAgent
 
 # Additional agents will be added as implemented
-# from .variable_agent import VariableAgent
-# from .design_agent import DesignAgent
-# from .methodology_agent import MethodologyAgent
 # from .data_agent import DataAgent
 # from .review_agent import ReviewAgent
 
 __all__ = [
     "BaseAgent",
     "ObjectiveAgent",
+    "VariableAgent",
+    "DesignAgent",
+    "MethodologyAgent",
     # Additional agents will be added as implemented
 ] 
