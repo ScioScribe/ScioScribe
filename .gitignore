@@ -1,7 +1,417 @@
-server/venv/
-tasks
-.cursor
+# ========================================
+# ScioScribe AI Research Co-pilot
+# Comprehensive .gitignore
+# ========================================
+
+# ========================================
+# Frontend (React + Vite + TypeScript)
+# ========================================
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Build outputs
+dist/
+dist-ssr/
+build/
+*.local
+
+# Environment variables
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# ========================================
+# Backend (Python + FastAPI)
+# ========================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+server/venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+.ENV/
+.env.bak/
+.venv.bak/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# pdm
+.pdm.toml
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# ========================================
+# AI/ML & Data Processing
+# ========================================
+# Model files
+*.model
+*.pkl
+*.pickle
+*.joblib
+*.h5
+*.hdf5
+*.pb
+*.pth
+*.pt
+*.onnx
+*.tflite
+*.bin
+
+# Data files
+*.csv
+*.json
+*.jsonl
+*.parquet
+*.feather
+*.xlsx
+*.xls
+*.tsv
+*.txt
+*.log
+datasets/
+data/
+raw_data/
+processed_data/
+temp_data/
+
+# Vector databases
+*.db
+*.sqlite
+*.sqlite3
+chromadb/
+faiss_index/
+pinecone_index/
+
+# Embeddings and model caches
+embeddings/
+.cache/
+transformers_cache/
+sentence_transformers_cache/
+huggingface_cache/
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Weights & Biases
+wandb/
+
+# ========================================
+# Firebase & Google Cloud
+# ========================================
+# Firebase config
+firebase-debug.log
+firebase-debug.*.log
+.firebase/
+.firebaserc.backup
+
+# Google Cloud
+gcp-key.json
+service-account.json
+*.serviceaccount.json
+
+# Firebase emulator
+firebase-emulator-data/
+firestore-debug.log
+ui-debug.log
+pubsub-debug.log
+
+# ========================================
+# Environment & Secrets
+# ========================================
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+
+# API keys and secrets
+secrets.json
+config.json
+credentials.json
+*.pem
+*.key
+*.crt
+*.p12
+
+# OpenAI API keys
+openai_api_key.txt
+.openai_key
+
+# ========================================
+# IDEs & Editors
+# ========================================
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# Cursor
+.cursor/
+
+# PyCharm
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*~
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ========================================
+# Operating System
+# ========================================
+# macOS
 .DS_Store
-__pycache__
-.pytest_cache
+.AppleDouble
+.LSOverride
+Icon
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ========================================
+# Logs & Temporary Files
+# ========================================
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Temporary folders
+tmp/
+temp/
+.tmp/
+.temp/
+
+# ========================================
+# Database
+# ========================================
+# Local database files
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# ========================================
+# Docker
+# ========================================
+# Docker
+Dockerfile.local
+docker-compose.override.yml
+.dockerignore
+
+# ========================================
+# Miscellaneous
+# ========================================
+# Thumbnails
+._*
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Local configuration files
+local_config.json
+local_settings.py
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+
+# Archive files
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Project-specific
+tasks
+
+# Don't ignore important config files
+!.gitkeep
+!.cursorrules
+!.github/
+!firebase.json
+!.firebaserc
+!package.json
+!requirements.txt
+!Dockerfile
+!docker-compose.yml

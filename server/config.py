@@ -1,8 +1,8 @@
 """
-Configuration management for ScioScribe Planning Agent.
+Configuration settings for ScioScribe backend.
 
-This module handles environment variables, API keys, and other configuration
-settings for the experiment planning agent system.
+This module handles all configuration settings including API keys,
+database connections, and other environment variables for the AI research co-pilot.
 """
 
 import os
@@ -10,33 +10,30 @@ import logging
 from typing import Optional, Dict, Any
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
+from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    """Configuration settings for the planning agent."""
+    """
+    Application settings with environment variable support.
+    """
     
-    # API Keys
+    # OpenAI API Configuration
     openai_api_key: Optional[str] = Field(
         default=None,
         description="OpenAI API key for LLM interactions"
     )
-    tavily_api_key: Optional[str] = Field(
-        default=None,
-        description="Tavily API key for web search functionality"
-    )
-    
-    # OpenAI Configuration
     openai_model: str = Field(
         default="gpt-4o-mini",
         description="OpenAI model to use for agent interactions"
     )
-    openai_temperature: float = Field(
-        default=0.7,
-        description="Temperature setting for OpenAI responses (0.0-2.0)"
-    )
     openai_max_tokens: int = Field(
         default=2000,
         description="Maximum tokens for OpenAI responses"
+    )
+    openai_temperature: float = Field(
+        default=0.7,
+        description="Temperature setting for OpenAI responses (0.0-2.0)"
     )
     openai_timeout: int = Field(
         default=60,
@@ -45,6 +42,58 @@ class Settings(BaseSettings):
     openai_max_retries: int = Field(
         default=3,
         description="Maximum retries for OpenAI API calls"
+    )
+    
+    # Tavily API Configuration
+    tavily_api_key: Optional[str] = Field(
+        default=None,
+        description="Tavily API key for web search functionality"
+    )
+    
+    # FastAPI Configuration
+    app_name: str = Field(
+        default="ScioScribe API",
+        description="Application name"
+    )
+    app_version: str = Field(
+        default="1.0.0",
+        description="Application version"
+    )
+    debug: bool = Field(
+        default=False,
+        description="Enable debug mode"
+    )
+    
+    # API Configuration
+    api_host: str = Field(
+        default="localhost",
+        description="API server host"
+    )
+    api_port: int = Field(
+        default=8000,
+        description="API server port"
+    )
+    
+    # CORS Configuration
+    cors_origins: str = Field(
+        default="*",
+        description="CORS origins (configure for production)"
+    )
+    
+    # File Upload Configuration
+    max_file_size: int = Field(
+        default=50 * 1024 * 1024,  # 50MB
+        description="Maximum file size for uploads"
+    )
+    allowed_file_types: str = Field(
+        default=".csv,.xlsx,.xls,.png,.jpg,.jpeg,.pdf",
+        description="Allowed file types for upload"
+    )
+    
+    # Temporary Storage
+    temp_dir: str = Field(
+        default="/tmp",
+        description="Temporary directory for file processing"
     )
     
     # LangGraph Configuration
@@ -67,24 +116,10 @@ class Settings(BaseSettings):
         description="Enable Firestore for data persistence"
     )
     
-    # Development Settings
-    debug: bool = Field(
-        default=False,
-        description="Enable debug mode"
-    )
+    # Logging Configuration
     log_level: str = Field(
         default="INFO",
         description="Logging level (DEBUG, INFO, WARNING, ERROR)"
-    )
-    
-    # API Configuration
-    api_host: str = Field(
-        default="localhost",
-        description="API server host"
-    )
-    api_port: int = Field(
-        default=8000,
-        description="API server port"
     )
     
     # LangSmith Configuration (optional)
@@ -93,7 +128,7 @@ class Settings(BaseSettings):
         description="LangSmith API key for tracing"
     )
     langsmith_project: Optional[str] = Field(
-        default="scio-scribe-planning",
+        default="scio-scribe",
         description="LangSmith project name"
     )
     
@@ -126,13 +161,10 @@ class Settings(BaseSettings):
     }
 
 
-# Global settings instance
-settings = Settings()
-
-
+@lru_cache()
 def get_settings() -> Settings:
-    """Get the global settings instance."""
-    return settings
+    """Get cached settings instance."""
+    return Settings()
 
 
 def validate_required_settings() -> list[str]:
@@ -143,6 +175,7 @@ def validate_required_settings() -> list[str]:
         List of missing required settings
     """
     missing = []
+    settings = get_settings()
     
     # Check for OpenAI API key
     if not settings.openai_api_key:
@@ -153,6 +186,7 @@ def validate_required_settings() -> list[str]:
 
 def setup_environment_variables() -> None:
     """Set up environment variables for LangChain/LangGraph."""
+    settings = get_settings()
     
     # Set OpenAI API key if available
     if settings.openai_api_key:
@@ -182,6 +216,7 @@ def get_openai_config() -> Dict[str, Any]:
     Returns:
         Dictionary with OpenAI configuration parameters
     """
+    settings = get_settings()
     return {
         "model": settings.openai_model,
         "temperature": settings.openai_temperature,
@@ -192,15 +227,47 @@ def get_openai_config() -> Dict[str, Any]:
     }
 
 
+def get_openai_client():
+    """Get OpenAI client if configured."""
+    settings = get_settings()
+    if not settings.openai_api_key:
+        print("OpenAI API key not configured.")
+        return None
+    
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        return client
+    except Exception as e:
+        print(f"Failed to initialize OpenAI client: {e}")
+        return None
+
+
+async def validate_openai_config() -> bool:
+    """Validate OpenAI configuration."""
+    client = get_openai_client()
+    if not client:
+        return False
+    
+    try:
+        # Test with a simple API call
+        response = await client.models.list()
+        return True
+    except Exception as e:
+        print(f"OpenAI configuration validation failed: {e}")
+        return False
+
+
 def initialize_logging() -> None:
     """Initialize logging configuration based on settings."""
+    settings = get_settings()
     
     logging.basicConfig(
         level=getattr(logging, settings.log_level),
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler('planning_agent.log') if not settings.debug else logging.NullHandler()
+            logging.FileHandler('scio_scribe.log') if not settings.debug else logging.NullHandler()
         ]
     )
     
@@ -226,6 +293,8 @@ def create_llm_instance():
     Raises:
         ValueError: If OpenAI API key is not configured
     """
+    settings = get_settings()
+    
     try:
         from langchain_openai import ChatOpenAI
     except ImportError:
@@ -257,7 +326,10 @@ def get_system_info() -> Dict[str, Any]:
     Returns:
         Dictionary with system configuration details
     """
+    settings = get_settings()
     return {
+        "app_name": settings.app_name,
+        "app_version": settings.app_version,
         "openai_model": settings.openai_model,
         "openai_temperature": settings.openai_temperature,
         "openai_max_tokens": settings.openai_max_tokens,
@@ -268,7 +340,9 @@ def get_system_info() -> Dict[str, Any]:
         "use_firestore": settings.use_firestore,
         "max_execution_time": settings.max_execution_time,
         "max_iterations": settings.max_iterations,
+        "max_file_size": settings.max_file_size,
+        "allowed_file_types": settings.allowed_file_types,
         "has_openai_key": bool(settings.openai_api_key),
         "has_tavily_key": bool(settings.tavily_api_key),
         "has_langsmith_key": bool(settings.langsmith_api_key)
-    } 
+    }
