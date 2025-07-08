@@ -39,12 +39,31 @@ from .debug import (
     save_debug_snapshot,
     get_global_debugger
 )
+from .llm_config import (
+    LLMManager,
+    LLMConfigError,
+    get_llm_manager,
+    create_agent_llm,
+    create_standard_prompt,
+    test_llm_connection,
+    get_llm_usage_stats
+)
 from .graph import (
     create_planning_graph,
     PlanningGraphExecutor,
     start_new_experiment_planning,
     execute_planning_conversation,
     get_planning_graph_info
+)
+from .tools import (
+    TavilySearchTool,
+    TavilySearchError,
+    SearchType,
+    SearchResult,
+    SearchResponse,
+    search_for_research,
+    search_for_protocol,
+    search_for_safety
 )
 
 __all__ = [
@@ -91,10 +110,29 @@ __all__ = [
     "save_debug_snapshot",
     "get_global_debugger",
     
+    # LLM Configuration
+    "LLMManager",
+    "LLMConfigError",
+    "get_llm_manager",
+    "create_agent_llm",
+    "create_standard_prompt",
+    "test_llm_connection",
+    "get_llm_usage_stats",
+    
     # Graph & Execution
     "create_planning_graph",
     "PlanningGraphExecutor",
     "start_new_experiment_planning",
     "execute_planning_conversation",
-    "get_planning_graph_info"
+    "get_planning_graph_info",
+    
+    # Tools
+    "TavilySearchTool",
+    "TavilySearchError",
+    "SearchType",
+    "SearchResult",
+    "SearchResponse",
+    "search_for_research",
+    "search_for_protocol",
+    "search_for_safety"
 ] 

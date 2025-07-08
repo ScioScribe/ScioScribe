@@ -5,8 +5,24 @@ This module contains specialized tools for web search, statistical calculations,
 and other utilities that agents use to enhance their capabilities.
 """
 
-# Tool imports will be added as tools are implemented
-# from .tavily_search import TavilySearchTool
-# from .statistics import StatisticalPowerTool
+from .tavily_search import (
+    TavilySearchTool,
+    TavilySearchError,
+    SearchType,
+    SearchResult,
+    SearchResponse,
+    search_for_research,
+    search_for_protocol,
+    search_for_safety
+)
 
-__all__ = [] 
+__all__ = [
+    "TavilySearchTool",
+    "TavilySearchError",
+    "SearchType", 
+    "SearchResult",
+    "SearchResponse",
+    "search_for_research",
+    "search_for_protocol",
+    "search_for_safety"
+] 
