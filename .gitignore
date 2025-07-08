@@ -3,3 +3,4 @@ tasks
 .cursor
 .env
 .DS_Store
+__pycache__

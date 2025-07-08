@@ -15,7 +15,7 @@ from ..state import ExperimentPlanState, PLANNING_STAGES
 from ..validation import StateValidationError, validate_experiment_plan_state
 from ..factory import update_state_timestamp, add_chat_message, add_error
 from ..debug import StateDebugger, performance_monitor, log_agent_interaction
-from ..serialization import serialize_state_to_dict, deserialize_state_from_dict
+from ..serialization import serialize_state_to_dict, deserialize_dict_to_state
 
 
 class BaseAgent(ABC):
