@@ -1,7 +1,7 @@
 # Sub-PRD 1: Experiment Planning & Design Agent
 
-**Owner:** Developer 1 (The Architect)  
-**Epic:** The Experiment Planner  
+**Owner:** Kanishk Jain  
+**Epic:** The Experiment Planner Agent 
 **Goal:** To create a conversational AI that guides a user from a vague idea to a structured, actionable research plan using a multi-agent architecture.
 
 ## 1. Feature Overview

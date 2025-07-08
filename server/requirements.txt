@@ -4,11 +4,11 @@ uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
 # AI Agent Framework
-langgraph==0.0.62
-langchain==0.1.0
-langchain-core==0.1.0
-langchain-openai==0.0.5
-langchain-google-genai==0.0.6
+langgraph>=0.2.48
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
+langchain-google-genai>=2.0.0
 
 # Data Processing & Analysis
 pandas==2.1.4
@@ -38,10 +38,10 @@ redis==5.0.1
 pillow==10.1.0
 pytesseract==0.3.10
 
-# Audio Processing (for transcription)
-pydub==0.25.1
-speech-recognition==3.10.0
-whisper==1.1.10
+# Audio Processing (for transcription) - DISABLED FOR NOW
+# pydub==0.25.1
+# speech-recognition==3.10.0
+# whisper==1.1.10
 
 # HTTP & API
 httpx==0.25.2
