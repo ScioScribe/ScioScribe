@@ -39,7 +39,13 @@ from .debug import (
     save_debug_snapshot,
     get_global_debugger
 )
-# from .graph import create_planning_graph  # TODO: Create graph module
+from .graph import (
+    create_planning_graph,
+    PlanningGraphExecutor,
+    start_new_experiment_planning,
+    execute_planning_conversation,
+    get_planning_graph_info
+)
 
 __all__ = [
     # Core state
@@ -85,6 +91,10 @@ __all__ = [
     "save_debug_snapshot",
     "get_global_debugger",
     
-    # Graph
-    # "create_planning_graph"  # TODO: Add when graph module is created
+    # Graph & Execution
+    "create_planning_graph",
+    "PlanningGraphExecutor",
+    "start_new_experiment_planning",
+    "execute_planning_conversation",
+    "get_planning_graph_info"
 ] 
