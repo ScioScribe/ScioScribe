@@ -6,42 +6,29 @@ import { useState, useRef, useEffect } from "react"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { generateChart } from "@/api/analysis"
 
 interface Message {
   id: string
   content: string
   sender: "user" | "ai"
   timestamp: Date
+  isHtml?: boolean
 }
 
-export function AiChat() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      content: "Hello! I'm your AI assistant. How can I help you today?",
-      sender: "ai",
-      timestamp: new Date(Date.now() - 300000),
-    },
-    {
-      id: "2",
-      content: "Can you help me analyze the dashboard metrics?",
-      sender: "user",
-      timestamp: new Date(Date.now() - 240000),
-    },
-    {
-      id: "3",
-      content:
-        "Of course! Your revenue is up 20.1% and user growth is strong at 180.1%. The monthly goal progress at 68% suggests you're on track for meeting your targets.",
-      sender: "ai",
-      timestamp: new Date(Date.now() - 180000),
-    },
-  ])
+interface AiChatProps {
+  plan?: string
+  csv?: string
+  editorText?: string
+  onPlanChange?: (text: string) => void
+}
+
+export function AiChat({ plan = "", csv = "", editorText = "", onPlanChange }: AiChatProps) {
+  const [messages, setMessages] = useState<Message[]>([])
 
   const [inputValue, setInputValue] = useState("")
   const [selectedMode, setSelectedMode] = useState("plan")
-  const [isTyping, setIsTyping] = useState(false)
-  const [typingContent, setTypingContent] = useState("")
-  const [showCursor, setShowCursor] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -53,19 +40,7 @@ export function AiChat() {
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages, typingContent])
-
-  // Cursor blinking effect
-  useEffect(() => {
-    if (isTyping) {
-      const interval = setInterval(() => {
-        setShowCursor((prev) => !prev)
-      }, 530)
-      return () => clearInterval(interval)
-    } else {
-      setShowCursor(false)
-    }
-  }, [isTyping])
+  }, [messages])
 
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return
@@ -79,57 +54,64 @@ export function AiChat() {
 
     setMessages((prev) => [...prev, userMessage])
     setInputValue("")
-    setIsTyping(true)
-    setTypingContent("")
+    setIsLoading(true)
 
-    // Simulate streaming response
-    const response = generateAiResponse(inputValue, selectedMode)
-    let currentIndex = 0
+    if (selectedMode === "analysis") {
+      // Call generateChart API for analysis mode
+      try {
+        const requestBody = {
+          prompt: inputValue,
+          plan: plan,
+          csv: csv,
+        }
+        
+        // Debug: Print request body
+        console.log("🔍 generateChart Request Body:", requestBody)
+        
+        const response = await generateChart(requestBody)
 
-    const typeResponse = () => {
-      if (currentIndex < response.length) {
-        setTypingContent(response.substring(0, currentIndex + 1))
-        currentIndex++
-        setTimeout(typeResponse, 20 + Math.random() * 30) // Variable typing speed
-      } else {
-        // Finished typing
+        // Add the HTML chart response
         const aiMessage: Message = {
           id: (Date.now() + 1).toString(),
-          content: response,
+          content: response.html,
+          sender: "ai",
+          timestamp: new Date(),
+          isHtml: true,
+        }
+        setMessages((prev) => [...prev, aiMessage])
+      } catch (error) {
+        // Enhanced error logging
+        console.error("🚨 Chart generation error:", error)
+        console.log("📍 Error details:", {
+          errorMessage: error instanceof Error ? error.message : 'Unknown error',
+          errorType: typeof error,
+          errorObject: error
+        })
+        
+        // Handle error
+        const errorMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          content: `Error generating chart: ${error instanceof Error ? error.message : 'Unknown error'}`,
           sender: "ai",
           timestamp: new Date(),
         }
-        setMessages((prev) => [...prev, aiMessage])
-        setIsTyping(false)
-        setTypingContent("")
+        setMessages((prev) => [...prev, errorMessage])
       }
+    } else {
+      // For plan and execute modes, show a message that functionality is not implemented yet
+      const aiMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        content: `${selectedMode} mode functionality is not implemented yet. Please use analysis mode for chart generation.`,
+        sender: "ai",
+        timestamp: new Date(),
+      }
+      setMessages((prev) => [...prev, aiMessage])
     }
-
-    setTimeout(typeResponse, 500) // Initial delay
+    
+    setIsLoading(false)
   }
 
-  const generateAiResponse = (userInput: string, mode: string): string => {
-    const responses = {
-      plan: [
-        "Let me help you create a plan for that. I'll break this down into actionable steps and timeline considerations.",
-        "I can help you structure a comprehensive plan. Let's start by identifying the key objectives and milestones.",
-        "Planning mode activated. I'll help you organize this into a clear, executable roadmap with priorities.",
-      ],
-      execute: [
-        "Ready to execute! I'll provide specific implementation steps and code examples to get this done.",
-        "Execution mode: Let me give you the exact commands, code, and actions needed to implement this.",
-        "Time to build! I'll walk you through the implementation with concrete steps and best practices.",
-      ],
-      analysis: [
-        "Let me analyze this data for you. I'll look for patterns, insights, and key metrics that matter.",
-        "Analysis mode: I'll examine the trends, correlations, and provide data-driven insights.",
-        "Analyzing your data now. I'll identify the key findings and actionable recommendations.",
-      ],
-    }
 
-    const modeResponses = responses[mode as keyof typeof responses] || responses.plan
-    return modeResponses[Math.floor(Math.random() * modeResponses.length)]
-  }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -161,17 +143,22 @@ export function AiChat() {
                 </div>
               )}
               {message.sender === "ai" && (
-                <div className="text-gray-700 dark:text-gray-300 mt-1 pl-4">{message.content}</div>
+                <div className="text-gray-700 dark:text-gray-300 mt-1 pl-4">
+                  {message.isHtml ? (
+                    <div dangerouslySetInnerHTML={{ __html: message.content }} />
+                  ) : (
+                    message.content
+                  )}
+                </div>
               )}
             </div>
           ))}
 
-          {/* Typing indicator */}
-          {isTyping && (
+          {/* Loading indicator */}
+          {isLoading && (
             <div className="mb-4">
               <div className="text-gray-700 dark:text-gray-300 mt-1 pl-4">
-                {typingContent}
-                {showCursor && <span className="bg-gray-700 dark:bg-gray-300 text-transparent select-none">█</span>}
+                Generating chart...
               </div>
             </div>
           )}
@@ -215,7 +202,7 @@ export function AiChat() {
               fontSize: "14px",
               lineHeight: "20px",
             }}
-            disabled={isTyping}
+            disabled={isLoading}
           />
         </div>
       </div>

@@ -5,32 +5,22 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
 import { FileText } from "lucide-react"
 
-export function TextEditor() {
-  const [content, setContent] = useState(`# My Notes
-
-Welcome to your text editor!
-
-## Features:
-- Line numbers
-- Syntax highlighting
-- Auto-save functionality
-
-Start typing to begin...
-
-function example() {
-  console.log("Hello World");
-  return true;
+interface TextEditorProps {
+  value: string
+  onChange: (content: string) => void
 }
 
-const data = {
-  name: "John",
-  age: 30,
-  active: true
-};`)
+export function TextEditor({ value, onChange }: TextEditorProps) {
+  const [content, setContent] = useState(value)
 
   const [lineCount, setLineCount] = useState(1)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const lineNumbersRef = useRef<HTMLDivElement>(null)
+
+  // Sync internal state with prop changes
+  useEffect(() => {
+    setContent(value)
+  }, [value])
 
   useEffect(() => {
     updateLineNumbers()
@@ -45,6 +35,9 @@ const data = {
     const newContent = e.target.value
     setContent(newContent)
     updateLineNumbers()
+    
+    // Notify parent component of content change
+    onChange(newContent)
   }
 
   const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
