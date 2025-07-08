@@ -1,94 +1,82 @@
-# ───────── Core Web Framework ─────────
-fastapi==0.111.0
-uvicorn[standard]==0.29.0          # includes httptools / uvloop extras
-python-multipart>=0.0.6,<0.0.8
-jinja2>=3.1.0,<4.0                 # Template engine for FastAPI
+# Core Web Framework
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-multipart==0.0.12
 
-# ───────── AI-Agent Framework ─────────
-langgraph>=0.2.20,<0.3             # Compatible with Python 3.11, works with langchain 0.2 or 0.3
-langchain-core>=0.3.0,<0.4         # LangChain v0.3 for Python 3.11
-langchain>=0.3.0,<0.4              # LangChain v0.3 main package
-langchain-community>=0.3.0,<0.4    # LangChain community integrations for v0.3
-langchain-openai>=0.2.0,<0.3       # OpenAI integration for LangChain v0.3
+# AI Agent Framework (Updated to latest compatible versions)
+langgraph==0.2.50
+langchain==0.3.9
+langchain-core==0.3.21
+langchain-openai==0.2.9
+langchain-google-genai==2.0.5
 
-# ───────── Data Processing & Analysis ─────────
-numpy==1.26.4                      # Python 3.11 compatible
-pandas==2.2.0                      # requires NumPy ≥1.26
-openpyxl==3.1.2
+# Data Processing & Analysis
+pandas==2.2.3
+numpy==1.26.4
+openpyxl>=3.1.0
 xlrd==2.0.1
-python-docx==1.1.0
+python-docx==1.1.2
 
-# ───────── Firebase & Google Cloud ─────────
-firebase-admin==6.4.0              # Python 3.11 compatible
-google-cloud-firestore==2.14.0     # Python 3.11 compatible
-google-cloud-storage==2.13.0       # Python 3.11 compatible
+# Vector Store & Embeddings (Updated)
+chromadb==0.5.23
+sentence-transformers==3.3.1
 
-# ───────── Vector Store & Embeddings ─────────
-chromadb==0.4.21                   # Python 3.11 compatible
-sentence-transformers==2.3.0       # Python 3.11 compatible
+# Data Validation & Serialization (Updated)
+pydantic==2.10.3
+pydantic-settings==2.6.1
 
-# ───────── Data Validation & Settings ─────────
-pydantic==2.7.4                    # Python 3.11 compatible, required by langchain-core>=0.3.60
-pydantic-settings==2.2.1
+# Background Tasks & Queue
+celery==5.4.0
+redis==5.2.0
 
-# ───────── Background Tasks & Queue ─────────
-celery==5.4.0                      # Python 3.11 compatible
-redis==5.1.0                       # Python 3.11 compatible
+# Image Processing (for OCR) - 
+pillow==11.0.0
+opencv-python==4.10.0.84
+easyocr==1.7.2
 
-# ───────── Image / OCR ─────────
-pillow==10.3.0                     # Python 3.11 compatible
-pytesseract==0.3.13
-
-# ───────── Web GUI Dependencies ─────────
-flask==3.0.0                       # Web framework for GUI applications
-
-# ───────── Audio / Speech ─────────
+# Audio Processing (for transcription) - CORRECTED
 pydub==0.25.1
-speechrecognition==3.11.0
-openai-whisper==20231117           # Use PyPI version instead of git
+SpeechRecognition==3.14.3
+openai-whisper==20231117
 
-# ───────── HTTP & Auth ─────────
-httpx==0.26.0
-aiofiles==23.2.1
+# HTTP & API (Removed duplicate)
+httpx==0.28.1
+aiofiles==24.1.0
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 
-# ───────── Environment & Config ─────────
+# Environment & Configuration
 python-dotenv==1.0.1
 python-decouple==3.8
 
-# ───────── Logging & Monitoring ─────────
-structlog==24.1.0
-sentry-sdk[fastapi]==1.40.3
+# Logging & Monitoring
+structlog==24.4.0
+sentry-sdk[fastapi]==2.19.0
 
-# ───────── Testing ─────────
-pytest==8.2.0
-pytest-asyncio==0.23.6
-pytest-cov==5.0.0
-faker==21.0.0
+# Testing & Development
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0
+faker==33.1.0
 
-# ───────── Data-Science Stack ─────────
-scipy==1.11.4                      # Python 3.11 compatible
-scikit-learn==1.4.2                # Python 3.11 compatible
-statsmodels==0.14.2
+# Data Science & Statistics
+scipy==1.14.1
+scikit-learn==1.6.0
+statsmodels==0.14.4
 seaborn==0.13.2
-matplotlib==3.9.0
+matplotlib==3.10.0
 
-# ───────── Visualization ─────────
-plotly>=5.19.0,<6.0                # Interactive visualization library
-kaleido>=0.2.1,<0.3                # Static image export for Plotly
-
-# ───────── Utilities ─────────
-python-magic==0.4.27               # MIME-type detection
+# Utilities (Removed uuid - it's built-in)
+python-magic==0.4.27
 chardet==5.2.0
-pytz==2024.1
+pytz==2024.2
 
-# ───────── Dev / Lint / Type-Check ─────────
-black==24.3.0
-flake8==7.0.0
-isort==5.13.0
-mypy==1.10.0
+# Development Tools
+black==24.10.0
+flake8==7.1.1
+isort==5.13.2
+mypy==1.13.0
 
-# ───────── Docs ─────────
-mkdocs==1.6.0
-mkdocs-material==9.6.3
+# Documentation
+mkdocs==1.6.1
+mkdocs-material==9.5.47
