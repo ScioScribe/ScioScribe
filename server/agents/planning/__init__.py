@@ -6,7 +6,25 @@ It provides a conversational interface for researchers to develop complete exper
 through a multi-agent architecture.
 """
 
-from .graph import create_planning_graph
-from .state import ExperimentPlanState
+from .state import ExperimentPlanState, PLANNING_STAGES
+from .validation import StateValidationError, validate_experiment_plan_state
+from .factory import create_default_state, create_new_experiment_state, generate_experiment_id
+# from .graph import create_planning_graph  # TODO: Create graph module
 
-__all__ = ["create_planning_graph", "ExperimentPlanState"] 
+__all__ = [
+    # Core state
+    "ExperimentPlanState",
+    "PLANNING_STAGES",
+    
+    # Validation
+    "StateValidationError", 
+    "validate_experiment_plan_state",
+    
+    # Factory functions
+    "create_default_state",
+    "create_new_experiment_state", 
+    "generate_experiment_id",
+    
+    # Graph
+    # "create_planning_graph"  # TODO: Add when graph module is created
+] 
