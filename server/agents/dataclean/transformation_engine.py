@@ -1,5 +1,5 @@
 """
-Transformation Engine for Phase 2.5 Interactive Data Transformations.
+Transformation Engine for Interactive Data Transformations.
 
 This module provides the core logic for applying custom transformations,
 generating previews, and managing transformation rules.
@@ -23,6 +23,7 @@ from .models import (
     ValueMapping,
     TransformationAction
 )
+from .firebase_store import get_data_store
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +36,8 @@ class TransformationEngine:
     
     def __init__(self):
         """Initialize the transformation engine."""
-        # In-memory storage for transformation rules (replace with database later)
-        self.transformation_rules: Dict[str, TransformationRule] = {}
-        
-        # Storage for data versions (replace with persistent storage later)
-        self.data_versions: Dict[str, List[pd.DataFrame]] = {}
+        # Use Firebase data store for persistent storage
+        self.data_store = get_data_store()
         
     async def create_transformation_preview(
         self,
@@ -125,7 +123,7 @@ class TransformationEngine:
             current_version = self._get_next_version_number(artifact_id)
             
             # Store the current state before transformation
-            self._store_version(artifact_id, df, current_version - 1)
+            await self.data_store.save_data_version(artifact_id, current_version - 1, df)
             
             # Apply transformation
             transformed_df = await self._apply_transformation_to_dataframe(
@@ -145,7 +143,7 @@ class TransformationEngine:
             )
             
             # Store the new version
-            self._store_version(artifact_id, transformed_df, current_version)
+            await self.data_store.save_data_version(artifact_id, current_version, transformed_df)
             
             logger.info(f"Transformation applied successfully. New version: {current_version}")
             return transformed_df, data_version
@@ -153,7 +151,7 @@ class TransformationEngine:
         except Exception as e:
             logger.error(f"Error applying transformation: {str(e)}")
             raise
-    
+
     async def _apply_transformation_to_dataframe(
         self,
         df: pd.DataFrame,
@@ -386,20 +384,16 @@ class TransformationEngine:
     
     def _get_next_version_number(self, artifact_id: str) -> int:
         """Get the next version number for an artifact."""
-        if artifact_id not in self.data_versions:
-            return 1
-        return len(self.data_versions[artifact_id]) + 1
-    
-    def _store_version(self, artifact_id: str, df: pd.DataFrame, version: int):
-        """Store a data version."""
-        if artifact_id not in self.data_versions:
-            self.data_versions[artifact_id] = []
+        # For now, we'll use a simple counter that increments
+        # In production, you'd track this in the database
+        if not hasattr(self, '_version_counters'):
+            self._version_counters = {}
         
-        # Ensure we have enough space for the version
-        while len(self.data_versions[artifact_id]) <= version:
-            self.data_versions[artifact_id].append(pd.DataFrame())
+        if artifact_id not in self._version_counters:
+            self._version_counters[artifact_id] = 0
         
-        self.data_versions[artifact_id][version] = df.copy()
+        self._version_counters[artifact_id] += 1
+        return self._version_counters[artifact_id]
     
     def _calculate_data_hash(self, df: pd.DataFrame) -> str:
         """Calculate a hash of the DataFrame for integrity checking."""
@@ -409,13 +403,7 @@ class TransformationEngine:
     
     async def get_data_version(self, artifact_id: str, version: int) -> Optional[pd.DataFrame]:
         """Retrieve a specific version of the data."""
-        if artifact_id not in self.data_versions:
-            return None
-        
-        if version < 0 or version >= len(self.data_versions[artifact_id]):
-            return None
-        
-        return self.data_versions[artifact_id][version].copy()
+        return await self.data_store.get_data_version(artifact_id, version)
     
     async def undo_transformation(
         self,
@@ -460,7 +448,7 @@ class TransformationEngine:
         )
         
         # Store the reverted version
-        self._store_version(artifact_id, reverted_df, new_version)
+        await self.data_store.save_data_version(artifact_id, new_version, reverted_df)
         
         return reverted_df, data_version
     
@@ -500,7 +488,7 @@ class TransformationEngine:
             usage_count=0
         )
         
-        self.transformation_rules[rule_id] = rule
+        await self.data_store.save_transformation_rule(rule)
         logger.info(f"Saved transformation rule: {rule_name}")
         
         return rule
@@ -524,34 +512,13 @@ class TransformationEngine:
         Returns:
             List of matching transformation rules
         """
-        matching_rules = []
+        # Use the Firebase store's search functionality
+        if search_term and user_id:
+            return await self.data_store.search_transformation_rules(search_term, user_id)
         
-        for rule in self.transformation_rules.values():
-            # Check column pattern match
-            if column_name and not self._matches_column_pattern(column_name, rule.column_pattern):
-                continue
-            
-            # Check action match
-            if action and rule.action != action:
-                continue
-            
-            # Check search term
-            if search_term and not (
-                search_term.lower() in rule.name.lower() or
-                search_term.lower() in rule.description.lower()
-            ):
-                continue
-            
-            # Check user filter
-            if user_id and rule.created_by != user_id:
-                continue
-            
-            matching_rules.append(rule)
-        
-        # Sort by usage count (most used first)
-        matching_rules.sort(key=lambda r: r.usage_count, reverse=True)
-        
-        return matching_rules
+        # For more complex searches, we'd implement additional logic here
+        # For now, return empty list for unsupported search patterns
+        return []
     
     def _matches_column_pattern(self, column_name: str, pattern: str) -> bool:
         """Check if a column name matches a pattern."""

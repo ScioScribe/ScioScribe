@@ -37,6 +37,8 @@ redis==5.2.0
 # Image Processing (for OCR)
 pillow==11.0.0
 pytesseract==0.3.13
+opencv-python==4.10.0.84
+easyocr==1.7.2
 
 # Audio Processing (for transcription) - CORRECTED
 pydub==0.25.1
