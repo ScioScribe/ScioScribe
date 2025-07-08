@@ -31,12 +31,15 @@ from agents.dataclean.models import (
     SearchRulesRequest,
     CustomTransformation,
     TransformationAction,
-    ValueMapping
+    ValueMapping,
+    ProcessFileCompleteRequest,
+    ProcessFileCompleteResponse
 )
 from agents.dataclean.file_processor import FileProcessingAgent
 from agents.dataclean.quality_agent import DataQualityAgent
 from agents.dataclean.transformation_engine import TransformationEngine
 from agents.dataclean.suggestion_converter import SuggestionConverter
+from agents.dataclean.complete_processor import CompleteFileProcessor
 from agents.dataclean.memory_store import get_data_store
 from config import get_openai_client, validate_openai_config
 
@@ -137,6 +140,89 @@ async def upload_file(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
+@router.post("/process-file-complete", response_model=ProcessFileCompleteResponse)
+async def process_file_complete(
+    file: UploadFile = File(...),
+    auto_apply_suggestions: bool = True,
+    confidence_threshold: float = 0.7,
+    max_suggestions_to_apply: int = 10,
+    experiment_id: str = "demo-experiment",
+    user_id: str = "demo-user",
+    include_processing_details: bool = True
+):
+    """
+    Complete end-to-end file processing: upload, analyze, clean, and return JSON data.
+    
+    This endpoint handles the entire data cleaning workflow in a single call:
+    1. Upload and process the file
+    2. Run AI quality analysis
+    3. Generate improvement suggestions
+    4. Automatically apply high-confidence suggestions
+    5. Return cleaned data in JSON format
+    
+    Args:
+        file: The file to process
+        auto_apply_suggestions: Whether to automatically apply AI suggestions
+        confidence_threshold: Minimum confidence to apply suggestions (0.0-1.0)
+        max_suggestions_to_apply: Maximum number of suggestions to apply
+        experiment_id: ID of the experiment
+        user_id: ID of the user
+        include_processing_details: Whether to include detailed processing info
+        
+    Returns:
+        ProcessFileCompleteResponse with cleaned data and processing summary
+    """
+    try:
+        # Validate file
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No filename provided")
+        
+        file_extension = Path(file.filename).suffix.lower()
+        if file_extension not in ['.csv', '.xlsx', '.xls']:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file format: {file_extension}. Supported: .csv, .xlsx, .xls"
+            )
+        
+        # Create temporary file
+        temp_dir = tempfile.gettempdir()
+        temp_file_path = os.path.join(temp_dir, f"complete_{uuid.uuid4()}_{file.filename}")
+        
+        # Save uploaded file
+        async with aiofiles.open(temp_file_path, 'wb') as f:
+            content = await file.read()
+            await f.write(content)
+        
+        # Create request object
+        request = ProcessFileCompleteRequest(
+            experiment_id=experiment_id,
+            auto_apply_suggestions=auto_apply_suggestions,
+            max_suggestions_to_apply=max_suggestions_to_apply,
+            confidence_threshold=confidence_threshold,
+            include_processing_details=include_processing_details,
+            user_id=user_id
+        )
+        
+        # Initialize complete processor
+        complete_processor = CompleteFileProcessor(openai_client)
+        
+        # Process file completely
+        response = await complete_processor.process_file_complete(
+            file_path=temp_file_path,
+            filename=file.filename,
+            file_size=len(content),
+            mime_type=file.content_type or "application/octet-stream",
+            request=request
+        )
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Complete processing failed: {str(e)}")
 
 
 @router.get("/data-artifact/{artifact_id}")
