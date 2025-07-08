@@ -45,3 +45,60 @@ AI Agent Framework: LangGraph
 Database/Storage: Firestore
 Vector Store: ChromaDB (for RAG capabilities)
 Deployment: Firebase 
+
+## 9. File Structure 
+
+ai-lab-assistant/                               # ← git repo root
+│
+├─ apps/                                        # ── FRONT END ───────────────
+│   └─ web/                                     #  Vite + React 18 + TS
+│       ├─ public/                              #    static - index.html, icons
+│       ├─ src/
+│       │   ├─ components/                      #    UI atoms / molecules
+│       │   ├─ pages/                           #    routed screens
+│       │   ├─ hooks/                           #    custom hooks
+│       │   ├─ lib/                             #    ⇢ tiny SDK for API calls
+│       │   └─ styles/                          #    Tailwind / global CSS
+│       ├─ vite.config.ts
+│       ├─ tsconfig.json
+│       └─ package.json
+│
+└─ server/                                      # ── BACK END (Python) ───────
+    ├─ agents/                                  #  PURE LangGraph graphs
+    │   ├─ planning/
+    │   │   ├─ __init__.py
+    │   │   ├─ graph.py                         #    create_planning_graph()
+    │   │   └─ tests/
+    │   ├─ dataclean/
+    │   │   ├─ __init__.py
+    │   │   └─ graph.py
+    │   └─ analysis/
+    │       ├─ __init__.py
+    │       └─ graph.py
+    │
+    ├─ api/                                     #  FASTAPI APPLICATION
+    │   ├─ __init__.py
+    │   └─ main.py                              #  FastAPI() + 3 routers
+    │
+    ├─ functions/                               #  FIREBASE ENTRY-POINTS
+    │   ├─ __init__.py                          #  shared middleware / utils
+    │   ├─ planning_fn.py                       #  ASGI→GCF adapter
+    │   ├─ dataclean_fn.py
+    │   └─ analysis_fn.py
+    │
+    ├─ requirements.txt                         #  fastapi, langgraph, vellox…
+    └─ runtimeconfig.json                       #  env vars for emulator / prod
+│
+├─ infra/                                       # IaC & local-dev helpers
+│   ├─ firebase.json                            #  Hosting + Functions targets
+│   ├─ .firebaserc                              #  project aliases (staging/prod)
+│   └─ docker-compose.yml                       #  optional Postgres/Redis for LG-Lite
+│
+├─ docs/                                        # architecture notes, ADRs, API md
+│
+├─ .github/
+│   └─ workflows/                               #  CI: lint, test, deploy preview
+│
+├─ npm-workspace.yaml                          #  JS workspaces (front-end only)
+├─ .gitignore
+└─ README.md                                    #  quick-start & dev commands
