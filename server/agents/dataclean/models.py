@@ -282,7 +282,7 @@ class ProcessFileCompleteResponse(BaseModel):
     """Response from complete file processing."""
     success: bool
     artifact_id: str
-    cleaned_data: List[Dict[str, Any]]
+    cleaned_data: Union[List[Dict[str, Any]], str]  # JSON array or CSV string
     data_shape: List[int]  # [rows, columns]
     column_names: List[str]
     processing_summary: ProcessingSummary
