@@ -50,8 +50,7 @@ async def root():
 async def health_check():
     """Health check endpoint."""
     return {
-        "status": "healthy",
-        "timestamp": "2025-01-01T00:00:00Z"
+        "status": "healthy"
     }
 
 # Global exception handler
