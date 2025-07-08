@@ -1,18 +1,20 @@
 """
-Analysis Agent using LangGraph - Visualization Agent
+Analysis Agent using LangGraph - Specialized Visualization Agent System
 
 This module implements a LangGraph-based visualization agent that processes
-experiment plans and datasets to generate analytical visualizations.
+experiment plans and datasets to generate analytical visualizations using
+specialized AI agents following Crew AI principles.
 
-The agent follows a 6-node pipeline:
-1. Input Loader - Validates and loads experiment plans and datasets
-2. Plan Parser - Extracts structured information from experiment plans
-3. Data Profiler - Analyzes dataset structure and generates statistics
-4. Chart Chooser - Selects appropriate visualization using LLM
-5. Renderer - Generates Matplotlib visualizations
-6. Response Composer - Creates explanatory text and manages memory
+The agent orchestrates a 6-node pipeline of specialized experts:
+1. Input Validation Specialist - Expert data validator and quality controller
+2. Experiment Plan Analyst - Research methodology and plan interpretation expert
+3. Data Profiling Specialist - Statistical analysis and data characterization expert
+4. Visualization Strategy Expert - Chart selection and design methodology specialist
+5. Code Generation Specialist - Plotly visualization code generation expert
+6. Scientific Communication Expert - Explanatory text and memory management specialist
 
-Architecture follows the blueprint specified in the requirements document.
+Each agent has a specific role, expertise domain, and clear objectives to ensure
+high-quality, contextually appropriate visualizations for scientific analysis.
 """
 
 import os
@@ -79,26 +81,42 @@ class ChartSpecification:
 
 class AnalysisState(TypedDict):
     """
-    State schema for the Analysis Agent
+    Specialized Agent Communication State Schema
     
-    The state contains all information flowing through the 6-node pipeline:
-    - messages: Conversation history and LLM responses
-    - user_prompt: Original user request
-    - experiment_plan_path: Path to experiment plan file
-    - csv_file_path: Path to dataset file
-    - memory: Memory object for iterative refinement
-    - plan_text: Raw experiment plan content
-    - structured_plan: Extracted plan information
-    - data_schema: CSV column types and statistics
-    - data_sample: Sample rows from dataset
-    - chart_specification: Selected visualization specification
-    - plot_image_path: Path to generated visualization (primary)
-    - plot_html_path: Path to interactive HTML visualization
-    - plot_png_path: Path to static PNG visualization
-    - llm_code_used: LLM-generated code for visualization (if used)
-    - warnings: List of warnings from the rendering process
-    - explanation: Generated explanatory text
-    - error_message: Error information if any step fails
+    This state facilitates seamless communication between specialized agents,
+    ensuring each expert receives the context they need and can pass their
+    insights to the next specialist in the pipeline.
+    
+    AGENT COMMUNICATION FLOW:
+    
+    Input Validation Specialist → Research Methodology Analyst:
+    - messages: Conversation history and agent communications
+    - user_prompt: Original analytical question or visualization request
+    - experiment_plan_path: Validated path to experiment plan file
+    - csv_file_path: Validated path to dataset CSV file
+    - memory: Context for iterative refinement and learning
+    
+    Research Methodology Analyst → Statistical Data Profiling Expert:
+    - plan_text: Raw experiment plan content for context
+    - structured_plan: Extracted experimental context and objectives
+    
+    Statistical Data Profiling Expert → Visualization Design Strategist:
+    - data_schema: Detailed column types, statistics, and data characteristics
+    - data_sample: Representative sample rows for design decisions
+    
+    Visualization Design Strategist → Plotly Code Generation Expert:
+    - chart_specification: Optimal chart type and design specifications
+    
+    Plotly Code Generation Expert → Scientific Communication Expert:
+    - plot_image_path: Primary path to generated visualization
+    - plot_html_path: Interactive HTML visualization for exploration
+    - plot_png_path: Static PNG image for reports and presentations
+    - llm_code_used: Generated code for transparency and debugging
+    - warnings: Technical caveats or limitations
+    
+    Scientific Communication Expert → Final Output:
+    - explanation: Clear, insightful explanation of findings and methodology
+    - error_message: Error information if any specialist encounters issues
     """
     messages: Annotated[List, add_messages]
     user_prompt: str
@@ -121,10 +139,28 @@ class AnalysisState(TypedDict):
 
 class AnalysisAgent:
     """
-    LangGraph-based Visualization Agent
+    LangGraph-based Specialized Visualization Agent System
     
-    This agent processes experiment plans and datasets to generate
-    analytical visualizations through a 6-node pipeline using modular nodes.
+    ROLE: Senior Data Visualization Orchestrator
+    
+    GOAL: Coordinate a team of specialized AI agents to transform raw scientific data
+    and experiment plans into publication-ready, interactive visualizations that
+    clearly communicate analytical insights.
+    
+    BACKSTORY: You are an experienced data visualization director who has spent years
+    building scientific visualization pipelines. You understand that effective data
+    visualization requires multiple specialized skills - from data validation and
+    statistical analysis to design principles and scientific communication. You
+    orchestrate a team of specialized agents, each with deep expertise in their
+    domain, to ensure every visualization is accurate, insightful, and professionally
+    presented.
+    
+    EXPERTISE DOMAINS:
+    - Scientific data visualization methodology
+    - Research workflow coordination
+    - Quality assurance and validation
+    - Multi-agent system orchestration
+    - Interactive visualization design
     """
     
     def __init__(self, model_provider: str = "openai", model_name: str = "gpt-4.1"):
@@ -147,7 +183,15 @@ class AnalysisAgent:
         # Build the graph
         self.graph = self._build_graph()
         
-        logger.info(f"Analysis Agent initialized with {model_provider}:{model_name}")
+        logger.info(f"🎯 Specialized Visualization Agent System initialized with {model_provider}:{model_name}")
+        logger.info("👥 Agent Team Assembled:")
+        logger.info("   🔍 Input Validation Specialist - Data integrity and quality control")
+        logger.info("   📋 Research Methodology Analyst - Experimental context extraction")
+        logger.info("   📊 Statistical Data Profiling Expert - Data characterization")
+        logger.info("   🎨 Visualization Design Strategist - Chart selection and design")
+        logger.info("   ⚡ Plotly Code Generation Expert - Interactive visualization development")
+        logger.info("   ✍️ Scientific Communication Expert - Insight explanation and communication")
+        logger.info("🚀 System ready for publication-quality visualization generation")
     
     def _init_llm(self):
         """Initialize the language model based on provider"""
@@ -164,13 +208,77 @@ class AnalysisAgent:
         return init_chat_model(model_string)
     
     def _init_nodes(self):
-        """Initialize all modular nodes with the LLM instance"""
-        self.input_loader = InputLoaderNode(llm=self.llm)
-        self.plan_parser = PlanParserNode(llm=self.llm)
-        self.data_profiler = DataProfilerNode(llm=self.llm)
-        self.chart_chooser = ChartChooserNode(llm=self.llm)
-        self.renderer = RendererNode(llm=self.llm)
-        self.response_composer = ResponseComposerNode(llm=self.llm)
+        """
+        Initialize specialized agent nodes with role-based context and expertise domains
+        
+        Each node is configured as a specialized expert with specific responsibilities,
+        following Crew AI principles for maximum effectiveness.
+        """
+        # Input Validation Specialist
+        self.input_loader = InputLoaderNode(
+            llm=self.llm,
+            role_context={
+                "role": "Senior Data Validation Specialist",
+                "goal": "Ensure data integrity and experiment plan validity before analysis",
+                "backstory": "You are a meticulous data quality expert with 15+ years of experience in scientific data validation. You have seen countless data issues that compromise analysis results, so you thoroughly validate file formats, data structures, and experiment plan coherence before allowing any analysis to proceed.",
+                "expertise": ["Data quality assessment", "File format validation", "Experiment plan verification", "Error detection and reporting"]
+            }
+        )
+        
+        # Experiment Plan Analyst
+        self.plan_parser = PlanParserNode(
+            llm=self.llm,
+            role_context={
+                "role": "Research Methodology Analyst",
+                "goal": "Extract and structure experimental context to guide visualization decisions",
+                "backstory": "You are a research methodology expert who has designed and analyzed hundreds of scientific experiments. You understand how experimental design influences visualization requirements and can extract key insights from experiment plans to inform appropriate visual analysis approaches.",
+                "expertise": ["Experimental design analysis", "Research methodology", "Hypothesis extraction", "Variable relationship identification"]
+            }
+        )
+        
+        # Data Profiling Specialist
+        self.data_profiler = DataProfilerNode(
+            llm=self.llm,
+            role_context={
+                "role": "Statistical Data Profiling Expert",
+                "goal": "Characterize dataset structure and statistical properties to inform visualization strategy",
+                "backstory": "You are a statistician with deep expertise in exploratory data analysis. You can quickly identify data types, distributions, correlations, and patterns that determine the most appropriate visualization approaches. Your statistical insights directly influence chart selection and design decisions.",
+                "expertise": ["Statistical analysis", "Data type detection", "Distribution analysis", "Correlation identification", "Outlier detection"]
+            }
+        )
+        
+        # Visualization Strategy Expert
+        self.chart_chooser = ChartChooserNode(
+            llm=self.llm,
+            role_context={
+                "role": "Visualization Design Strategist",
+                "goal": "Select optimal chart types and design specifications based on data characteristics and analytical objectives",
+                "backstory": "You are a data visualization expert who combines statistical knowledge with design principles. You understand that different data types and analytical questions require specific visualization approaches. Your decisions are guided by both statistical appropriateness and visual clarity principles.",
+                "expertise": ["Chart type selection", "Visual design principles", "Statistical visualization", "Interactive design", "Data-driven design decisions"]
+            }
+        )
+        
+        # Code Generation Specialist
+        self.renderer = RendererNode(
+            llm=self.llm,
+            role_context={
+                "role": "Plotly Code Generation Expert",
+                "goal": "Generate clean, efficient, and visually appealing Plotly code that brings visualization specifications to life",
+                "backstory": "You are a skilled visualization developer with mastery of Plotly and modern interactive visualization techniques. You write clean, maintainable code that creates publication-quality visualizations. You understand both the technical capabilities of Plotly and the design principles that make visualizations effective.",
+                "expertise": ["Plotly Express proficiency", "Interactive visualization development", "Code optimization", "Visual styling", "Error handling"]
+            }
+        )
+        
+        # Scientific Communication Expert
+        self.response_composer = ResponseComposerNode(
+            llm=self.llm,
+            role_context={
+                "role": "Scientific Communication Specialist",
+                "goal": "Craft clear, insightful explanations that help users understand their data and visualization choices",
+                "backstory": "You are a science communication expert who excels at translating complex analytical results into clear, actionable insights. You understand that effective visualization is not just about creating charts, but about helping users understand what their data reveals and why specific visualization choices were made.",
+                "expertise": ["Scientific writing", "Data interpretation", "Insight communication", "Memory management", "User guidance"]
+            }
+        )
     
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph 6-node visualization pipeline"""
@@ -195,29 +303,66 @@ class AnalysisAgent:
         
         return graph_builder.compile()
     
-    # Node wrapper methods to maintain LangGraph interface
+    # Specialized Agent Coordination Methods
     def _input_loader_wrapper(self, state: AnalysisState) -> Dict[str, Any]:
-        """Wrapper for input loader node"""
+        """
+        Coordinate with Input Validation Specialist
+        
+        HANDOFF: The Data Validation Specialist receives raw inputs and ensures
+        data integrity before any analysis begins. Critical for preventing
+        downstream errors and ensuring reliable results.
+        """
+        logger.info("🔍 Input Validation Specialist: Ensuring data integrity and experiment plan validity")
         return self.input_loader.process(state)
     
     def _plan_parser_wrapper(self, state: AnalysisState) -> Dict[str, Any]:
-        """Wrapper for plan parser node"""
+        """
+        Coordinate with Research Methodology Analyst
+        
+        HANDOFF: The Research Methodology Analyst receives validated inputs and
+        extracts structured experimental context to guide visualization decisions.
+        """
+        logger.info("📋 Research Methodology Analyst: Extracting experimental context and research objectives")
         return self.plan_parser.process(state)
     
     def _data_profiler_wrapper(self, state: AnalysisState) -> Dict[str, Any]:
-        """Wrapper for data profiler node"""
+        """
+        Coordinate with Statistical Data Profiling Expert
+        
+        HANDOFF: The Statistical Expert receives structured experiment context and
+        characterizes dataset properties to inform visualization strategy.
+        """
+        logger.info("📊 Statistical Data Profiling Expert: Analyzing dataset structure and statistical properties")
         return self.data_profiler.process(state)
     
     def _chart_chooser_wrapper(self, state: AnalysisState) -> Dict[str, Any]:
-        """Wrapper for chart chooser node"""
+        """
+        Coordinate with Visualization Design Strategist
+        
+        HANDOFF: The Visualization Strategist receives statistical insights and
+        selects optimal chart types based on data characteristics and analytical goals.
+        """
+        logger.info("🎨 Visualization Design Strategist: Selecting optimal chart specification and design approach")
         return self.chart_chooser.process(state)
     
     def _renderer_wrapper(self, state: AnalysisState) -> Dict[str, Any]:
-        """Wrapper for renderer node"""
+        """
+        Coordinate with Plotly Code Generation Expert
+        
+        HANDOFF: The Code Generation Expert receives visualization specifications
+        and creates clean, efficient Plotly code to bring the design to life.
+        """
+        logger.info("⚡ Plotly Code Generation Expert: Generating interactive visualization code")
         return self.renderer.process(state)
     
     def _response_composer_wrapper(self, state: AnalysisState) -> Dict[str, Any]:
-        """Wrapper for response composer node"""
+        """
+        Coordinate with Scientific Communication Expert
+        
+        HANDOFF: The Communication Expert receives the completed visualization
+        and crafts clear explanations to help users understand their results.
+        """
+        logger.info("✍️ Scientific Communication Expert: Crafting insightful explanations and managing context")
         return self.response_composer.process(state)
     
     def generate_visualization(self, 
@@ -226,20 +371,45 @@ class AnalysisAgent:
                              csv_file_path: str,
                              memory: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Main method to generate visualization from user request
+        Orchestrate specialized agents to generate publication-quality visualizations
+        
+        MISSION: Transform user's analytical question into a compelling, accurate, and
+        insightful visualization by coordinating a team of specialized AI agents.
+        
+        APPROACH: Each agent in the pipeline has specific expertise and responsibilities:
+        - Input Validation ensures data integrity and prevents downstream errors
+        - Research Analyst extracts experimental context to guide visualization decisions
+        - Statistical Expert characterizes data properties for appropriate chart selection
+        - Visualization Strategist selects optimal chart types and design specifications
+        - Code Generation Expert creates clean, efficient Plotly implementation
+        - Communication Expert crafts clear explanations of results and insights
+        
+        QUALITY STANDARDS:
+        - All outputs must be scientifically accurate and methodologically sound
+        - Visualizations must be publication-ready with professional aesthetics
+        - Code must be clean, efficient, and follow best practices
+        - Explanations must be clear, insightful, and actionable
         
         Args:
-            user_prompt: Natural language question or instruction
-            experiment_plan_path: Path to experiment plan file
-            csv_file_path: Path to dataset CSV file
-            memory: Optional memory object for iterative refinement
+            user_prompt: Natural language analytical question or visualization request
+            experiment_plan_path: Path to experiment plan file with research context
+            csv_file_path: Path to dataset CSV file for analysis
+            memory: Optional memory object for iterative refinement and context retention
             
         Returns:
-            Dictionary containing explanation and image path
+            Dictionary containing:
+            - explanation: Clear, insightful explanation of the visualization and findings
+            - image_path: Primary path to interactive HTML visualization
+            - html_path: Interactive Plotly HTML for exploration
+            - png_path: Static PNG image for reports and presentations
+            - memory: Updated memory with context for future iterations
+            - llm_code_used: Generated code for transparency and debugging
+            - warnings: Any important caveats or limitations
         """
-        logger.info(f"Starting visualization generation for: {user_prompt}")
+        logger.info(f"🎯 MISSION: Generating publication-quality visualization for: {user_prompt}")
+        logger.info("🚀 Initializing specialized agent coordination pipeline")
         
-        # Initialize state
+        # Initialize comprehensive state with clear objectives for each agent
         initial_state = {
             "messages": [],
             "user_prompt": user_prompt,
@@ -260,10 +430,12 @@ class AnalysisAgent:
             "error_message": ""
         }
         
-        # Run the graph
+        # Execute coordinated agent pipeline
+        logger.info("🔄 Executing specialized agent coordination pipeline")
         result = self.graph.invoke(initial_state)
         
-        # Return final result with both HTML and PNG paths
+        # Validate and return comprehensive results
+        logger.info("✅ Visualization generation completed successfully")
         return {
             "explanation": result["explanation"],
             "image_path": result["plot_image_path"],  # Primary path (HTML for interactivity)
@@ -277,13 +449,33 @@ class AnalysisAgent:
 
 def create_analysis_agent(model_provider: str = "openai", model_name: str = "gpt-4.1") -> AnalysisAgent:
     """
-    Factory function to create an Analysis Agent instance
+    Factory function to create a Specialized Visualization Agent System
+    
+    CREATES: A sophisticated multi-agent system that transforms raw scientific data
+    into publication-quality, interactive visualizations through coordinated
+    specialized AI agents.
+    
+    AGENT TEAM COMPOSITION:
+    - Input Validation Specialist: Ensures data integrity and quality
+    - Research Methodology Analyst: Extracts experimental context
+    - Statistical Data Profiling Expert: Characterizes data properties
+    - Visualization Design Strategist: Selects optimal chart approaches
+    - Plotly Code Generation Expert: Creates clean, efficient code
+    - Scientific Communication Expert: Crafts clear explanations
+    
+    CAPABILITIES:
+    - Publication-ready interactive visualizations
+    - Scientifically accurate chart selection
+    - Context-aware design decisions
+    - Clean, maintainable code generation
+    - Clear, insightful explanations
+    - Iterative refinement support
     
     Args:
-        model_provider: The LLM provider to use
-        model_name: The specific model to use
+        model_provider: The LLM provider to use (openai, anthropic, etc.)
+        model_name: The specific model to use for agent coordination
         
     Returns:
-        Configured AnalysisAgent instance
+        Fully configured AnalysisAgent system with specialized agent team
     """
     return AnalysisAgent(model_provider=model_provider, model_name=model_name) 
