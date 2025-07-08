@@ -21,10 +21,21 @@ from agents.dataclean.models import (
     ProcessingStatus,
     ApplySuggestionRequest,
     UpdateNotesRequest,
-    FileMetadata
+    FileMetadata,
+    CreateCustomTransformationRequest,
+    PreviewTransformationRequest,
+    ApplyTransformationRequest,
+    SaveTransformationRuleRequest,
+    UndoTransformationRequest,
+    RedoTransformationRequest,
+    SearchRulesRequest,
+    CustomTransformation,
+    TransformationAction,
+    ValueMapping
 )
 from agents.dataclean.file_processor import FileProcessingAgent
 from agents.dataclean.quality_agent import DataQualityAgent
+from agents.dataclean.transformation_engine import TransformationEngine
 from config import get_openai_client, validate_openai_config
 
 router = APIRouter(prefix="/api/dataclean", tags=["data-cleaning"])
@@ -36,8 +47,14 @@ file_processor = FileProcessingAgent()
 openai_client = get_openai_client()
 quality_agent = DataQualityAgent(openai_client) if openai_client else None
 
+# Initialize the transformation engine for Phase 2.5
+transformation_engine = TransformationEngine()
+
 # In-memory storage for demo purposes (replace with Firestore later)
 data_artifacts: Dict[str, DataArtifact] = {}
+
+# In-memory storage for current DataFrames (replace with persistent storage later)
+current_dataframes: Dict[str, Any] = {}
 
 
 @router.post("/upload-file")
@@ -220,6 +237,274 @@ async def finalize_data(artifact_id: str):
     }
 
 
+# === Phase 2.5: Interactive Transformation Endpoints ===
+
+@router.post("/create-custom-transformation")
+async def create_custom_transformation(request: CreateCustomTransformationRequest):
+    """
+    Create a custom transformation based on user input.
+    
+    Args:
+        request: Custom transformation specification
+        
+    Returns:
+        Created transformation details
+    """
+    if request.artifact_id not in data_artifacts:
+        raise HTTPException(status_code=404, detail="Data artifact not found")
+    
+    artifact = data_artifacts[request.artifact_id]
+    
+    # Create transformation
+    transformation = CustomTransformation(
+        transformation_id=str(uuid.uuid4()),
+        column=request.column,
+        action=request.action,
+        value_mappings=request.value_mappings,
+        parameters=request.parameters,
+        description=request.description,
+        created_by=artifact.owner_id,
+        created_at=datetime.now()
+    )
+    
+    # Add to artifact
+    artifact.custom_transformations.append(transformation)
+    artifact.updated_at = datetime.now()
+    
+    return {
+        "status": "success",
+        "transformation_id": transformation.transformation_id,
+        "message": "Custom transformation created successfully"
+    }
+
+
+@router.post("/preview-transformation")
+async def preview_transformation(request: PreviewTransformationRequest):
+    """
+    Preview the effects of a transformation without applying it.
+    
+    Args:
+        request: Preview request with transformation details
+        
+    Returns:
+        Transformation preview with before/after samples
+    """
+    if request.artifact_id not in data_artifacts:
+        raise HTTPException(status_code=404, detail="Data artifact not found")
+    
+    if request.artifact_id not in current_dataframes:
+        raise HTTPException(status_code=404, detail="Data not available for preview")
+    
+    artifact = data_artifacts[request.artifact_id]
+    
+    # Find the transformation
+    transformation = None
+    for t in artifact.custom_transformations:
+        if t.transformation_id == request.transformation_id:
+            transformation = t
+            break
+    
+    if not transformation:
+        raise HTTPException(status_code=404, detail="Transformation not found")
+    
+    # Get current DataFrame
+    df = current_dataframes[request.artifact_id]
+    
+    try:
+        # Generate preview
+        preview = await transformation_engine.create_transformation_preview(df, transformation)
+        return preview
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Preview generation failed: {str(e)}")
+
+
+@router.post("/apply-transformation")
+async def apply_transformation(request: ApplyTransformationRequest):
+    """
+    Apply a custom transformation to the data.
+    
+    Args:
+        request: Transformation application request
+        
+    Returns:
+        Success message and updated artifact info
+    """
+    if request.artifact_id not in data_artifacts:
+        raise HTTPException(status_code=404, detail="Data artifact not found")
+    
+    if request.artifact_id not in current_dataframes:
+        raise HTTPException(status_code=404, detail="Data not available for transformation")
+    
+    artifact = data_artifacts[request.artifact_id]
+    
+    # Find the transformation
+    transformation = None
+    for t in artifact.custom_transformations:
+        if t.transformation_id == request.transformation_id:
+            transformation = t
+            break
+    
+    if not transformation:
+        raise HTTPException(status_code=404, detail="Transformation not found")
+    
+    # Get current DataFrame
+    df = current_dataframes[request.artifact_id]
+    
+    try:
+        # Apply transformation
+        transformed_df, data_version = await transformation_engine.apply_transformation(
+            df, transformation, request.artifact_id, artifact.owner_id
+        )
+        
+        # Update stored DataFrame
+        current_dataframes[request.artifact_id] = transformed_df
+        
+        # Update artifact with version history
+        if not artifact.transformation_history:
+            from agents.dataclean.models import TransformationHistory
+            artifact.transformation_history = TransformationHistory(
+                artifact_id=request.artifact_id,
+                current_version=data_version.version_number,
+                versions=[data_version],
+                can_undo=True,
+                can_redo=False
+            )
+        else:
+            artifact.transformation_history.versions.append(data_version)
+            artifact.transformation_history.current_version = data_version.version_number
+            artifact.transformation_history.can_undo = True
+            artifact.transformation_history.can_redo = False
+        
+        # Save as rule if requested
+        if request.save_as_rule and request.rule_name:
+            rule = await transformation_engine.save_transformation_rule(
+                transformation,
+                request.rule_name,
+                request.rule_description or transformation.description,
+                transformation.column,  # Use column name as pattern
+                artifact.owner_id
+            )
+            artifact.saved_rules.append(rule.rule_id)
+        
+        artifact.updated_at = datetime.now()
+        
+        return {
+            "status": "success",
+            "version": data_version.version_number,
+            "message": "Transformation applied successfully",
+            "can_undo": True,
+            "can_redo": False
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transformation failed: {str(e)}")
+
+
+@router.post("/undo-transformation")
+async def undo_transformation(request: UndoTransformationRequest):
+    """
+    Undo the last transformation.
+    
+    Args:
+        request: Undo request
+        
+    Returns:
+        Success message and updated state
+    """
+    if request.artifact_id not in data_artifacts:
+        raise HTTPException(status_code=404, detail="Data artifact not found")
+    
+    artifact = data_artifacts[request.artifact_id]
+    
+    if not artifact.transformation_history:
+        raise HTTPException(status_code=400, detail="No transformation history available")
+    
+    if not artifact.transformation_history.can_undo:
+        raise HTTPException(status_code=400, detail="Cannot undo: already at first version")
+    
+    try:
+        # Undo transformation
+        reverted_df, data_version = await transformation_engine.undo_transformation(
+            request.artifact_id,
+            artifact.transformation_history.current_version,
+            artifact.owner_id
+        )
+        
+        # Update stored DataFrame
+        current_dataframes[request.artifact_id] = reverted_df
+        
+        # Update transformation history
+        artifact.transformation_history.versions.append(data_version)
+        artifact.transformation_history.current_version = data_version.version_number
+        artifact.transformation_history.can_undo = len(artifact.transformation_history.versions) > 1
+        artifact.transformation_history.can_redo = True
+        
+        artifact.updated_at = datetime.now()
+        
+        return {
+            "status": "success",
+            "version": data_version.version_number,
+            "message": "Transformation undone successfully",
+            "can_undo": artifact.transformation_history.can_undo,
+            "can_redo": artifact.transformation_history.can_redo
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Undo failed: {str(e)}")
+
+
+@router.post("/search-transformation-rules")
+async def search_transformation_rules(request: SearchRulesRequest):
+    """
+    Search for saved transformation rules.
+    
+    Args:
+        request: Search criteria
+        
+    Returns:
+        List of matching transformation rules
+    """
+    try:
+        rules = await transformation_engine.search_transformation_rules(
+            column_name=request.column_name,
+            action=request.action,
+            search_term=request.search_term,
+            user_id=request.owner_id
+        )
+        
+        return {
+            "status": "success",
+            "rules": rules,
+            "count": len(rules)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Rule search failed: {str(e)}")
+
+
+@router.post("/save-transformation-rule")
+async def save_transformation_rule(request: SaveTransformationRuleRequest):
+    """
+    Save a transformation as a reusable rule.
+    
+    Args:
+        request: Rule saving request
+        
+    Returns:
+        Success message and rule details
+    """
+    # This endpoint is called when saving a rule manually
+    # (The apply_transformation endpoint can also save rules automatically)
+    
+    # Find the transformation (this would typically be from a temporary store)
+    # For now, we'll return a placeholder implementation
+    
+    return {
+        "status": "success",
+        "message": "Rule saving functionality will be implemented in the frontend workflow"
+    }
+
+
 async def process_file_background(artifact_id: str, file_path: str):
     """
     Background task for processing uploaded files with AI analysis.
@@ -247,6 +532,23 @@ async def process_file_background(artifact_id: str, file_path: str):
                         # Create a small DataFrame from sample data for analysis
                         import pandas as pd
                         df_sample = pd.DataFrame(sample_data)
+                        
+                        # Store full DataFrame for Phase 2.5 transformations
+                        # Read the full file again for transformations
+                        try:
+                            if file_path.endswith('.csv'):
+                                full_df = pd.read_csv(file_path)
+                            elif file_path.endswith(('.xlsx', '.xls')):
+                                full_df = pd.read_excel(file_path)
+                            else:
+                                full_df = df_sample
+                            
+                            current_dataframes[artifact_id] = full_df
+                            print(f"Stored full DataFrame for transformations: {full_df.shape}")
+                        except Exception as df_error:
+                            print(f"Could not store full DataFrame: {str(df_error)}")
+                            # Fall back to sample data
+                            current_dataframes[artifact_id] = df_sample
                         
                         print(f"Starting AI quality analysis for artifact {artifact_id}")
                         
