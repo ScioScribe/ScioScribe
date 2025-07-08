@@ -92,7 +92,9 @@ class AnalysisState(TypedDict):
     - data_schema: CSV column types and statistics
     - data_sample: Sample rows from dataset
     - chart_specification: Selected visualization specification
-    - plot_image_path: Path to generated visualization
+    - plot_image_path: Path to generated visualization (primary)
+    - plot_html_path: Path to interactive HTML visualization
+    - plot_png_path: Path to static PNG visualization
     - llm_code_used: LLM-generated code for visualization (if used)
     - warnings: List of warnings from the rendering process
     - explanation: Generated explanatory text
@@ -109,6 +111,8 @@ class AnalysisState(TypedDict):
     data_sample: List[Dict[str, Any]]
     chart_specification: Dict[str, Any]
     plot_image_path: str
+    plot_html_path: str
+    plot_png_path: str
     llm_code_used: str
     warnings: List[str]
     explanation: str
@@ -248,6 +252,8 @@ class AnalysisAgent:
             "data_sample": [],
             "chart_specification": {},
             "plot_image_path": "",
+            "plot_html_path": "",
+            "plot_png_path": "",
             "llm_code_used": "",
             "warnings": [],
             "explanation": "",
@@ -257,10 +263,12 @@ class AnalysisAgent:
         # Run the graph
         result = self.graph.invoke(initial_state)
         
-        # Return final result
+        # Return final result with both HTML and PNG paths
         return {
             "explanation": result["explanation"],
-            "image_path": result["plot_image_path"],
+            "image_path": result["plot_image_path"],  # Primary path (HTML for interactivity)
+            "html_path": result.get("plot_html_path", ""),  # Interactive Plotly HTML
+            "png_path": result.get("plot_png_path", ""),    # Static PNG image
             "memory": result["memory"],
             "llm_code_used": result.get("llm_code_used", ""),
             "warnings": result.get("warnings", [])

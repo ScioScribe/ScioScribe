@@ -1,8 +1,8 @@
 """
 Sandbox Runner Node for LLM-Powered Renderer
 
-This node executes generated code in a secure sandboxed environment with
-timeout protection and performs post-execution safety checks.
+This node executes generated Plotly Express code in a secure sandboxed environment with
+timeout protection and performs post-execution safety checks on both HTML and PNG outputs.
 """
 
 import os
@@ -24,8 +24,8 @@ class SandboxRunnerNode(BaseNode):
     """
     Sandbox Runner Node
     
-    Executes generated matplotlib code in a secure sandbox with timeout protection.
-    Performs post-execution checks on the output file.
+    Executes generated Plotly Express code in a secure sandbox with timeout protection.
+    Performs post-execution checks on both HTML and PNG output files.
     """
     
     def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -48,13 +48,15 @@ class SandboxRunnerNode(BaseNode):
             ingredients = state["ingredients"]
             generated_code = state["generated_code"]
             csv_path = ingredients["csv_path"]
-            output_path = ingredients["output_path"]
+            html_output_path = ingredients["html_output_path"]
+            png_output_path = ingredients["png_output_path"]
             
             # Execute in sandboxed environment
             execution_result = self._execute_sandboxed(
                 generated_code, 
                 csv_path, 
-                output_path
+                html_output_path,
+                png_output_path
             )
             
             if not execution_result["success"]:
@@ -65,8 +67,11 @@ class SandboxRunnerNode(BaseNode):
                     "retry_count": state.get("retry_count", 0) + 1
                 }
             
-            # Post-execution safety checks
-            safety_check = self._post_execution_checks(Path(output_path))
+            # Post-execution safety checks for both outputs
+            safety_check = self._post_execution_checks(
+                Path(html_output_path), 
+                Path(png_output_path)
+            )
             if not safety_check["is_safe"]:
                 self.log_warning(f"Safety check failed: {safety_check['error']}")
                 return {
@@ -96,14 +101,15 @@ class SandboxRunnerNode(BaseNode):
         indented_lines = [indent + line if line.strip() else line for line in lines]
         return '\n'.join(indented_lines)
     
-    def _execute_sandboxed(self, code: str, csv_path: str, output_path: str) -> Dict[str, Any]:
+    def _execute_sandboxed(self, code: str, csv_path: str, html_output_path: str, png_output_path: str) -> Dict[str, Any]:
         """
-        Execute generated code in a sandboxed environment with timeout
+        Execute generated Plotly code in a sandboxed environment with timeout
         
         Args:
             code: Validated Python code
             csv_path: Path to data file
-            output_path: Path where plot should be saved
+            html_output_path: Path where HTML plot should be saved
+            png_output_path: Path where PNG plot should be saved
             
         Returns:
             Execution result with success flag and any warnings
@@ -115,9 +121,9 @@ class SandboxRunnerNode(BaseNode):
             # Create temporary execution script
             with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
                 execution_script = f"""
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
+import plotly.io as pio
 import numpy as np
 import pandas as pd
 import sys
@@ -138,7 +144,11 @@ try:
 {indented_code}
     
     # Execute the function
-    draw_chart(df)
+    result = draw_chart(df)
+    
+    # Verify the result is a Plotly figure
+    if not isinstance(result, go.Figure):
+        raise ValueError("draw_chart must return a plotly.graph_objects.Figure")
     
     print("SUCCESS")
     
@@ -207,57 +217,147 @@ finally:
                 "error": f"Sandbox setup failed: {str(e)}"
             }
     
-    def _post_execution_checks(self, output_path: Path) -> Dict[str, Any]:
+    def _post_execution_checks(self, html_output_path: Path, png_output_path: Path) -> Dict[str, Any]:
         """
-        Perform safety checks after code execution
+        Perform safety checks after code execution on both output files
         
         Args:
-            output_path: Expected output file path
+            html_output_path: Expected HTML output file path
+            png_output_path: Expected PNG output file path
             
         Returns:
             Safety check result with is_safe flag and error message
         """
         try:
+            # Check HTML file
+            html_check = self._check_html_output(html_output_path)
+            if not html_check["is_safe"]:
+                return html_check
+            
+            # Check PNG file
+            png_check = self._check_png_output(png_output_path)
+            if not png_check["is_safe"]:
+                return png_check
+            
+            return {"is_safe": True, "error": None}
+            
+        except Exception as e:
+            return {
+                "is_safe": False,
+                "error": f"Post-execution check failed: {str(e)}"
+            }
+    
+    def _check_html_output(self, html_path: Path) -> Dict[str, Any]:
+        """Check HTML output file"""
+        try:
             # 1. Check file exists and has content
-            if not output_path.exists():
+            if not html_path.exists():
                 return {
                     "is_safe": False,
-                    "error": "Output file was not created"
+                    "error": "HTML output file was not created"
                 }
             
-            if output_path.stat().st_size == 0:
+            if html_path.stat().st_size == 0:
                 return {
                     "is_safe": False,
-                    "error": "Output file is empty"
+                    "error": "HTML output file is empty"
+                }
+            
+            # 2. Basic HTML validation - check for Plotly content
+            try:
+                with open(html_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                # Check for essential Plotly HTML elements
+                if 'plotly' not in content.lower():
+                    return {
+                        "is_safe": False,
+                        "error": "HTML file does not contain Plotly content"
+                    }
+                
+                if len(content) < 1000:  # Very basic size check
+                    return {
+                        "is_safe": False,
+                        "error": "HTML file appears to be truncated or minimal"
+                    }
+                
+            except Exception as e:
+                return {
+                    "is_safe": False,
+                    "error": f"Could not read HTML file: {str(e)}"
+                }
+            
+            return {"is_safe": True, "error": None}
+            
+        except Exception as e:
+            return {
+                "is_safe": False,
+                "error": f"HTML check failed: {str(e)}"
+            }
+    
+    def _check_png_output(self, png_path: Path) -> Dict[str, Any]:
+        """Check PNG output file"""
+        try:
+            # 1. Check file exists and has content
+            if not png_path.exists():
+                return {
+                    "is_safe": False,
+                    "error": "PNG output file was not created"
+                }
+            
+            if png_path.stat().st_size == 0:
+                return {
+                    "is_safe": False,
+                    "error": "PNG output file is empty"
                 }
             
             # 2. Check file is actually an image
             try:
                 # Basic check - can we open it as an image?
-                img = Image.open(output_path)
+                img = Image.open(png_path)
                 img.verify()  # Verify it's a valid image
             except Exception as e:
                 return {
                     "is_safe": False,
-                    "error": f"Invalid image file: {str(e)}"
+                    "error": f"Invalid PNG file: {str(e)}"
                 }
             
             # 3. Check image is not blank (reopen after verify)
             try:
-                img = Image.open(output_path)
+                img = Image.open(png_path)
                 # Convert to RGB if needed
                 if img.mode != 'RGB':
                     img = img.convert('RGB')
                 
-                # Check if image is mostly white (blank)
                 np_img = np.array(img)
+                
+                # Multiple checks for blank detection
+                # Check 1: White pixel percentage (adjusted for Plotly backgrounds)
                 white_pixels = np.sum(np_img > 240)  # Count near-white pixels
                 total_pixels = np_img.size
+                white_percentage = white_pixels / total_pixels
                 
-                if white_pixels / total_pixels > 0.95:  # 95% white
+                # Check 2: Color variation (standard deviation of pixel values)
+                color_std = np.std(np_img)
+                
+                # Check 3: File size (truly blank images compress to very small sizes)
+                file_size = png_path.stat().st_size
+                
+                # Consider image blank if:
+                # - Over 99% white pixels AND very low color variation AND small file size
+                if (white_percentage > 0.99 and 
+                    color_std < 5.0 and 
+                    file_size < 10000):  # Less than 10KB
                     return {
                         "is_safe": False,
-                        "error": "Generated image appears to be blank"
+                        "error": f"Generated PNG image appears to be blank ({white_percentage*100:.1f}% white pixels, {color_std:.1f} color variation, {file_size} bytes)"
+                    }
+                
+                # Additional check for completely uniform images
+                if color_std < 1.0:
+                    return {
+                        "is_safe": False,
+                        "error": f"Generated PNG image has no color variation (std: {color_std:.1f})"
                     }
                 
             except Exception as e:
@@ -270,5 +370,5 @@ finally:
         except Exception as e:
             return {
                 "is_safe": False,
-                "error": f"Post-execution check failed: {str(e)}"
+                "error": f"PNG check failed: {str(e)}"
             } 

@@ -55,7 +55,9 @@ class RendererState(TypedDict):
     - error_msg: Current error message (None if no error)
     - retry_count: Number of retries attempted
     - warnings: List of warnings accumulated
-    - plot_image_path: Final output path (HTML or PNG)
+    - plot_image_path: Final output path (primary format)
+    - plot_html_path: HTML output path (interactive)
+    - plot_png_path: PNG output path (static)
     - llm_code_used: Final code that worked
     """
     ingredients: Dict[str, Any]
@@ -64,6 +66,8 @@ class RendererState(TypedDict):
     retry_count: int
     warnings: List[str]
     plot_image_path: str
+    plot_html_path: str
+    plot_png_path: str
     llm_code_used: str
 
 
@@ -154,6 +158,8 @@ class RendererNode(BaseNode):
                 "retry_count": 0,
                 "warnings": [],
                 "plot_image_path": "",
+                "plot_html_path": "",
+                "plot_png_path": "",
                 "llm_code_used": ""
             }
             
@@ -161,10 +167,12 @@ class RendererNode(BaseNode):
             result = self.graph.invoke(initial_state)
             
             # Handle final result
-            if result.get("plot_image_path"):
-                # Success path
+            if result.get("plot_html_path") or result.get("plot_png_path"):
+                # Success path - return both HTML and PNG paths
                 return {
-                    "plot_image_path": result["plot_image_path"],
+                    "plot_image_path": result.get("plot_html_path", ""),  # Primary path (HTML for interactivity)
+                    "plot_html_path": result.get("plot_html_path", ""),
+                    "plot_png_path": result.get("plot_png_path", ""),
                     "llm_code_used": result["llm_code_used"],
                     "warnings": result.get("warnings", [])
                 }
@@ -175,6 +183,8 @@ class RendererNode(BaseNode):
                 
                 return {
                     "plot_image_path": "",
+                    "plot_html_path": "",
+                    "plot_png_path": "",
                     "llm_code_used": result.get("generated_code", ""),
                     "warnings": [f"Visualization failed after {result.get('retry_count', 0)} retries: {error_msg}"]
                 }
@@ -183,6 +193,8 @@ class RendererNode(BaseNode):
             self.log_error(f"Renderer graph failed: {str(e)}")
             return {
                 "plot_image_path": "",
+                "plot_html_path": "",
+                "plot_png_path": "",
                 "llm_code_used": "",
                 "warnings": [f"Renderer error: {str(e)}"]
             }
@@ -207,18 +219,21 @@ class RendererNode(BaseNode):
             "shape": df.shape
         }
         
-        # Output path - default to HTML for Plotly interactive charts
+        # Output paths - generate both HTML and PNG
         spec_hash = hashlib.md5(json.dumps(chart_spec, sort_keys=True).encode()).hexdigest()[:8]
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"llm_chart_{spec_hash}_{timestamp}.html"
-        output_path = PLOTS_DIR / filename
+        base_filename = f"llm_chart_{spec_hash}_{timestamp}"
+        
+        html_path = PLOTS_DIR / f"{base_filename}.html"
+        png_path = PLOTS_DIR / f"{base_filename}.png"
         
         return {
             "user_ask": user_ask,
             "chart_specification": chart_spec,
             "data_snapshot": data_snapshot,
             "style_dictionary": STYLE_DICTIONARY,
-            "output_path": str(output_path),
+            "html_output_path": str(html_path),
+            "png_output_path": str(png_path),
             "csv_path": state["csv_file_path"]
         }
     

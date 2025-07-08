@@ -292,7 +292,8 @@ class DraftOrFixCodeNode(BaseNode):
         ingredients = state["ingredients"]
         chart_spec = ingredients['chart_specification']
         data_snapshot = ingredients['data_snapshot']
-        output_path = ingredients['output_path']
+        html_output_path = ingredients['html_output_path']
+        png_output_path = ingredients['png_output_path']
         
         # Basic chart info
         chart_type = chart_spec.get('chart_type', 'scatter')
@@ -305,9 +306,6 @@ class DraftOrFixCodeNode(BaseNode):
         
         # Get chart-specific guidance
         chart_guidance = CHART_TEMPLATES.get(chart_type, CHART_TEMPLATES['scatter'])
-        
-        # Determine output format
-        is_png_output = output_path.endswith('.png')
         
         # Build enhanced prompt
         prompt = f"""Create a SIMPLE, COLORFUL, and MODERN Plotly Express interactive visualization.
@@ -341,6 +339,7 @@ def draw_chart(df):
     \"\"\"Simple {chart_type} visualization using Plotly Express.\"\"\"
     import plotly.express as px
     import plotly.graph_objects as go
+    import plotly.io as pio
     import pandas as pd
     import numpy as np
     
@@ -374,8 +373,9 @@ def draw_chart(df):
     if hasattr(fig, 'update_traces'):
         fig.update_traces(marker=dict(size=8, line=dict(width=0.5, color='white')))
     
-    # Save the figure
-    {'fig.write_image("' + output_path + '", scale=3)' if is_png_output else 'fig.write_html("' + output_path + '", include_plotlyjs="cdn")'}
+    # Save both HTML (interactive) and PNG (static) versions
+    fig.write_html("{html_output_path}", include_plotlyjs="cdn")
+    fig.write_image("{png_output_path}", scale=3)
     
     return fig
 ```
@@ -385,6 +385,7 @@ IMPORTANT:
 - Keep the code CLEAN and UNCLUTTERED
 - Let interactive features enhance, not overwhelm
 - Use the modern color palette provided
+- Save BOTH HTML and PNG formats
 - Return the figure object
 
 Generate ONLY the complete function code:"""
@@ -396,13 +397,11 @@ Generate ONLY the complete function code:"""
         ingredients = state["ingredients"]
         previous_code = state.get("generated_code", "")
         error_msg = state["error_msg"]
-        output_path = ingredients['output_path']
+        html_output_path = ingredients['html_output_path']
+        png_output_path = ingredients['png_output_path']
         
         # Get column info for validation hints
         columns = ingredients['data_snapshot']['columns']
-        
-        # Determine output format
-        is_png_output = output_path.endswith('.png')
         
         prompt = f"""Fix the Plotly Express visualization code while keeping it SIMPLE and COLORFUL.
 
@@ -419,14 +418,17 @@ FIX REQUIREMENTS:
 - Use template='plotly_white' for clean background
 - Use modern, vibrant colors
 - Function: draw_chart(df) -> go.Figure
-- Save to: {output_path}
-- {'Use fig.write_image() for PNG output' if is_png_output else 'Use fig.write_html() for HTML output'}
+- Save both HTML and PNG formats:
+  - HTML: {html_output_path}
+  - PNG: {png_output_path}
+- Use fig.write_html() AND fig.write_image() for both outputs
 
 STYLE REMINDER:
 - Clean white background with template='plotly_white'
 - Bold, bright colors from MODERN_COLORS
 - Simple chart, no clutter
 - Interactive features but keep them minimal
+- Generate BOTH HTML and PNG outputs
 
 Generate ONLY the complete fixed function code:"""
         
@@ -521,11 +523,17 @@ Generate ONLY the complete fixed function code:"""
                 "error": "Missing required import: plotly.express"
             }
         
-        # 7. Check for proper output handling
-        if 'fig.write_html' not in code and 'fig.write_image' not in code:
+        # 7. Check for proper output handling - both HTML and PNG required
+        if 'fig.write_html' not in code:
             return {
                 "is_valid": False,
-                "error": "Missing required fig.write_html() or fig.write_image() call"
+                "error": "Missing required fig.write_html() call for HTML output"
+            }
+        
+        if 'fig.write_image' not in code:
+            return {
+                "is_valid": False,
+                "error": "Missing required fig.write_image() call for PNG output"
             }
         
         # 8. Check for return statement
