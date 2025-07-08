@@ -2,7 +2,7 @@
 Main FastAPI application for ScioScribe backend.
 
 This is the entry point for the ScioScribe backend API, including
-data cleaning, analysis, and other AI agent functionality.
+experiment planning, data cleaning, analysis, and other AI agent functionality.
 """
 
 import logging
@@ -11,6 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from api.dataclean import router as dataclean_router
+from api.planning import router as planning_router
+from api.analysis import router as analysis_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +38,8 @@ app.add_middleware(
 
 # Include routers
 app.include_router(dataclean_router)
+app.include_router(planning_router)
+app.include_router(analysis_router)
 
 @app.get("/")
 async def root():
@@ -43,7 +47,12 @@ async def root():
     return {
         "message": "ScioScribe API is running",
         "version": "1.0.0",
-        "status": "healthy"
+        "status": "healthy",
+        "available_modules": [
+            "experiment-planning",
+            "data-cleaning",
+            "analysis"
+        ]
     }
 
 @app.get("/health")

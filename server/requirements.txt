@@ -34,13 +34,14 @@ pillow==11.0.0
 opencv-python==4.10.0.84
 easyocr==1.7.2
 
-# Audio Processing (for transcription) - CORRECTED
+# Audio Processing (for transcription)
 pydub==0.25.1
 SpeechRecognition==3.14.3
 openai-whisper==20231117
 
-# HTTP & API (Removed duplicate)
+# HTTP & API
 httpx==0.28.1
+requests==2.31.0
 aiofiles==24.1.0
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4

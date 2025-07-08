@@ -63,6 +63,7 @@ share/python-wheels/
 MANIFEST
 
 # Virtual environments
+server/venv/
 venv/
 env/
 ENV/
@@ -401,6 +402,9 @@ local_settings.py
 *.rar
 *.7z
 
+# Project-specific
+tasks
+
 # Don't ignore important config files
 !.gitkeep
 !.cursorrules
@@ -410,4 +414,4 @@ local_settings.py
 !package.json
 !requirements.txt
 !Dockerfile
-!docker-compose.yml 
+!docker-compose.yml

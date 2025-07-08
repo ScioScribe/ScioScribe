@@ -250,4 +250,43 @@ class TransformationSuggestion(BaseModel):
     suggested_mappings: List[ValueMapping] = []
     customization_options: Dict[str, Any] = {}
     similar_rules: List[str] = []  # IDs of similar saved rules
-    can_customize: bool = True 
+    can_customize: bool = True
+
+
+# === Process File Complete Models ===
+
+class ProcessFileCompleteRequest(BaseModel):
+    """Request for complete file processing in one call."""
+    experiment_id: str = "demo-experiment"
+    auto_apply_suggestions: bool = True
+    max_suggestions_to_apply: int = 10  # Limit to prevent over-processing
+    confidence_threshold: float = 0.7  # Only apply high-confidence suggestions
+    include_processing_details: bool = True
+    user_id: str = "demo-user"
+
+
+class ProcessingSummary(BaseModel):
+    """Summary of processing steps performed."""
+    file_processing: Dict[str, Any]
+    quality_analysis: Dict[str, Any]
+    suggestions_generated: int
+    suggestions_applied: int
+    suggestions_skipped: int
+    transformations_performed: List[str]
+    processing_time_seconds: float
+    quality_score_before: Optional[float] = None
+    quality_score_after: Optional[float] = None
+
+
+class ProcessFileCompleteResponse(BaseModel):
+    """Response from complete file processing."""
+    success: bool
+    artifact_id: str
+    cleaned_data: Union[List[Dict[str, Any]], str]  # JSON array or CSV string
+    data_shape: List[int]  # [rows, columns]
+    column_names: List[str]
+    processing_summary: ProcessingSummary
+    unapplied_suggestions: List[Suggestion] = []
+    error_message: Optional[str] = None
+    warnings: List[str] = []
+    metadata: Dict[str, Any] = {} 
