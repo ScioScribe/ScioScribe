@@ -200,7 +200,15 @@ class ChartChooserNode(BaseNode):
         2. Check if the requested chart type is viable with the available data
         3. If not viable, suggest the closest alternative that fulfills the user's intent
         4. Select appropriate columns based on the user's question
-        5. Create engaging titles and labels using the user's language
+        5. Create descriptive titles that explain the relationship between variables (not user's request)
+        
+        TITLE GUIDELINES:
+        - Focus on variable relationships, not user requests
+        - Use format: "Y Variable vs X Variable" for scatter/line plots
+        - Use format: "Y Variable by X Variable" for bar/histogram plots  
+        - Add "across [Group]" if there's a color/grouping variable
+        - Examples: "Sepal Length vs Sepal Width by Species", "Sales by Region across Years"
+        - Keep titles concise and data-focused
         
         SUPPORTED CHART TYPES (not limited to):
         - bar, line, scatter, histogram, pie, area, box, violin, heatmap
@@ -218,7 +226,7 @@ class ChartChooserNode(BaseNode):
             "hue_column": "grouping column if applicable",
             "groupby_column": "aggregation column if applicable",
             "statistical_overlay": "trend/confidence/regression if requested",
-            "title": "engaging title using user's language",
+            "title": "descriptive title explaining the relationship between variables (e.g., 'Variable A vs Variable B by Category')",
             "x_label": "clear x-axis label",
             "y_label": "clear y-axis label",
             "color_palette": "attractive color scheme",
@@ -344,6 +352,24 @@ class ChartChooserNode(BaseNode):
                     hue_col = col
                     break
         
+        # Create relationship-based title
+        title_parts = [y_col.replace('_', ' ').title()]
+        if chart_type in ['scatter', 'line']:
+            title_parts.append("vs")
+            title_parts.append(x_col.replace('_', ' ').title())
+        elif chart_type in ['bar', 'histogram']:
+            title_parts.append("by")
+            title_parts.append(x_col.replace('_', ' ').title())
+        else:
+            title_parts.append("by")
+            title_parts.append(x_col.replace('_', ' ').title())
+        
+        if hue_col:
+            title_parts.append("across")
+            title_parts.append(hue_col.replace('_', ' ').title())
+        
+        relationship_title = " ".join(title_parts)
+        
         return {
             "chart_type": chart_type,
             "viable_with_requested": True,
@@ -353,7 +379,7 @@ class ChartChooserNode(BaseNode):
             "hue_column": hue_col,
             "groupby_column": None,
             "statistical_overlay": None,
-            "title": f"✨ {user_prompt[:60]}{'...' if len(user_prompt) > 60 else ''}",
+            "title": relationship_title,
             "x_label": x_col.replace('_', ' ').title(),
             "y_label": y_col.replace('_', ' ').title(),
             "color_palette": "viridis",
