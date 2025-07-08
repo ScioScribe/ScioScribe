@@ -412,20 +412,20 @@ def generate_plan_summary(state: Dict[str, Any]) -> Dict[str, Any]:
         "experimental_design": {
             "experimental_groups": len(state.get('experimental_groups', [])),
             "control_groups": len(state.get('control_groups', [])),
-            "sample_size": state.get('sample_size', {})
+            "sample_size": state.get('sample_size') or {}
         },
         "methodology": {
             "protocol_steps": len(state.get('methodology_steps', [])),
             "materials_equipment": len(state.get('materials_equipment', []))
         },
         "data_planning": {
-            "collection_methods": len(state.get('data_collection_plan', {}).get('methods', [])),
-            "analysis_approaches": len(state.get('data_analysis_plan', {}).get('statistical_tests', [])),
+            "collection_methods": len((state.get('data_collection_plan') or {}).get('methods', [])),
+            "analysis_approaches": len((state.get('data_analysis_plan') or {}).get('statistical_tests', [])),
             "identified_pitfalls": len(state.get('potential_pitfalls', []))
         },
         "administrative": {
-            "timeline": state.get('timeline', {}).get('duration', 'Not specified'),
-            "budget": state.get('budget_estimate', {}).get('total', 'Not estimated'),
+            "timeline": (state.get('timeline') or {}).get('duration', 'Not specified'),
+            "budget": (state.get('budget_estimate') or {}).get('total', 'Not estimated'),
             "ethical_considerations": bool(state.get('ethical_considerations'))
         },
         "completion_status": {

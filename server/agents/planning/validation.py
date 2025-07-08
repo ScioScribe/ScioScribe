@@ -198,6 +198,18 @@ def validate_group_list(groups: List[Dict[str, Any]], group_type: str) -> bool:
             value=groups
         )
     
+    # Define required fields based on group type
+    if group_type == 'experimental':
+        required_fields = GROUP_REQUIRED_FIELDS  # ['name', 'description', 'conditions']
+    elif group_type == 'control':
+        required_fields = ['type', 'purpose', 'description']  # Different fields for control groups
+    else:
+        raise StateValidationError(
+            f"Invalid group type: {group_type}. Must be 'experimental' or 'control'",
+            field="group_type",
+            value=group_type
+        )
+    
     for i, group in enumerate(groups):
         if not isinstance(group, dict):
             raise StateValidationError(
@@ -206,7 +218,7 @@ def validate_group_list(groups: List[Dict[str, Any]], group_type: str) -> bool:
                 value=group
             )
         
-        for field in GROUP_REQUIRED_FIELDS:
+        for field in required_fields:
             if field not in group:
                 raise StateValidationError(
                     f"Missing required field '{field}' in {group_type} group",
