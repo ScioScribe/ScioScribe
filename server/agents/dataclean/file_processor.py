@@ -15,7 +15,6 @@ import logging
 
 from .models import ProcessingResult, FileMetadata
 from .easyocr_processor import EasyOCRProcessor
-from .simple_ocr_processor import SimpleOCRProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -30,15 +29,13 @@ class FileProcessingAgent:
         """Initialize the file processing agent."""
         self.supported_formats = ['.csv', '.xlsx', '.xls']
         
-        # Initialize OCR processors (EasyOCR as primary, SimpleOCR as fallback)
+        # Initialize EasyOCR processor for image processing
         try:
             self.ocr_processor = EasyOCRProcessor(languages=['en'], gpu=False)
-            self.ocr_fallback = SimpleOCRProcessor()
-            logger.info("EasyOCR initialized as primary OCR processor")
+            logger.info("EasyOCR initialized successfully")
         except Exception as e:
-            logger.warning(f"EasyOCR initialization failed: {str(e)}, using SimpleOCR")
-            self.ocr_processor = SimpleOCRProcessor()
-            self.ocr_fallback = None
+            logger.error(f"EasyOCR initialization failed: {str(e)}")
+            self.ocr_processor = None
             
         self.image_formats = ['.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif', '.gif', '.webp']
         
@@ -160,7 +157,7 @@ class FileProcessingAgent:
     
     async def _process_image(self, file_path: str) -> pd.DataFrame:
         """
-        Process image files using OCR to extract tabular data.
+        Process image files using EasyOCR to extract tabular data.
         
         Args:
             file_path: Path to the image file
@@ -169,23 +166,18 @@ class FileProcessingAgent:
             Processed DataFrame from OCR extraction
         """
         try:
-            # Use the primary OCR processor to extract data
+            if not self.ocr_processor:
+                logger.error("EasyOCR processor not available")
+                return pd.DataFrame({'OCR_Error': ['OCR processor not available']})
+            
+            # Use EasyOCR to extract data
             ocr_result = await self.ocr_processor.process_image(file_path)
             
             if ocr_result and not ocr_result.extracted_data.empty:
-                logger.info(f"Successfully processed image with primary OCR. Shape: {ocr_result.extracted_data.shape}, Confidence: {ocr_result.confidence}")
+                logger.info(f"Successfully processed image with EasyOCR. Shape: {ocr_result.extracted_data.shape}, Confidence: {ocr_result.confidence}")
                 return ocr_result.extracted_data
             
-            # Try fallback OCR processor if primary fails and fallback is available
-            if self.ocr_fallback and (not ocr_result or ocr_result.extracted_data.empty):
-                logger.info(f"Primary OCR failed, trying fallback OCR processor")
-                fallback_result = await self.ocr_fallback.process_image(file_path)
-                
-                if fallback_result and not fallback_result.extracted_data.empty:
-                    logger.info(f"Successfully processed image with fallback OCR. Shape: {fallback_result.extracted_data.shape}, Confidence: {fallback_result.confidence}")
-                    return fallback_result.extracted_data
-            
-            logger.warning(f"OCR processing returned empty data for {file_path}")
+            logger.warning(f"EasyOCR processing returned empty data for {file_path}")
             # Return empty DataFrame with placeholder structure
             return pd.DataFrame({'OCR_Error': ['No data extracted from image']})
                 

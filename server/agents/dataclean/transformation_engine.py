@@ -23,7 +23,7 @@ from .models import (
     ValueMapping,
     TransformationAction
 )
-from .firebase_store import get_data_store
+from .memory_store import get_data_store
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class TransformationEngine:
     
     def __init__(self):
         """Initialize the transformation engine."""
-        # Use Firebase data store for persistent storage
+        # Use in-memory data store for storage
         self.data_store = get_data_store()
         
     async def create_transformation_preview(
@@ -512,7 +512,7 @@ class TransformationEngine:
         Returns:
             List of matching transformation rules
         """
-        # Use the Firebase store's search functionality
+        # Use the data store's search functionality
         if search_term and user_id:
             return await self.data_store.search_transformation_rules(search_term, user_id)
         

@@ -51,7 +51,7 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "timestamp": "2024-01-01T00:00:00Z"
+        "timestamp": "2025-01-01T00:00:00Z"
     }
 
 # Global exception handler

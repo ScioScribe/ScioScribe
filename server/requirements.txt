@@ -17,10 +17,6 @@ openpyxl>=3.1.0
 xlrd==2.0.1
 python-docx==1.1.2
 
-# Firebase & Google Cloud
-firebase-admin==6.5.0
-google-cloud-firestore==2.19.0
-google-cloud-storage==2.18.2
 
 # Vector Store & Embeddings (Updated)
 chromadb==0.5.23
@@ -36,7 +32,6 @@ redis==5.2.0
 
 # Image Processing (for OCR)
 pillow==11.0.0
-pytesseract==0.3.13
 opencv-python==4.10.0.84
 easyocr==1.7.2
 

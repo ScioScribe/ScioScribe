@@ -33,11 +33,11 @@ from agents.dataclean.models import (
     TransformationAction,
     ValueMapping
 )
-from agents.dataclean.image_processor import ImageProcessingAgent
 from agents.dataclean.file_processor import FileProcessingAgent
 from agents.dataclean.quality_agent import DataQualityAgent
 from agents.dataclean.transformation_engine import TransformationEngine
-from agents.dataclean.firebase_store import get_data_store
+from agents.dataclean.suggestion_converter import SuggestionConverter
+from agents.dataclean.memory_store import get_data_store
 from config import get_openai_client, validate_openai_config
 
 router = APIRouter(prefix="/api/dataclean", tags=["data-cleaning"])
@@ -52,14 +52,14 @@ quality_agent = DataQualityAgent(openai_client) if openai_client else None
 # Initialize the transformation engine for Phase 2.5
 transformation_engine = TransformationEngine()
 
+# Initialize the suggestion converter for applying AI suggestions
+suggestion_converter = SuggestionConverter()
+
 # Initialize the EasyOCR processor for better OCR accuracy
 from agents.dataclean.easyocr_processor import EasyOCRProcessor
 easyocr_processor = EasyOCRProcessor(languages=['en'], gpu=False)  # CPU mode for compatibility
 
-# Keep old image processor as fallback
-image_processor = ImageProcessingAgent()
-
-# Initialize Firebase data store (with fallback to in-memory)
+# Initialize in-memory data store
 data_store = get_data_store()
 
 
@@ -123,7 +123,7 @@ async def upload_file(
             updated_at=datetime.now()
         )
         
-        # Store in Firebase (with fallback to in-memory)
+        # Store in memory
         await data_store.save_data_artifact(artifact)
         
         # Queue background processing
@@ -166,7 +166,7 @@ async def apply_suggestion(request: ApplySuggestionRequest):
         request: Contains artifact_id, suggestion_id, and action
         
     Returns:
-        Success message
+        Success message with transformation details
     """
     artifact = await data_store.get_data_artifact(request.artifact_id)
     if not artifact:
@@ -182,17 +182,77 @@ async def apply_suggestion(request: ApplySuggestionRequest):
     if not suggestion:
         raise HTTPException(status_code=404, detail="Suggestion not found")
     
-    # For now, just log the action (implement actual data transformation later)
-    action_msg = f"Suggestion {request.suggestion_id} was {request.action}ed"
+    if request.action == "reject":
+        # Remove the suggestion from the list
+        artifact.suggestions = [s for s in artifact.suggestions if s.suggestion_id != request.suggestion_id]
+        artifact.updated_at = datetime.now()
+        await data_store.update_data_artifact(artifact)
+        
+        return {
+            "status": "success",
+            "message": f"Suggestion {request.suggestion_id} was rejected and removed"
+        }
     
-    # Update timestamp and save
-    artifact.updated_at = datetime.now()
-    await data_store.update_data_artifact(artifact)
+    elif request.action == "accept":
+        try:
+            # Get the current DataFrame
+            df = await data_store.get_dataframe(request.artifact_id)
+            if df is None:
+                raise HTTPException(status_code=404, detail="Data not available for transformation")
+            
+            # Convert suggestion to transformation
+            transformation = await suggestion_converter.convert_suggestion_to_transformation(
+                suggestion, df, artifact.owner_id
+            )
+            
+            # Apply the transformation
+            transformed_df, data_version = await transformation_engine.apply_transformation(
+                df, transformation, request.artifact_id, artifact.owner_id
+            )
+            
+            # Update the stored DataFrame
+            await data_store.save_dataframe(request.artifact_id, transformed_df)
+            
+            # Add transformation to artifact
+            artifact.custom_transformations.append(transformation)
+            
+            # Update transformation history
+            if not artifact.transformation_history:
+                from agents.dataclean.models import TransformationHistory
+                artifact.transformation_history = TransformationHistory(
+                    artifact_id=request.artifact_id,
+                    current_version=data_version.version_number,
+                    versions=[data_version],
+                    can_undo=True,
+                    can_redo=False
+                )
+            else:
+                artifact.transformation_history.versions.append(data_version)
+                artifact.transformation_history.current_version = data_version.version_number
+                artifact.transformation_history.can_undo = True
+                artifact.transformation_history.can_redo = False
+            
+            # Remove the applied suggestion from the list
+            artifact.suggestions = [s for s in artifact.suggestions if s.suggestion_id != request.suggestion_id]
+            
+            # Update artifact timestamp
+            artifact.updated_at = datetime.now()
+            await data_store.update_data_artifact(artifact)
+            
+            return {
+                "status": "success",
+                "message": f"Suggestion {request.suggestion_id} was successfully applied",
+                "transformation_id": transformation.transformation_id,
+                "version": data_version.version_number,
+                "can_undo": True,
+                "affected_rows": len(transformed_df)
+            }
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to apply suggestion: {str(e)}")
     
-    return {
-        "status": "success",
-        "message": action_msg
-    }
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action. Use 'accept' or 'reject'.")
 
 
 @router.post("/update-notes")
@@ -514,19 +574,16 @@ async def save_transformation_rule(request: SaveTransformationRuleRequest):
 
 @router.post("/test-ocr")
 async def test_ocr_direct(
-    file: UploadFile = File(...),
-    processor: str = "easyocr"
+    file: UploadFile = File(...)
 ):
     """
-    Test OCR processing directly without creating data artifacts.
+    Test EasyOCR processing directly without creating data artifacts.
     
-    This endpoint is for testing OCR functionality and comparing different
-    OCR processors. It processes the image immediately and returns results.
+    This endpoint is for testing OCR functionality. It processes the 
+    image immediately and returns results using EasyOCR.
     
     Args:
         file: The uploaded image file
-        processor: OCR processor to use ("easyocr", "simple", or "legacy")
-        languages: List of language codes for EasyOCR (default: ["en"])
         
     Returns:
         OCR results including extracted data, confidence, and processing notes
@@ -554,17 +611,8 @@ async def test_ocr_direct(
             content = await file.read()
             await f.write(content)
         
-        # Initialize OCR processor based on selection
-        if processor == "easyocr":
-            ocr_proc = EasyOCRProcessor(languages=['en'], gpu=False)
-        elif processor == "simple":
-            from agents.dataclean.simple_ocr_processor import SimpleOCRProcessor
-            ocr_proc = SimpleOCRProcessor()
-        elif processor == "legacy":
-            from agents.dataclean.image_processor import ImageProcessingAgent
-            ocr_proc = ImageProcessingAgent()
-        else:
-            raise HTTPException(status_code=400, detail="Invalid processor. Use 'easyocr', 'simple', or 'legacy'")
+        # Use EasyOCR processor
+        ocr_proc = EasyOCRProcessor(languages=['en'], gpu=False)
         
         # Process the image
         start_time = datetime.now()
@@ -577,7 +625,7 @@ async def test_ocr_direct(
         # Format response
         response = {
             "success": True,
-            "processor_used": processor,
+            "processor_used": "easyocr",
             "processing_time_seconds": processing_time,
             "file_info": {
                 "filename": file.filename,
@@ -598,20 +646,19 @@ async def test_ocr_direct(
             }
         }
         
-        # Add processor-specific details
-        if processor == "easyocr":
-            try:
-                if hasattr(ocr_result, 'detected_text_boxes') and ocr_result.detected_text_boxes:
-                    response["ocr_results"]["detected_text_boxes"] = len(ocr_result.detected_text_boxes)
-                    response["ocr_results"]["text_regions"] = [
-                        {
-                            "text": box["text"],
-                            "confidence": box["confidence"],
-                            "bbox": box["bbox"]
-                        } for box in ocr_result.detected_text_boxes[:5]  # Show first 5 boxes
-                    ]
-            except AttributeError:
-                pass  # detected_text_boxes not available for this result type
+        # Add EasyOCR-specific details
+        try:
+            if hasattr(ocr_result, 'detected_text_boxes') and ocr_result.detected_text_boxes:
+                response["ocr_results"]["detected_text_boxes"] = len(ocr_result.detected_text_boxes)
+                response["ocr_results"]["text_regions"] = [
+                    {
+                        "text": box["text"],
+                        "confidence": box["confidence"],
+                        "bbox": box["bbox"]
+                    } for box in ocr_result.detected_text_boxes[:5]  # Show first 5 boxes
+                ]
+        except AttributeError:
+            pass  # detected_text_boxes not available for this result type
         
         return response
         
@@ -626,18 +673,16 @@ async def test_ocr_direct(
 @router.get("/ocr-processors")
 async def get_ocr_processors():
     """
-    Get information about available OCR processors.
+    Get information about the available OCR processor.
     
     Returns:
-        List of available OCR processors and their capabilities
+        Information about EasyOCR processor and its capabilities
     """
     try:
-        processors = []
-        
         # EasyOCR info
         try:
             easyocr_proc = EasyOCRProcessor(languages=['en'], gpu=False)
-            processors.append({
+            processor_info = {
                 "name": "easyocr",
                 "description": "Deep learning-based OCR with high accuracy",
                 "supported_languages": await easyocr_proc.get_supported_languages(),
@@ -650,62 +695,17 @@ async def get_ocr_processors():
                     "Table detection"
                 ],
                 "status": "available"
-            })
+            }
         except Exception as e:
-            processors.append({
+            processor_info = {
                 "name": "easyocr",
                 "status": "unavailable",
                 "error": str(e)
-            })
-        
-        # Simple OCR info
-        try:
-            from agents.dataclean.simple_ocr_processor import SimpleOCRProcessor
-            simple_proc = SimpleOCRProcessor()
-            processors.append({
-                "name": "simple",
-                "description": "Tesseract-based OCR with image preprocessing",
-                "supported_formats": await simple_proc.get_supported_formats(),
-                "features": [
-                    "Image enhancement",
-                    "Tesseract OCR",
-                    "Text parsing",
-                    "Confidence scoring"
-                ],
-                "status": "available"
-            })
-        except Exception as e:
-            processors.append({
-                "name": "simple",
-                "status": "unavailable",
-                "error": str(e)
-            })
-        
-        # Legacy image processor info
-        try:
-            from agents.dataclean.image_processor import ImageProcessingAgent
-            processors.append({
-                "name": "legacy",
-                "description": "OpenCV-based table detection with Tesseract OCR",
-                "features": [
-                    "Table structure detection",
-                    "OpenCV preprocessing",
-                    "Tesseract OCR",
-                    "Cell positioning"
-                ],
-                "status": "available"
-            })
-        except Exception as e:
-            processors.append({
-                "name": "legacy",
-                "status": "unavailable",
-                "error": str(e)
-            })
+            }
         
         return {
-            "available_processors": processors,
-            "recommended": "easyocr",
-            "total_count": len([p for p in processors if p.get("status") == "available"])
+            "processor": processor_info,
+            "available": processor_info.get("status") == "available"
         }
         
     except Exception as e:
@@ -779,7 +779,7 @@ async def upload_image(
             updated_at=datetime.now()
         )
         
-        # Store in Firebase (with fallback to in-memory)
+        # Store in memory
         await data_store.save_data_artifact(artifact)
         
         # Queue background OCR processing
@@ -857,15 +857,13 @@ async def get_ocr_result(artifact_id: str):
 @router.post("/reprocess-image")
 async def reprocess_image(
     background_tasks: BackgroundTasks,
-    artifact_id: str,
-    tesseract_config: Optional[str] = None
+    artifact_id: str
 ):
     """
-    Reprocess an image with different OCR settings.
+    Reprocess an image using EasyOCR.
     
     Args:
         artifact_id: ID of the data artifact
-        tesseract_config: Optional custom Tesseract configuration
         
     Returns:
         Success message
@@ -887,8 +885,7 @@ async def reprocess_image(
     background_tasks.add_task(
         process_image_background,
         artifact_id,
-        artifact.original_file.path,
-        tesseract_config
+        artifact.original_file.path
     )
     
     return {
@@ -1097,7 +1094,7 @@ async def process_file_background(artifact_id: str, file_path: str):
                             else:
                                 full_df = df_sample
                             
-                            # Save DataFrame to Firebase
+                            # Save DataFrame to memory
                             await data_store.save_dataframe(artifact_id, full_df)
                             print(f"Stored full DataFrame for transformations: {full_df.shape}")
                         except Exception as df_error:
@@ -1118,10 +1115,11 @@ async def process_file_background(artifact_id: str, file_path: str):
                         # Update artifact with AI-generated suggestions
                         artifact.suggestions = suggestions
                         
-                        # Calculate quality score based on issues found
+                        # Calculate quality score based on number of distinct issues found
                         total_rows = df_sample.shape[0]
-                        total_issues = sum(issue.affected_rows for issue in quality_issues)
-                        quality_score = max(0.0, 1.0 - (total_issues / max(total_rows, 1)))
+                        num_issues = len(quality_issues)
+                        # Score based on issue density with gradual penalty: 0.05 per issue, min score 0.1
+                        quality_score = max(0.1, 1.0 - (num_issues * 0.05))
                         artifact.quality_score = round(quality_score, 2)
                         
                         print(f"Quality score: {artifact.quality_score}")
@@ -1165,14 +1163,13 @@ async def process_file_background(artifact_id: str, file_path: str):
             print(f"Cleaned up temporary file: {file_path}")
 
 
-async def process_image_background(artifact_id: str, image_path: str, tesseract_config: Optional[str] = None):
+async def process_image_background(artifact_id: str, image_path: str):
     """
-    Background task for processing uploaded images with OCR.
+    Background task for processing uploaded images with EasyOCR.
     
     Args:
         artifact_id: ID of the data artifact
         image_path: Path to the uploaded image file
-        tesseract_config: Optional custom Tesseract configuration
     """
     try:
         # Get the artifact
@@ -1217,8 +1214,8 @@ async def process_image_background(artifact_id: str, image_path: str, tesseract_
                     
                     # Update quality score considering both OCR confidence and AI analysis
                     total_rows = ocr_result.extracted_data.shape[0]
-                    total_issues = sum(issue.affected_rows for issue in quality_issues)
-                    ai_quality_score = max(0.0, 1.0 - (total_issues / max(total_rows, 1)))
+                    num_issues = len(quality_issues)
+                    ai_quality_score = max(0.1, 1.0 - (num_issues * 0.05))
                     
                     # Combine OCR confidence and AI quality score
                     combined_score = (ocr_result.confidence * 0.6) + (ai_quality_score * 0.4)
