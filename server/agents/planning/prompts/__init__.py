@@ -58,8 +58,20 @@ from .data_prompts import (
     validate_data_plan_completeness
 )
 
-# Additional prompts will be added as implemented
-# from .review_prompts import REVIEW_SYSTEM_PROMPT, REVIEW_VALIDATION_PROMPT
+from .review_prompts import (
+    REVIEW_SYSTEM_PROMPT,
+    FINAL_VALIDATION_QUESTIONS,
+    PLAN_OPTIMIZATION_QUESTIONS,
+    EXPORT_PREPARATION_QUESTIONS,
+    USER_APPROVAL_QUESTIONS,
+    REVIEW_RESPONSE_TEMPLATES,
+    FINAL_VALIDATION_CRITERIA,
+    EXPORT_FORMATS,
+    validate_final_plan_completeness,
+    generate_plan_summary,
+    format_review_response,
+    generate_export_metadata
+)
 
 __all__ = [
     # Objective prompts
@@ -109,5 +121,17 @@ __all__ = [
     "format_data_response",
     "validate_data_plan_completeness",
     
-    # Additional exports will be added as implemented
+    # Review prompts
+    "REVIEW_SYSTEM_PROMPT",
+    "FINAL_VALIDATION_QUESTIONS",
+    "PLAN_OPTIMIZATION_QUESTIONS",
+    "EXPORT_PREPARATION_QUESTIONS",
+    "USER_APPROVAL_QUESTIONS",
+    "REVIEW_RESPONSE_TEMPLATES",
+    "FINAL_VALIDATION_CRITERIA",
+    "EXPORT_FORMATS",
+    "validate_final_plan_completeness",
+    "generate_plan_summary",
+    "format_review_response",
+    "generate_export_metadata"
 ] 
