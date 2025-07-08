@@ -295,7 +295,7 @@ class EasyOCRProcessor:
                 df = pd.DataFrame(table_data)
             
             # Clean up DataFrame
-            df = df.replace('', np.nan)
+            df = df.replace('', np.nan).infer_objects(copy=False)
             df = df.dropna(how='all')
             df = df.loc[:, ~df.columns.duplicated()]
             

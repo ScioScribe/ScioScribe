@@ -809,6 +809,9 @@ async def get_ocr_result(artifact_id: str):
     Returns:
         OCR result including extracted data and confidence scores
     """
+    import math
+    import json
+    
     artifact = await data_store.get_data_artifact(artifact_id)
     if not artifact:
         raise HTTPException(status_code=404, detail="Data artifact not found")
@@ -816,15 +819,36 @@ async def get_ocr_result(artifact_id: str):
     # Get extracted DataFrame
     df = await data_store.get_dataframe(artifact_id)
     
+    # Helper function to clean float values for JSON serialization
+    def clean_float(value):
+        if value is None:
+            return 0.0
+        if isinstance(value, (int, float)):
+            if math.isnan(value) or math.isinf(value):
+                return 0.0
+            return float(value)
+        return value
+    
+    # Clean extracted data for JSON compliance
+    extracted_data = []
+    if df is not None and not df.empty:
+        try:
+            # Replace NaN/inf values with None for JSON compatibility
+            df_clean = df.fillna('')
+            extracted_data = df_clean.to_dict(orient="records")
+        except Exception as e:
+            print(f"Error converting DataFrame to dict: {e}")
+            extracted_data = []
+    
     return {
         "artifact_id": artifact_id,
         "status": artifact.status,
-        "extracted_data": df.to_dict(orient="records") if df is not None and not df.empty else [],
+        "extracted_data": extracted_data,
         "data_shape": [df.shape[0], df.shape[1]] if df is not None else [0, 0],
-        "quality_score": artifact.quality_score,
+        "quality_score": clean_float(artifact.quality_score),
         "suggestions": artifact.suggestions,
         "processing_notes": getattr(artifact, 'processing_notes', []),
-        "ocr_confidence": getattr(artifact, 'ocr_confidence', 0.0),
+        "ocr_confidence": clean_float(getattr(artifact, 'ocr_confidence', 0.0)),
         "created_at": artifact.created_at,
         "updated_at": artifact.updated_at
     }
@@ -871,6 +895,147 @@ async def reprocess_image(
         "status": "success",
         "message": "Image reprocessing started"
     }
+
+
+@router.get("/export-csv/{artifact_id}")
+async def export_cleaned_data_as_csv(artifact_id: str):
+    """
+    Export the final cleaned and transformed data as a downloadable CSV file.
+    
+    This endpoint works for ALL data sources:
+    - CSV uploads with transformations applied
+    - OCR results from image processing
+    - Any artifact with applied custom transformations
+    
+    Args:
+        artifact_id: ID of the data artifact to export
+        
+    Returns:
+        CSV file download with cleaned data
+    """
+    import io
+    from fastapi.responses import StreamingResponse
+    
+    # Get the data artifact
+    artifact = await data_store.get_data_artifact(artifact_id)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Data artifact not found")
+    
+    # Get the current DataFrame (with all transformations applied)
+    df = await data_store.get_dataframe(artifact_id)
+    if df is None or df.empty:
+        raise HTTPException(status_code=404, detail="No data available for export")
+    
+    try:
+        # Clean the DataFrame for CSV export
+        df_export = df.copy()
+        
+        # Handle any remaining NaN values
+        df_export = df_export.fillna('')
+        
+        # Convert DataFrame to CSV string
+        csv_buffer = io.StringIO()
+        df_export.to_csv(csv_buffer, index=False, encoding='utf-8')
+        csv_content = csv_buffer.getvalue()
+        csv_buffer.close()
+        
+        # Create filename with timestamp
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"cleaned_data_{artifact_id[:8]}_{timestamp}.csv"
+        
+        # Create streaming response for file download
+        def generate_csv():
+            yield csv_content.encode('utf-8')
+        
+        response = StreamingResponse(
+            generate_csv(),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "Content-Type": "text/csv; charset=utf-8"
+            }
+        )
+        
+        return response
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"CSV export failed: {str(e)}")
+
+
+@router.get("/export-data/{artifact_id}")
+async def get_cleaned_data_json(artifact_id: str):
+    """
+    Get the final cleaned data in JSON format for API consumption.
+    
+    This complements the CSV export endpoint by providing JSON access
+    to the same cleaned and transformed data.
+    
+    Args:
+        artifact_id: ID of the data artifact
+        
+    Returns:
+        JSON object with cleaned data and metadata
+    """
+    import math
+    
+    # Get the data artifact
+    artifact = await data_store.get_data_artifact(artifact_id)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Data artifact not found")
+    
+    # Get the current DataFrame (with all transformations applied)
+    df = await data_store.get_dataframe(artifact_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="No data available")
+    
+    # Helper function to clean float values for JSON serialization
+    def clean_float(value):
+        if value is None:
+            return 0.0
+        if isinstance(value, (int, float)):
+            if math.isnan(value) or math.isinf(value):
+                return 0.0
+            return float(value)
+        return value
+    
+    try:
+        # Clean data for JSON export
+        if df.empty:
+            cleaned_data = []
+        else:
+            df_clean = df.fillna('')
+            cleaned_data = df_clean.to_dict(orient="records")
+        
+        # Get transformation history summary
+        transformation_summary = []
+        if artifact.transformation_history:
+            transformation_summary = [
+                {
+                    "version": version.version_number,
+                    "description": version.description,
+                    "transformations": version.transformations_applied,
+                    "created_at": version.created_at
+                }
+                for version in artifact.transformation_history.versions
+            ]
+        
+        return {
+            "artifact_id": artifact_id,
+            "status": artifact.status,
+            "data": cleaned_data,
+            "data_shape": [df.shape[0], df.shape[1]],
+            "columns": list(df.columns),
+            "quality_score": clean_float(artifact.quality_score),
+            "ocr_confidence": clean_float(getattr(artifact, 'ocr_confidence', None)),
+            "processing_notes": getattr(artifact, 'processing_notes', []),
+            "transformation_history": transformation_summary,
+            "export_timestamp": datetime.now(),
+            "data_source": "OCR" if hasattr(artifact, 'ocr_confidence') else "File Upload"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Data export failed: {str(e)}")
 
 
 @router.get("/storage-stats")

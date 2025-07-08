@@ -158,6 +158,10 @@ class DataArtifact(BaseModel):
     created_at: datetime
     updated_at: datetime
     
+    # OCR-specific fields
+    ocr_confidence: Optional[float] = None
+    processing_notes: Optional[List[str]] = None
+    
     # Phase 2.5 additions
     custom_transformations: List[CustomTransformation] = []
     transformation_history: Optional[TransformationHistory] = None
