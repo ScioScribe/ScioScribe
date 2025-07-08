@@ -306,14 +306,55 @@ def setup_logging(
     logger.info(f"Logging configured with level: {log_level}")
 
 
-@contextmanager
-def performance_monitor(operation_name: str, debugger: Optional[StateDebugger] = None):
-    """Context manager for monitoring operation performance.
+def performance_monitor(operation_name_or_func=None, debugger: Optional[StateDebugger] = None):
+    """
+    Decorator for monitoring operation performance.
+    
+    Can be used as:
+    1. Function decorator: @performance_monitor
+    2. Decorator with args: @performance_monitor("custom_name")
     
     Args:
-        operation_name: Name of the operation being monitored
+        operation_name_or_func: Either operation name string or function (when used as decorator)
         debugger: Optional StateDebugger instance for metrics storage
     """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            operation_name = operation_name_or_func if isinstance(operation_name_or_func, str) else func.__name__
+            start_time = time.time()
+            
+            try:
+                logger.debug(f"Starting operation: {operation_name}")
+                result = func(*args, **kwargs)
+                return result
+                
+            except Exception as e:
+                logger.error(f"Operation {operation_name} failed: {str(e)}")
+                raise
+                
+            finally:
+                duration = time.time() - start_time
+                logger.debug(f"Operation {operation_name} completed in {duration:.3f}s")
+                
+                if debugger:
+                    if operation_name not in debugger.performance_metrics:
+                        debugger.performance_metrics[operation_name] = []
+                    debugger.performance_metrics[operation_name].append(duration)
+        
+        return wrapper
+    
+    # If used as a decorator without arguments
+    if callable(operation_name_or_func):
+        return decorator(operation_name_or_func)
+    
+    # If used as a decorator with arguments
+    return decorator
+
+
+@contextmanager
+def performance_context(operation_name: str, debugger: Optional[StateDebugger] = None):
+    """Context manager for monitoring operation performance."""
     start_time = time.time()
     
     try:
@@ -360,7 +401,7 @@ def trace_state_changes(debugger: StateDebugger):
             logger.debug(f"Entering function: {func.__name__}")
             
             try:
-                with performance_monitor(func.__name__, debugger):
+                with performance_context(func.__name__, debugger):
                     result = func(*args, **kwargs)
                 
                 # Log state change if state was modified

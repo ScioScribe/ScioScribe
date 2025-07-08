@@ -19,7 +19,7 @@ except ImportError:
         "pip install langchain-openai langchain-core"
     )
 
-from ...config import get_settings, setup_environment_variables, get_openai_config, validate_required_settings
+from config import get_settings, setup_environment_variables, get_openai_config, validate_required_settings
 from .debug import StateDebugger, performance_monitor
 
 

@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """
-End-to-end testing script for the experiment planning agent system.
+Interactive end-to-end testing script for the experiment planning agent system.
 
 This script provides a command-line interface to test the complete LangGraph
 orchestration, allowing manual testing of the planning agent conversations.
+
+Usage:
+    From the server directory, run:
+    python -m agents.planning.tests.interactive_planning_test
+
+    Or from the planning tests directory:
+    python interactive_planning_test.py
 """
 
 import sys
@@ -15,7 +22,9 @@ from datetime import datetime
 import json
 
 # Add server directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+current_dir = os.path.dirname(os.path.abspath(__file__))
+server_dir = os.path.join(current_dir, '..', '..', '..')
+sys.path.insert(0, server_dir)
 
 try:
     from agents.planning import (
@@ -34,6 +43,7 @@ try:
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("Make sure you're running this script from the server directory")
+    print("Usage: python -m agents.planning.tests.interactive_planning_test")
     sys.exit(1)
 
 
@@ -45,7 +55,7 @@ class PlanningFlowTester:
     orchestration and agent interactions.
     """
     
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the flow tester."""
         self.settings = get_settings()
         self.executor: Optional[PlanningGraphExecutor] = None
@@ -62,7 +72,7 @@ class PlanningFlowTester:
     def display_header(self) -> None:
         """Display the application header."""
         print("\n" + "="*70)
-        print("🧪 SCIOSCRIBE PLANNING AGENT - END-TO-END TESTING")
+        print("🧪 SCIOSCRIBE PLANNING AGENT - INTERACTIVE TESTING")
         print("="*70)
         print("Testing complete LangGraph orchestration and agent interactions")
         print("="*70)
@@ -119,13 +129,13 @@ class PlanningFlowTester:
         # Test statistical calculator
         print("📊 Testing statistical calculator...")
         try:
-            sample_size = self.stats_calculator.calculate_sample_size(
+            sample_result = self.stats_calculator.calculate_sample_size(
                 StatisticalTestType.TWO_SAMPLE_TTEST,
                 effect_size=0.5,
                 power=0.8,
                 alpha=0.05
             )
-            print(f"✅ Statistical calculator working (sample size: {sample_size.required_sample_size})")
+            print(f"✅ Statistical calculator working (sample size: {sample_result.required_sample_size})")
         except Exception as e:
             print(f"⚠️  Statistical calculator warning: {e}")
         
@@ -549,9 +559,9 @@ class PlanningFlowTester:
                 input("⏸️  Press Enter to continue...")
 
 
-def main():
+def main() -> None:
     """Main entry point for the planning flow tester."""
-    print("🔧 Initializing Planning Flow Tester...")
+    print("🔧 Initializing Interactive Planning Test...")
     
     # Initialize configuration
     try:

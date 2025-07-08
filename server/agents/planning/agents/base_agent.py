@@ -14,7 +14,7 @@ import logging
 from ..state import ExperimentPlanState, PLANNING_STAGES
 from ..validation import StateValidationError, validate_experiment_plan_state
 from ..factory import update_state_timestamp, add_chat_message, add_error
-from ..debug import StateDebugger, performance_monitor, log_agent_interaction
+from ..debug import StateDebugger, performance_monitor, performance_context, log_agent_interaction
 from ..serialization import serialize_state_to_dict, deserialize_dict_to_state
 
 
@@ -127,7 +127,7 @@ class BaseAgent(ABC):
                 self.logger.info(f"User input received: {user_input[:100]}...")
             
             # Process state with performance monitoring
-            with performance_monitor(f"{self.agent_name}_process", self.debugger):
+            with performance_context(f"{self.agent_name}_process", self.debugger):
                 updated_state = self.process_state(state)
             
             # Validate output state

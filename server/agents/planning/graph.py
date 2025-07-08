@@ -701,7 +701,7 @@ class PlanningGraphExecutor:
             from .factory import create_new_experiment_state
             
             # Create new state
-            state = create_new_experiment_state(research_query, experiment_id)
+            state = create_new_experiment_state(research_query)
             
             # Add initial user message
             state = add_chat_message(state, "user", research_query)

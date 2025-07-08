@@ -8,7 +8,8 @@ settings for the experiment planning agent system.
 import os
 import logging
 from typing import Optional, Dict, Any
-from pydantic import BaseSettings, Field, validator
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -96,21 +97,21 @@ class Settings(BaseSettings):
         description="LangSmith project name"
     )
     
-    @validator('openai_temperature')
+    @field_validator('openai_temperature')
     def validate_temperature(cls, v):
         """Validate OpenAI temperature is within valid range."""
         if not 0.0 <= v <= 2.0:
             raise ValueError('OpenAI temperature must be between 0.0 and 2.0')
         return v
     
-    @validator('openai_max_tokens')
+    @field_validator('openai_max_tokens')
     def validate_max_tokens(cls, v):
         """Validate max tokens is positive."""
         if v <= 0:
             raise ValueError('Max tokens must be positive')
         return v
     
-    @validator('log_level')
+    @field_validator('log_level')
     def validate_log_level(cls, v):
         """Validate log level is valid."""
         valid_levels = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
@@ -118,11 +119,11 @@ class Settings(BaseSettings):
             raise ValueError(f'Log level must be one of: {valid_levels}')
         return v.upper()
     
-    class Config:
-        """Pydantic configuration."""
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "case_sensitive": False
+    }
 
 
 # Global settings instance
