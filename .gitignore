@@ -1,3 +1,5 @@
 server/venv/
 tasks
 .cursor
+.env
+.DS_Store
