@@ -46,8 +46,19 @@ from .methodology_prompts import (
     validate_methodology_completeness
 )
 
+from .data_prompts import (
+    DATA_SYSTEM_PROMPT,
+    DATA_COLLECTION_QUESTIONS,
+    STATISTICAL_ANALYSIS_QUESTIONS,
+    VISUALIZATION_QUESTIONS,
+    PITFALL_IDENTIFICATION_QUESTIONS,
+    SUCCESS_CRITERIA_QUESTIONS,
+    get_data_domain_guidance,
+    format_data_response,
+    validate_data_plan_completeness
+)
+
 # Additional prompts will be added as implemented
-# from .data_prompts import DATA_SYSTEM_PROMPT, DATA_ANALYSIS_PROMPT
 # from .review_prompts import REVIEW_SYSTEM_PROMPT, REVIEW_VALIDATION_PROMPT
 
 __all__ = [
@@ -86,6 +97,17 @@ __all__ = [
     "get_methodology_domain_guidance",
     "format_methodology_response",
     "validate_methodology_completeness",
+    
+    # Data prompts
+    "DATA_SYSTEM_PROMPT",
+    "DATA_COLLECTION_QUESTIONS",
+    "STATISTICAL_ANALYSIS_QUESTIONS",
+    "VISUALIZATION_QUESTIONS",
+    "PITFALL_IDENTIFICATION_QUESTIONS",
+    "SUCCESS_CRITERIA_QUESTIONS",
+    "get_data_domain_guidance",
+    "format_data_response",
+    "validate_data_plan_completeness",
     
     # Additional exports will be added as implemented
 ] 

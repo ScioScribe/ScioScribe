@@ -108,7 +108,11 @@ def invalid_state() -> Dict[str, Any]:
     """Create an invalid state for testing error handling."""
     return {
         'experiment_id': 'test_invalid',
-        # Missing required fields like research_query, created_at, etc.
+        'research_query': 'Invalid query',  # Add minimal required field
+        'chat_history': [],  # Add required field for chat functionality
+        'created_at': datetime.utcnow(),  # Add required field
+        'updated_at': datetime.utcnow(),  # Add required field
+        # Missing many other required fields to test validation
         'some_invalid_field': 'invalid_value'
     }
 

@@ -13,9 +13,9 @@ from .objective_agent import ObjectiveAgent
 from .variable_agent import VariableAgent
 from .design_agent import DesignAgent
 from .methodology_agent import MethodologyAgent
+from .data_agent import DataAgent
 
 # Additional agents will be added as implemented
-# from .data_agent import DataAgent
 # from .review_agent import ReviewAgent
 
 __all__ = [
@@ -24,5 +24,6 @@ __all__ = [
     "VariableAgent",
     "DesignAgent",
     "MethodologyAgent",
+    "DataAgent",
     # Additional agents will be added as implemented
 ] 
