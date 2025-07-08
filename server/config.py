@@ -243,8 +243,23 @@ def get_openai_client():
         return None
 
 
-async def validate_openai_config() -> bool:
-    """Validate OpenAI configuration."""
+def validate_openai_config() -> bool:
+    """Validate OpenAI configuration synchronously."""
+    settings = get_settings()
+    
+    # Basic validation - check if API key is present
+    if not settings.openai_api_key:
+        return False
+    
+    # Check if API key format is reasonable (starts with 'sk-')
+    if not settings.openai_api_key.startswith('sk-'):
+        return False
+    
+    return True
+
+
+async def validate_openai_config_async() -> bool:
+    """Validate OpenAI configuration asynchronously with API call."""
     client = get_openai_client()
     if not client:
         return False
