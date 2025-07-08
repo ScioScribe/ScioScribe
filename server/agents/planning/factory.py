@@ -224,8 +224,14 @@ def add_error(state: ExperimentPlanState, error_message: str) -> ExperimentPlanS
         ExperimentPlanState with updated error list
     """
     if isinstance(error_message, str) and error_message.strip():
+        # Ensure errors field exists
+        if 'errors' not in state:
+            state['errors'] = []
         state['errors'].append(error_message.strip())
-        state = update_state_timestamp(state)
+        
+        # Only update timestamp if field exists
+        if 'updated_at' in state:
+            state = update_state_timestamp(state)
     
     return state
 
