@@ -101,8 +101,29 @@ Based on the provided context, please generate a complete, step-by-step experime
 **Conversation History:**
 {chat_history}
 
+**IMPORTANT REQUIREMENTS:**
+1. Each methodology step MUST include:
+   - step_number: Sequential number (1, 2, 3, etc.)
+   - description: Detailed description of the action
+   - parameters: Dictionary of critical parameters (volumes, concentrations, temperatures, etc.)
+   - duration: Estimated time to complete (optional)
+
+2. Each material/equipment item MUST include:
+   - name: Specific name of the item
+   - type: Category (reagent, consumable, equipment)
+   - quantity: Amount needed (optional)
+   - specifications: Grade, model, supplier info (optional)
+
+**Example methodology step format:**
+{{
+  "step_number": 1,
+  "description": "Prepare growth medium at different pH levels",
+  "parameters": {{"pH_levels": "[5.0, 6.0, 7.0, 8.0, 9.0]", "buffer_system": "phosphate buffer", "volume": "500 mL each"}},
+  "duration": "30 minutes"
+}}
+
 Please generate a detailed, reproducible protocol with specific parameters and a full list of all necessary items.
-Adhere strictly to the required output format.
+Adhere strictly to the required output format with all required fields.
             """),
         ])
         
