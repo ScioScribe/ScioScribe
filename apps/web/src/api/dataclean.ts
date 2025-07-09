@@ -129,4 +129,204 @@ export async function getCleaningOptions(): Promise<{
     }
     throw new Error('Unknown error occurred while fetching cleaning options')
   }
+}
+
+// Conversation API interfaces and functions
+export interface StartConversationRequest {
+  user_id?: string
+  session_id?: string
+  artifact_id?: string
+  file_path?: string
+}
+
+export interface StartConversationResponse {
+  session_id: string
+  user_id: string
+  status: string
+  message: string
+  capabilities: string[]
+  session_info: {
+    created_at: string
+    session_type: string
+    state: string
+  }
+}
+
+export interface ConversationMessageRequest {
+  user_message: string
+  session_id: string
+  user_id?: string
+  artifact_id?: string
+}
+
+export interface ConversationMessageResponse {
+  session_id: string
+  response_type: "text" | "data_preview" | "suggestion" | "confirmation" | "error"
+  message: string
+  data?: any
+  suggestions?: Array<{
+    id: string
+    type: string
+    description: string
+    confidence: number
+  }>
+  requires_confirmation?: boolean
+  next_steps?: string[]
+}
+
+export interface ConversationConfirmationRequest {
+  session_id: string
+  confirmed: boolean
+  user_id?: string
+}
+
+export interface ConversationSessionSummary {
+  session_id: string
+  user_id: string
+  status: string
+  created_at: string
+  last_activity: string
+  message_count: number
+  operations_performed: number
+  current_state: string
+}
+
+/**
+ * Start a new conversation session for data cleaning
+ * 
+ * @param request - The conversation start request
+ * @returns Promise resolving to session information
+ */
+export async function startConversation(request: StartConversationRequest): Promise<StartConversationResponse> {
+  try {
+    const response = await fetch(`${BASE_URL}/conversation/start`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request),
+    })
+
+    if (!response.ok) {
+      const errorData: DataCleanError = await response.json()
+      throw new Error(`Failed to start conversation: ${errorData.message}`)
+    }
+
+    const result = await response.json()
+    return result
+  } catch (error) {
+    console.error("❌ Error starting conversation:", error)
+    throw error
+  }
+}
+
+/**
+ * Send a message in an active conversation session
+ * 
+ * @param request - The conversation message request
+ * @returns Promise resolving to conversation response
+ */
+export async function sendConversationMessage(request: ConversationMessageRequest): Promise<ConversationMessageResponse> {
+  try {
+    const response = await fetch(`${BASE_URL}/conversation/message`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request),
+    })
+
+    if (!response.ok) {
+      const errorData: DataCleanError = await response.json()
+      throw new Error(`Failed to send message: ${errorData.message}`)
+    }
+
+    const result = await response.json()
+    return result
+  } catch (error) {
+    console.error("❌ Error sending conversation message:", error)
+    throw error
+  }
+}
+
+/**
+ * Handle confirmation for operations that require approval
+ * 
+ * @param request - The confirmation request
+ * @returns Promise resolving to confirmation response
+ */
+export async function handleConversationConfirmation(request: ConversationConfirmationRequest): Promise<ConversationMessageResponse> {
+  try {
+    const response = await fetch(`${BASE_URL}/conversation/confirm`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request),
+    })
+
+    if (!response.ok) {
+      const errorData: DataCleanError = await response.json()
+      throw new Error(`Failed to handle confirmation: ${errorData.message}`)
+    }
+
+    const result = await response.json()
+    return result
+  } catch (error) {
+    console.error("❌ Error handling confirmation:", error)
+    throw error
+  }
+}
+
+/**
+ * Get conversation session summary
+ * 
+ * @param sessionId - The session ID
+ * @returns Promise resolving to session summary
+ */
+export async function getConversationSession(sessionId: string): Promise<ConversationSessionSummary> {
+  try {
+    const response = await fetch(`${BASE_URL}/conversation/session/${sessionId}`)
+
+    if (!response.ok) {
+      const errorData: DataCleanError = await response.json()
+      throw new Error(`Failed to get session: ${errorData.message}`)
+    }
+
+    const result = await response.json()
+    return result
+  } catch (error) {
+    console.error("❌ Error getting session:", error)
+    throw error
+  }
+}
+
+/**
+ * Get conversation capabilities
+ * 
+ * @returns Promise resolving to capabilities information
+ */
+export async function getConversationCapabilities(): Promise<{
+  status: string
+  capabilities: {
+    supported_intents: string[]
+    supported_operations: string[]
+    supported_formats: string[]
+    features: string[]
+  }
+}> {
+  try {
+    const response = await fetch(`${BASE_URL}/conversation/capabilities`)
+
+    if (!response.ok) {
+      const errorData: DataCleanError = await response.json()
+      throw new Error(`Failed to get capabilities: ${errorData.message}`)
+    }
+
+    const result = await response.json()
+    return result
+  } catch (error) {
+    console.error("❌ Error getting capabilities:", error)
+    throw error
+  }
 } 

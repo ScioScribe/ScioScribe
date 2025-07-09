@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, AsyncGenerator
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sse_starlette import EventSourceResponse
@@ -197,11 +197,16 @@ async def start_hitl_planning_session(request: StartHITLPlanningRequest):
 
 
 @router.post("/stream/chat/{session_id}")
-async def stream_chat(session_id: str, request: StreamChatRequest):
+@router.get("/stream/chat/{session_id}")
+async def stream_chat(session_id: str, request: Request):
     """
     Handles all user interactions for a session, streaming back the agent's response.
-    This single endpoint replaces /process, /approve, and GET /stream.
+    
+    GET: Establishes EventSource connection for receiving streaming updates
+    POST: Sends user input and streams back the agent's response
     """
+    import asyncio
+    
     async def event_generator():
         try:
             graph_components = _get_or_create_graph_components(session_id)
@@ -218,87 +223,145 @@ async def stream_chat(session_id: str, request: StreamChatRequest):
                 yield f"data: {error_event.json()}\n\n"
                 return
 
-            was_waiting_for_approval = _is_waiting_for_approval(current_state)
+            # Check if this is a POST request with user input
+            stream_request = None
+            if request.method == "POST":
+                try:
+                    body = await request.json()
+                    stream_request = StreamChatRequest(**body)
+                except Exception as e:
+                    logger.error(f"Failed to parse request body: {e}")
+                    error_event = StreamEvent(
+                        event_type="error",
+                        data={"error": f"Failed to parse request body: {str(e)}"}
+                    )
+                    yield f"data: {error_event.json()}\n\n"
+                    return
 
-            # Add user message to state and clear pending approval flag
-            updated_state = add_chat_message(current_state, "user", request.user_input)
-            if "pending_approval" in updated_state and updated_state["pending_approval"]:
-                updated_state["pending_approval"] = None
+            if request.method == "POST" and stream_request and stream_request.user_input:
+                was_waiting_for_approval = _is_waiting_for_approval(current_state)
 
-            # Update the state in the checkpoint
-            await graph.aupdate_state(config, updated_state)
+                # Add user message to state and clear pending approval flag
+                updated_state = add_chat_message(current_state, "user", stream_request.user_input)
+                if "pending_approval" in updated_state and updated_state["pending_approval"]:
+                    updated_state["pending_approval"] = None
 
-            # If we were waiting for approval, resume from the approval node
-            # Otherwise, continue with the updated state
-            if was_waiting_for_approval:
-                # Resume from approval node - don't re-inject state
-                graph_input = None
-                logger.info(f"Resuming from approval node for session {session_id}")
-            else:
-                # Continue with updated state
-                graph_input = updated_state
-                logger.info(f"Continuing with updated state for session {session_id}")
+                # Update the state in the checkpoint
+                await graph.aupdate_state(config, updated_state)
 
-            # Resume execution and stream updates until next approval or completion
-            async for event in graph.astream(graph_input, config, stream_mode="values"):
-                # The event is the state after each node execution
-                current_state = event
+                # If we were waiting for approval, resume from the approval node
+                # Otherwise, continue with the updated state
+                if was_waiting_for_approval:
+                    # Resume from approval node - don't re-inject state
+                    graph_input = None
+                    logger.info(f"Resuming from approval node for session {session_id}")
+                else:
+                    # Continue with updated state
+                    graph_input = updated_state
+                    logger.info(f"Continuing with updated state for session {session_id}")
+
+                # Resume execution and stream updates until next approval or completion
+                async for event in graph.astream(graph_input, config, stream_mode="values"):
+                    # The event is the state after each node execution
+                    current_state = event
+                    
+                    # Serialize and send the state update
+                    try:
+                        serialized_output = serialize_state_to_dict(current_state)
+                    except (SerializationError, TypeError) as e:
+                        logger.warning(f"Could not serialize state update: {e}")
+                        serialized_output = {"error": "Serialization failed", "details": str(e)}
+
+                    stream_event = StreamEvent(
+                        event_type="update",
+                        data={"state": serialized_output}
+                    )
+                    yield f"data: {stream_event.json()}\n\n"
+                    
+                    # Check if we've reached another approval node
+                    if _is_waiting_for_approval(current_state):
+                        logger.info(f"Reached approval node for session {session_id}")
+                        break
+
+                # After the stream is done, check if we are waiting for another approval
+                final_state = await _get_current_state(session_id)
                 
-                # Serialize and send the state update
+                # Check if we're interrupted before an approval node
+                if not _is_waiting_for_approval(final_state):
+                    try:
+                        state_snapshot = await graph.aget_state(config)
+                        if state_snapshot.next and any("approval" in str(node) for node in state_snapshot.next):
+                            # We're interrupted before an approval node, but check if it's already approved
+                            next_node = str(state_snapshot.next[0]) if state_snapshot.next else ""
+                            stage_name = next_node.replace("_approval", "") if "_approval" in next_node else "unknown"
+                            
+                            # Only set pending_approval if the stage hasn't been approved yet
+                            approvals = final_state.get('approvals', {})
+                            if not approvals.get(stage_name, False):
+                                final_state["pending_approval"] = {
+                                    "stage": stage_name,
+                                    "timestamp": datetime.utcnow().isoformat(),
+                                    "status": "waiting"
+                                }
+                                
+                                # Update the state in the checkpoint
+                                await graph.aupdate_state(config, final_state)
+                                
+                                logger.info(f"Set pending_approval for stage: {stage_name}")
+                            else:
+                                logger.info(f"Stage {stage_name} already approved, not setting pending_approval")
+                    except Exception as e:
+                        logger.warning(f"Failed to check/set pending_approval: {e}")
+                
+                # Send approval request if we're waiting for approval
+                if _is_waiting_for_approval(final_state):
+                    approval_event = StreamEvent(
+                        event_type="approval_request",
+                        data=final_state.get("pending_approval", {})
+                    )
+                    yield f"data: {approval_event.json()}\n\n"
+            else:
+                # This is a GET request (EventSource connection)
+                # Send current state as initial event
                 try:
                     serialized_output = serialize_state_to_dict(current_state)
-                except (SerializationError, TypeError) as e:
-                    logger.warning(f"Could not serialize state update: {e}")
-                    serialized_output = {"error": "Serialization failed", "details": str(e)}
-
-                stream_event = StreamEvent(
-                    event_type="update",
-                    data={"state": serialized_output}
-                )
-                yield f"data: {stream_event.json()}\n\n"
-                
-                # Check if we've reached another approval node
-                if _is_waiting_for_approval(current_state):
-                    logger.info(f"Reached approval node for session {session_id}")
-                    break
-
-            # After the stream is done, check if we are waiting for another approval
-            final_state = await _get_current_state(session_id)
-            
-            # Check if we're interrupted before an approval node
-            if not _is_waiting_for_approval(final_state):
-                try:
-                    state_snapshot = await graph.aget_state(config)
-                    if state_snapshot.next and any("approval" in str(node) for node in state_snapshot.next):
-                        # We're interrupted before an approval node, but check if it's already approved
-                        next_node = str(state_snapshot.next[0]) if state_snapshot.next else ""
-                        stage_name = next_node.replace("_approval", "") if "_approval" in next_node else "unknown"
+                    initial_event = StreamEvent(
+                        event_type="update",
+                        data={"state": serialized_output}
+                    )
+                    yield f"data: {initial_event.json()}\n\n"
+                    
+                    # If waiting for approval, send approval request
+                    if _is_waiting_for_approval(current_state):
+                        approval_event = StreamEvent(
+                            event_type="approval_request",
+                            data=current_state.get("pending_approval", {})
+                        )
+                        yield f"data: {approval_event.json()}\n\n"
                         
-                        # Only set pending_approval if the stage hasn't been approved yet
-                        approvals = final_state.get('approvals', {})
-                        if not approvals.get(stage_name, False):
-                            final_state["pending_approval"] = {
-                                "stage": stage_name,
-                                "timestamp": datetime.utcnow().isoformat(),
-                                "status": "waiting"
-                            }
-                            
-                            # Update the state in the checkpoint
-                            await graph.aupdate_state(config, final_state)
-                            
-                            logger.info(f"Set pending_approval for stage: {stage_name}")
-                        else:
-                            logger.info(f"Stage {stage_name} already approved, not setting pending_approval")
+                except (SerializationError, TypeError) as e:
+                    logger.warning(f"Could not serialize current state: {e}")
+                    error_event = StreamEvent(
+                        event_type="error",
+                        data={"error": "Failed to serialize current state", "details": str(e)}
+                    )
+                    yield f"data: {error_event.json()}\n\n"
+                
+                # Keep the connection alive for EventSource
+                # The connection should stay open until the client disconnects
+                # We'll use a simple approach: wait indefinitely but allow for graceful shutdown
+                try:
+                    # Create a future that will never complete unless cancelled
+                    wait_forever = asyncio.Future()
+                    await wait_forever
+                except asyncio.CancelledError:
+                    # Connection was closed by client
+                    logger.info(f"EventSource connection closed for session {session_id}")
+                    return
                 except Exception as e:
-                    logger.warning(f"Failed to check/set pending_approval: {e}")
-            
-            # Send approval request if we're waiting for approval
-            if _is_waiting_for_approval(final_state):
-                approval_event = StreamEvent(
-                    event_type="approval_request",
-                    data=final_state.get("pending_approval", {})
-                )
-                yield f"data: {approval_event.json()}\n\n"
+                    # Any other error should close the connection
+                    logger.warning(f"EventSource connection error for session {session_id}: {e}")
+                    return
 
         except Exception as e:
             logger.error(f"Streaming chat error for session {session_id}: {e}", exc_info=True)
