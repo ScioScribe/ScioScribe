@@ -1,10 +1,11 @@
 """
 Data Profiler Node for Analysis Agent
 
-This module implements the data profiler node that loads CSV files and analyzes
-their structure, types, and summary statistics.
+This module implements the data profiler node that loads CSV data from text content
+and analyzes their structure, types, and summary statistics.
 """
 
+import io
 import pandas as pd
 from typing import Dict, Any, List
 
@@ -15,7 +16,7 @@ class DataProfilerNode(BaseNode):
     """
     Data Profiler Node
     
-    Loads CSV and analyzes structure, types, and summary statistics.
+    Loads CSV from text content and analyzes structure, types, and summary statistics.
     """
     
     def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -34,8 +35,9 @@ class DataProfilerNode(BaseNode):
             return {"data_schema": {}, "data_sample": []}
         
         try:
-            # Load CSV into pandas
-            df = pd.read_csv(state["csv_file_path"])
+            # Load CSV from text content into pandas
+            csv_content = state["csv_data_content"]
+            df = pd.read_csv(io.StringIO(csv_content))
             self.log_info(f"Loaded CSV with {len(df)} rows, {len(df.columns)} columns")
             
             # Analyze column types and statistics

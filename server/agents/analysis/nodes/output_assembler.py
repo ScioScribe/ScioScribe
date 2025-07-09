@@ -34,25 +34,19 @@ class OutputAssemblerNode(BaseNode):
             self.log_error(f"Output assembler called with error: {state['error_msg']}")
             # Should not happen with proper edge conditions, but handle gracefully
             return {
-                "plot_image_path": "",
-                "plot_html_path": "",
-                "plot_png_path": "",
+                "html_content": "",
                 "llm_code_used": state.get("generated_code", ""),
                 "warnings": state.get("warnings", []) + [f"Failed after {state.get('retry_count', 0)} retries: {state['error_msg']}"]
             }
         
         self.log_info("Assembling successful visualization output")
         
-        # Extract ingredients for output paths
-        ingredients = state["ingredients"]
-        html_output_path = ingredients["html_output_path"]
-        png_output_path = ingredients["png_output_path"]
+        # Get HTML content from state
+        html_content = state.get("html_content", "")
         
-        # Build final output with both HTML and PNG paths
+        # Build final output with HTML content
         return {
-            "plot_image_path": str(html_output_path),  # Primary path (HTML for interactivity)
-            "plot_html_path": str(html_output_path),
-            "plot_png_path": str(png_output_path),
+            "html_content": html_content,
             "llm_code_used": state.get("generated_code", ""),
             "warnings": state.get("warnings", [])
         } 

@@ -14,6 +14,10 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+apps/web/.vite/
+server/database/scioscribe.db-shm
+server/database/scioscribe.db-wal
+
 # Build outputs
 dist/
 dist-ssr/
@@ -340,6 +344,10 @@ coverage/
 
 # nyc test coverage
 .nyc_output
+
+#testing files
+server/agents/analysis/mock_data/
+server/agents/analysis/plots/
 
 # Temporary folders
 tmp/

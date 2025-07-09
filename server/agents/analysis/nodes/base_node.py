@@ -21,14 +21,16 @@ class BaseNode(ABC):
     for all nodes in the analysis pipeline.
     """
     
-    def __init__(self, llm: Optional[Any] = None):
+    def __init__(self, llm: Optional[Any] = None, role_context: Optional[Dict[str, Any]] = None):
         """
         Initialize the base node
         
         Args:
             llm: Language model instance for LLM operations
+            role_context: Optional role context for specialized agent behavior
         """
         self.llm = llm
+        self.role_context = role_context or {}
         self.node_name = self.__class__.__name__
         
     @abstractmethod

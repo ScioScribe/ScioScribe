@@ -14,7 +14,7 @@ from typing import Dict, List, Any, Optional
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, Response
 from pydantic import BaseModel, Field
 import aiofiles
 
@@ -35,24 +35,17 @@ _analysis_sessions: Dict[str, Dict[str, Any]] = {}
 # Request/Response Models
 class GenerateVisualizationRequest(BaseModel):
     """Request model for generating visualizations."""
-    user_prompt: str = Field(..., description="Natural language analytical question or visualization request")
-    experiment_plan_path: str = Field(..., description="Path to experiment plan file")
-    csv_file_path: str = Field(..., description="Path to dataset CSV file")
+    prompt: str = Field(..., description="Natural language analytical question or visualization request")
+    plan: str = Field(..., description="Experiment plan content as text")
+    csv: str = Field(..., description="CSV data content as text")
     memory: Optional[Dict[str, Any]] = Field(None, description="Optional memory for iterative refinement")
     session_id: Optional[str] = Field(None, description="Optional session ID for tracking")
 
 
 class GenerateVisualizationResponse(BaseModel):
     """Response model for visualization generation."""
-    session_id: str = Field(..., description="Session identifier")
-    explanation: str = Field(..., description="Clear explanation of the visualization and findings")
-    image_path: str = Field(..., description="Primary path to interactive HTML visualization")
-    html_path: str = Field(..., description="Interactive Plotly HTML for exploration")
-    png_path: str = Field(..., description="Static PNG image for reports")
-    memory: Dict[str, Any] = Field(..., description="Updated memory for context retention")
-    llm_code_used: str = Field(..., description="Generated code for transparency")
-    warnings: List[str] = Field(..., description="Important caveats or limitations")
-    generated_at: datetime = Field(..., description="Generation timestamp")
+    html: str = Field(..., description="Interactive Plotly HTML visualization")
+    message: str = Field(..., description="Explanatory message about the visualization")
 
 
 class AnalysisSessionResponse(BaseModel):
@@ -146,16 +139,16 @@ async def generate_visualization(request: GenerateVisualizationRequest):
         agent = _get_analysis_agent()
         
         # Validate file paths
-        if not os.path.exists(request.experiment_plan_path):
+        if not request.plan:
             raise HTTPException(
                 status_code=400,
-                detail=f"Experiment plan file not found: {request.experiment_plan_path}"
+                detail="Experiment plan content is required"
             )
         
-        if not os.path.exists(request.csv_file_path):
+        if not request.csv:
             raise HTTPException(
                 status_code=400,
-                detail=f"CSV file not found: {request.csv_file_path}"
+                detail="CSV data content is required"
             )
         
         # Get session data for memory
@@ -163,15 +156,15 @@ async def generate_visualization(request: GenerateVisualizationRequest):
         memory = request.memory or session_data.get("memory", {})
         
         logger.info(f"🎯 Generating visualization for session {session_id}")
-        logger.info(f"📝 User prompt: {request.user_prompt}")
-        logger.info(f"📊 Experiment plan: {request.experiment_plan_path}")
-        logger.info(f"📈 Dataset: {request.csv_file_path}")
+        logger.info(f"📝 User prompt: {request.prompt}")
+        logger.info(f"📊 Experiment plan: (content)")
+        logger.info(f"📈 Dataset: (content)")
         
         # Generate visualization using the specialized agent system
         result = agent.generate_visualization(
-            user_prompt=request.user_prompt,
-            experiment_plan_path=request.experiment_plan_path,
-            csv_file_path=request.csv_file_path,
+            user_prompt=request.prompt,
+            experiment_plan_content=request.plan,
+            csv_data_content=request.csv,
             memory=memory
         )
         
@@ -180,28 +173,24 @@ async def generate_visualization(request: GenerateVisualizationRequest):
             session_data = _analysis_sessions[session_id]
             session_data["visualizations_generated"] += 1
             session_data["updated_at"] = datetime.now()
-            session_data["memory"] = result["memory"]
+            session_data["memory"] = result.get("memory", {})
             session_data["generated_visualizations"].append({
-                "prompt": request.user_prompt,
+                "prompt": request.prompt,
                 "generated_at": datetime.now(),
-                "image_path": result["image_path"],
-                "html_path": result["html_path"],
-                "png_path": result["png_path"]
+                "html_content": result.get("html_content", "")
             })
             _save_session(session_id, session_data)
         
         logger.info(f"✅ Visualization generated successfully for session {session_id}")
         
+        # Generate a user-friendly message
+        explanation = result.get("explanation", "")
+        if not explanation:
+            explanation = f"Successfully generated visualization for: {request.prompt}"
+        
         return GenerateVisualizationResponse(
-            session_id=session_id,
-            explanation=result["explanation"],
-            image_path=result["image_path"],
-            html_path=result["html_path"],
-            png_path=result["png_path"],
-            memory=result["memory"],
-            llm_code_used=result["llm_code_used"],
-            warnings=result["warnings"],
-            generated_at=datetime.now()
+            html=result.get("html_content", ""),
+            message=explanation
         )
         
     except Exception as e:
@@ -249,7 +238,7 @@ async def upload_and_analyze(
         # Create temporary directory
         temp_dir = tempfile.mkdtemp()
         
-        # Save uploaded files
+        # Save uploaded files and read their content
         plan_path = os.path.join(temp_dir, experiment_plan.filename)
         csv_path = os.path.join(temp_dir, dataset.filename)
         
@@ -261,11 +250,18 @@ async def upload_and_analyze(
             content = await dataset.read()
             await f.write(content)
         
+        # Read the content as text
+        async with aiofiles.open(plan_path, 'r', encoding='utf-8') as f:
+            plan_content = await f.read()
+            
+        async with aiofiles.open(csv_path, 'r', encoding='utf-8') as f:
+            csv_content = await f.read()
+        
         # Generate visualization
         request = GenerateVisualizationRequest(
-            user_prompt=user_prompt,
-            experiment_plan_path=plan_path,
-            csv_file_path=csv_path,
+            prompt=user_prompt,
+            plan=plan_content,
+            csv=csv_content,
             session_id=session_id
         )
         
@@ -312,13 +308,12 @@ async def get_session_status(session_id: str):
         )
 
 
-@router.get("/download/{session_id}/{file_type}")
-async def download_visualization(session_id: str, file_type: str):
+@router.get("/download/{session_id}")
+async def download_visualization(session_id: str):
     """
-    Download generated visualization files.
+    Download generated visualization HTML content.
     
-    Supports downloading HTML (interactive) and PNG (static) versions
-    of generated visualizations.
+    Returns the HTML content of the most recent visualization for the session.
     """
     try:
         session_data = _get_session(session_id)
@@ -331,29 +326,19 @@ async def download_visualization(session_id: str, file_type: str):
         
         # Get the most recent visualization
         latest_viz = session_data["generated_visualizations"][-1]
+        html_content = latest_viz.get("html_content", "")
         
-        if file_type == "html":
-            file_path = latest_viz["html_path"]
-            media_type = "text/html"
-        elif file_type == "png":
-            file_path = latest_viz["png_path"]
-            media_type = "image/png"
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid file type. Supported types: html, png"
-            )
-        
-        if not os.path.exists(file_path):
+        if not html_content:
             raise HTTPException(
                 status_code=404,
-                detail=f"Visualization file not found: {file_path}"
+                detail="HTML content not found for this visualization"
             )
         
-        return FileResponse(
-            path=file_path,
-            media_type=media_type,
-            filename=f"visualization_{session_id}.{file_type}"
+        # Return HTML content as a file response
+        return Response(
+            content=html_content,
+            media_type="text/html",
+            headers={"Content-Disposition": f"attachment; filename=visualization_{session_id}.html"}
         )
         
     except Exception as e:
@@ -369,22 +354,12 @@ async def delete_session(session_id: str):
     """
     Delete an analysis session and clean up resources.
     
-    Removes session data and cleans up generated files.
+    Removes session data from memory storage.
     """
     try:
         session_data = _get_session(session_id)
         
-        # Clean up generated files
-        for viz in session_data.get("generated_visualizations", []):
-            for path_key in ["image_path", "html_path", "png_path"]:
-                file_path = viz.get(path_key)
-                if file_path and os.path.exists(file_path):
-                    try:
-                        os.remove(file_path)
-                    except Exception as e:
-                        logger.warning(f"⚠️ Could not remove file {file_path}: {e}")
-        
-        # Remove session
+        # Remove session from memory
         del _analysis_sessions[session_id]
         
         logger.info(f"🗑️ Deleted analysis session {session_id}")
