@@ -114,9 +114,16 @@ Based on the provided context, please generate a complete experimental design.
 **Conversation History:**
 {chat_history}
 
+**CRITICAL REQUIREMENTS:**
+1. Each experimental group MUST include a "conditions" field that maps independent variable names to their specific values
+2. The conditions field must be a dictionary, not a string or list
+3. Use the exact independent variable names from the context above as keys in the conditions dictionary
+4. For a pH experiment, the conditions field should map "pH Level of Growth Medium" to the specific pH value being tested
+5. Each experimental group should test a different level of the independent variable
+
 Please generate the experimental groups, control groups, and sample size calculations needed to test the hypothesis.
 Ensure the design is logical, complete, and statistically sound.
-Adhere strictly to the required output format.
+Adhere strictly to the required output format with proper conditions dictionaries.
             """),
         ])
         

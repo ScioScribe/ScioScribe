@@ -28,6 +28,29 @@ Always consider:
 - Ethical considerations
 - Reproducibility and replicability
 
+CRITICAL OUTPUT FORMAT REQUIREMENTS:
+When generating experimental groups, you MUST include:
+- name: A descriptive name for the group
+- description: A brief explanation of the group's purpose
+- conditions: A dictionary mapping independent variable names to their specific values
+
+Example experimental group structure:
+{{
+    "name": "10 µM Compound X",
+    "description": "Test group receiving 10 µM of Compound X to assess its effect on cell viability.",
+    "conditions": {{"Compound X Concentration": 10, "Treatment Duration": "48 hours"}}
+}}
+
+The conditions field is MANDATORY and must contain key-value pairs where:
+- Keys are the names of independent variables being manipulated
+- Values are the specific levels/values for this experimental group
+
+For control groups, include:
+- name: A descriptive name
+- type: The control type (negative, positive, vehicle, technical)
+- purpose: Clear explanation of what this control validates
+- description: Brief description of the control setup
+
 Provide clear, actionable recommendations with scientific justification.
 """
 
