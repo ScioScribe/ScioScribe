@@ -356,10 +356,26 @@ def check_user_approval(state: ExperimentPlanState) -> str:
     pending_approval = state.get('pending_approval', {})
     stage = pending_approval.get('stage') if pending_approval else None
     
-    # If there's no pending approval or stage, we're not in an approval state
+    # If there's no pending approval, we need to determine the stage from context
     if not stage:
-        logger.info("No pending approval stage found, returning waiting")
-        return "waiting"
+        # Try to determine the stage from the current_stage and graph position
+        current_stage = state.get('current_stage', '')
+        
+        # Map current stages to their approval stage names
+        stage_to_approval_map = {
+            'objective_setting': 'objective',
+            'variable_identification': 'variables',
+            'experimental_design': 'design',
+            'methodology_protocol': 'methodology',
+            'data_planning': 'data',
+            'final_review': 'final'
+        }
+        
+        stage = stage_to_approval_map.get(current_stage)
+        
+        if not stage:
+            logger.info("No pending approval stage found and cannot determine from current stage, returning waiting")
+            return "waiting"
     
     # Initialize approvals dictionary if it doesn't exist
     if 'approvals' not in state:
