@@ -169,6 +169,41 @@ Adhere strictly to the required output format.
         is_valid = not missing_requirements
         return is_valid, missing_requirements
 
+    def generate_questions(self, state: ExperimentPlanState) -> List[str]:
+        """
+        Generate relevant questions for the user based on current review stage needs.
+        
+        Args:
+            state: Current experiment plan state
+            
+        Returns:
+            List of questions to ask the user
+        """
+        from ..prompts.review_prompts import (
+            FINAL_VALIDATION_QUESTIONS,
+            PLAN_OPTIMIZATION_QUESTIONS,
+            EXPORT_PREPARATION_QUESTIONS,
+            USER_APPROVAL_QUESTIONS
+        )
+        
+        # Get current review elements
+        review = state.get('review', {})
+        
+        # Determine what questions to ask based on review status
+        if not review:
+            # No review yet - ask validation questions
+            return FINAL_VALIDATION_QUESTIONS[:3]
+        else:
+            # Review exists - check quality score and ask appropriate questions
+            quality_score = review.get('quality_score', 0)
+            
+            if quality_score < 80:
+                # Plan needs improvement
+                return PLAN_OPTIMIZATION_QUESTIONS[:3]
+            else:
+                # Plan is good - ask about export/approval
+                return USER_APPROVAL_QUESTIONS[:3]
+
     def _create_review_summary(self, state: ExperimentPlanState) -> str:
         """Create a human-readable summary of the final review."""
         review = state.get('review', {})

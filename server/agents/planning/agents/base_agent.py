@@ -265,17 +265,36 @@ class BaseAgent(ABC):
         if is_valid:
             return 100.0
         
-        # Calculate based on missing requirements
-        if not missing_requirements:
-            return 100.0
+        # Simple calculation based on missing requirements
+        total_requirements = 5  # Assume 5 typical requirements per stage
+        missing_count = len(missing_requirements)
+        completion = max(0, (total_requirements - missing_count) / total_requirements * 100)
         
-        # Estimate based on fields - this is a simple heuristic
-        stage_fields = self._get_stage_fields()
-        if not stage_fields:
-            return 0.0
+        return completion
+    
+    def _format_chat_history(self, chat_history: List[Dict[str, Any]]) -> str:
+        """
+        Format chat history for LLM prompts.
         
-        completed_fields = len(stage_fields) - len(missing_requirements)
-        return (completed_fields / len(stage_fields)) * 100.0
+        Args:
+            chat_history: List of chat messages with role and content
+            
+        Returns:
+            Formatted chat history string
+        """
+        if not chat_history:
+            return "No previous conversation."
+        
+        # Take the last 5 messages to keep context manageable
+        recent_messages = chat_history[-5:]
+        formatted_messages = []
+        
+        for msg in recent_messages:
+            role = msg.get('role', 'unknown')
+            content = msg.get('content', '')
+            formatted_messages.append(f"{role}: {content}")
+        
+        return "\n".join(formatted_messages)
     
     def _get_stage_fields(self) -> List[str]:
         """Get the fields relevant to this agent's stage."""

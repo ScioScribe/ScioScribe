@@ -155,6 +155,49 @@ Adhere strictly to the required output format.
         is_valid = not missing_requirements
         return is_valid, missing_requirements
 
+    def generate_questions(self, state: ExperimentPlanState) -> List[str]:
+        """
+        Generate relevant questions for the user based on current methodology development needs.
+        
+        Args:
+            state: Current experiment plan state
+            
+        Returns:
+            List of questions to ask the user
+        """
+        from ..prompts.methodology_prompts import (
+            METHODOLOGY_DEVELOPMENT_QUESTIONS,
+            PROTOCOL_GENERATION_QUESTIONS,
+            MATERIALS_EQUIPMENT_QUESTIONS,
+            get_methodology_domain_guidance
+        )
+        
+        # Get domain guidance
+        research_query = state.get('research_query', '')
+        experimental_design = {
+            'experimental_groups': state.get('experimental_groups', []),
+            'control_groups': state.get('control_groups', [])
+        }
+        
+        domain_guidance = get_methodology_domain_guidance(research_query, experimental_design)
+        
+        # Get current methodology elements
+        methodology_steps = state.get('methodology_steps', [])
+        materials_equipment = state.get('materials_equipment', [])
+        
+        # Determine what questions to ask based on what's missing
+        if not methodology_steps:
+            return PROTOCOL_GENERATION_QUESTIONS[:3]
+        elif not materials_equipment:
+            return MATERIALS_EQUIPMENT_QUESTIONS[:3]
+        else:
+            # Methodology refinement questions
+            return [
+                "Are there any specific parameters or conditions you'd like to adjust in your protocol?",
+                "Do you need any additional materials or equipment for your experiment?",
+                "Are there any safety considerations or quality control measures to add?"
+            ]
+
     def _create_methodology_summary(self, state: ExperimentPlanState) -> str:
         """Create a summary of the generated methodology and materials list."""
         methodology_steps = state.get('methodology_steps', [])

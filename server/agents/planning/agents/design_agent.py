@@ -175,6 +175,43 @@ Adhere strictly to the required output format.
         is_valid = not missing_requirements
         return is_valid, missing_requirements
 
+    def generate_questions(self, state: ExperimentPlanState) -> List[str]:
+        """
+        Generate relevant questions for the user based on current experimental design needs.
+        
+        Args:
+            state: Current experiment plan state
+            
+        Returns:
+            List of questions to ask the user
+        """
+        # Get domain guidance
+        research_query = state.get('research_query', '')
+        objective = state.get('experiment_objective', '')
+        variables = state.get('independent_variables', []) + state.get('dependent_variables', [])
+        
+        domain_guidance = get_design_domain_guidance(research_query, objective, variables)
+        
+        # Get current design elements
+        experimental_groups = state.get('experimental_groups', [])
+        control_groups = state.get('control_groups', [])
+        sample_size = state.get('sample_size', {})
+        
+        # Determine what questions to ask based on what's missing
+        if not experimental_groups:
+            return domain_guidance['suggested_questions'].get('experimental', EXPERIMENTAL_GROUP_QUESTIONS[:3])
+        elif not control_groups:
+            return domain_guidance['suggested_questions'].get('control', CONTROL_GROUP_QUESTIONS[:3])
+        elif not sample_size:
+            return domain_guidance['suggested_questions'].get('sample_size', SAMPLE_SIZE_QUESTIONS[:3])
+        else:
+            # Design refinement questions
+            return [
+                "Would you like to refine any of your experimental groups?",
+                "Are there additional controls you'd like to include?",
+                "Does the sample size calculation look appropriate for your resources?"
+            ]
+
     def _create_design_summary(self, state: ExperimentPlanState) -> str:
         """Create a summary of the generated experimental design."""
         experimental_groups = state.get('experimental_groups', [])

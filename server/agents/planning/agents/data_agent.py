@@ -167,6 +167,46 @@ Adhere strictly to the required output format.
         is_valid = not missing_requirements
         return is_valid, missing_requirements
 
+    def generate_questions(self, state: ExperimentPlanState) -> List[str]:
+        """
+        Generate relevant questions for the user based on current data planning needs.
+        
+        Args:
+            state: Current experiment plan state
+            
+        Returns:
+            List of questions to ask the user
+        """
+        from ..prompts.data_prompts import (
+            DATA_COLLECTION_QUESTIONS,
+            STATISTICAL_ANALYSIS_QUESTIONS,
+            PITFALL_IDENTIFICATION_QUESTIONS,
+            SUCCESS_CRITERIA_QUESTIONS
+        )
+        
+        # Get current data planning elements
+        data_collection_plan = state.get('data_collection_plan', {})
+        data_analysis_plan = state.get('data_analysis_plan', {})
+        expected_outcomes = state.get('expected_outcomes', [])
+        potential_pitfalls = state.get('potential_pitfalls', [])
+        
+        # Determine what questions to ask based on what's missing
+        if not data_collection_plan:
+            return DATA_COLLECTION_QUESTIONS[:3]
+        elif not data_analysis_plan:
+            return STATISTICAL_ANALYSIS_QUESTIONS[:3]
+        elif not expected_outcomes:
+            return SUCCESS_CRITERIA_QUESTIONS[:3]
+        elif not potential_pitfalls or len(potential_pitfalls) < 3:
+            return PITFALL_IDENTIFICATION_QUESTIONS[:3]
+        else:
+            # Data planning refinement questions
+            return [
+                "Would you like to refine your data collection or analysis approach?",
+                "Are there any additional potential pitfalls we should consider?",
+                "Do the expected outcomes align with your research objectives?"
+            ]
+
     def _create_data_plan_summary(self, state: ExperimentPlanState) -> str:
         """Create a summary of the generated data plan."""
         collection_plan = state.get('data_collection_plan', {})
