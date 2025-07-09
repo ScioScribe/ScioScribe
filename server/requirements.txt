@@ -25,6 +25,10 @@ sentence-transformers==3.3.1
 pydantic==2.10.3
 pydantic-settings==2.6.1
 
+# Database (SQLite & ORM)
+sqlalchemy==2.0.36
+alembic==1.14.0
+
 # Background Tasks & Queue
 celery==5.4.0
 redis==5.2.0
