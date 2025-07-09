@@ -24,7 +24,7 @@ class Settings(BaseSettings):
         description="OpenAI API key for LLM interactions"
     )
     openai_model: str = Field(
-        default="gpt-4o-mini",
+        default="gpt-4.1",
         description="OpenAI model to use for agent interactions"
     )
     openai_max_tokens: int = Field(

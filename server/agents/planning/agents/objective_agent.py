@@ -189,4 +189,39 @@ class ObjectiveAgent(BaseAgent):
         }
     
     def __repr__(self) -> str:
-        return f"ObjectiveAgent(stage='{self.stage}', agent_name='{self.agent_name}')" 
+        return f"ObjectiveAgent(stage='{self.stage}', agent_name='{self.agent_name}')"
+
+    def generate_questions(self, state: ExperimentPlanState) -> List[str]:
+        """Generate clarifying questions for the user based on missing details.
+
+        Args:
+            state: Current experiment plan state
+
+        Returns:
+            A list of questions (strings) that will help gather the
+            information required to complete the objective-setting stage.
+        """
+        questions: List[str] = []
+
+        # Check for missing or weak objective / hypothesis and ask for them
+        objective = state.get("experiment_objective") or ""
+        hypothesis = state.get("hypothesis") or ""
+
+        if len(objective.strip()) < 20:
+            questions.append(
+                "Could you please provide a more detailed, specific objective for the experiment? "
+                "Think SMART: specific, measurable, achievable, relevant and time-bound."
+            )
+
+        if len(hypothesis.strip()) < 10:
+            questions.append(
+                "What is the concrete, testable hypothesis you would like to investigate?"
+            )
+
+        # If both exist but still need refinement, suggest polishing
+        if not questions:
+            questions.append(
+                "Would you like to refine either the objective or the hypothesis further, or is it good to proceed?"
+            )
+
+        return questions 

@@ -362,4 +362,18 @@ def get_llm_usage_stats() -> Dict[str, Any]:
         "average_response_time": 0.0,
         "total_tokens_used": 0,
         "message": "Usage statistics not yet implemented"
-    } 
+    }
+
+
+def get_llm(agent_type: str = "default", debugger: Optional[StateDebugger] = None, **kwargs):
+    """Backward-compatibility helper used by existing agents.
+
+    Args:
+        agent_type: The agent type (e.g. "objective", "design").
+        debugger: Optional StateDebugger for logging.
+        **kwargs: Additional overrides passed to the LLM manager.
+
+    Returns:
+        Configured ChatOpenAI instance.
+    """
+    return create_agent_llm(agent_type=agent_type, debugger=debugger, **kwargs) 
