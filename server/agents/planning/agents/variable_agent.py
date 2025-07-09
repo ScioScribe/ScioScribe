@@ -11,11 +11,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from langchain_core.prompts import ChatPromptTemplate
 
 from ..factory import add_chat_message, update_state_timestamp
-from ..llm_config import get_llm
 from ..models import VariableOutput
 from ..prompts.variable_prompts import (
     VARIABLE_SYSTEM_PROMPT,
-    validate_variables_completeness,
+    validate_variable_set,
 )
 from ..state import ExperimentPlanState
 from .base_agent import BaseAgent
@@ -44,6 +43,7 @@ class VariableAgent(BaseAgent):
             debugger=debugger,
             log_level=log_level,
         )
+        from ..llm_config import get_llm
         llm = get_llm()
         self.structured_llm = llm.with_structured_output(VariableOutput)
         self.logger.info("VariableAgent initialized with structured LLM.")
@@ -132,7 +132,7 @@ class VariableAgent(BaseAgent):
         independent_vars = state.get("independent_variables", [])
         dependent_vars = state.get("dependent_variables", [])
         
-        validation_results = validate_variables_completeness(
+        validation_results = validate_variable_set(
             independent_vars, dependent_vars
         )
         

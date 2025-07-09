@@ -18,7 +18,6 @@ from ..state import ExperimentPlanState
 from ..factory import add_chat_message, update_state_timestamp
 from ..prompts.data_prompts import DATA_SYSTEM_PROMPT
 from ..models import DataOutput
-from ..llm_config import get_llm
 
 
 class DataAgent(BaseAgent):
@@ -47,6 +46,7 @@ class DataAgent(BaseAgent):
             debugger=debugger,
             log_level=log_level
         )
+        from ..llm_config import get_llm
         self.llm = llm or get_llm()
         self.logger.info("DataAgent initialized for data planning stage")
 

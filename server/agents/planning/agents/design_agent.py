@@ -11,7 +11,6 @@ import logging
 from pydantic import ValidationError
 
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.pydantic_v1 import PydanticOutputFunctionsParser
 from langchain_openai import ChatOpenAI
 
 from .base_agent import BaseAgent
@@ -31,7 +30,6 @@ from ..prompts.design_prompts import (
     calculate_power_analysis
 )
 from ..models import DesignOutput
-from ..llm_config import get_llm
 
 
 class DesignAgent(BaseAgent):
@@ -59,6 +57,7 @@ class DesignAgent(BaseAgent):
             debugger=debugger,
             log_level=log_level
         )
+        from ..llm_config import get_llm
         self.llm = llm or get_llm()
         self.logger.info("DesignAgent initialized for experimental design stage")
     

@@ -18,7 +18,6 @@ from ..state import ExperimentPlanState
 from ..factory import add_chat_message, update_state_timestamp
 from ..prompts.methodology_prompts import METHODOLOGY_SYSTEM_PROMPT
 from ..models import MethodologyOutput
-from ..llm_config import get_llm
 
 
 class MethodologyAgent(BaseAgent):
@@ -46,6 +45,7 @@ class MethodologyAgent(BaseAgent):
             debugger=debugger,
             log_level=log_level
         )
+        from ..llm_config import get_llm
         self.llm = llm or get_llm()
         self.logger.info("MethodologyAgent initialized for methodology & protocol stage")
 

@@ -18,7 +18,6 @@ from ..state import ExperimentPlanState
 from ..factory import add_chat_message, update_state_timestamp
 from ..prompts.review_prompts import REVIEW_SYSTEM_PROMPT
 from ..models import ReviewOutput
-from ..llm_config import get_llm
 
 
 class ReviewAgent(BaseAgent):
@@ -47,6 +46,7 @@ class ReviewAgent(BaseAgent):
             debugger=debugger,
             log_level=log_level
         )
+        from ..llm_config import get_llm
         self.llm = llm or get_llm()
         self.logger.info("ReviewAgent initialized for final review stage")
 

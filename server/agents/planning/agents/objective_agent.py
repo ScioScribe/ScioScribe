@@ -15,7 +15,6 @@ from langchain_core.pydantic_v1 import BaseModel, Field
 from .base_agent import BaseAgent
 from ..state import ExperimentPlanState
 from ..factory import add_chat_message, update_state_timestamp
-from ..llm_config import get_llm
 from ..models import ObjectiveOutput
 from ..prompts.objective_prompts import (
     OBJECTIVE_SYSTEM_PROMPT,
@@ -48,6 +47,7 @@ class ObjectiveAgent(BaseAgent):
             log_level=log_level
         )
         # Configure the LLM for structured output
+        from ..llm_config import get_llm
         llm = get_llm()
         self.structured_llm = llm.with_structured_output(ObjectiveOutput)
         self.logger.info("ObjectiveAgent initialized with structured LLM for objective setting.")
