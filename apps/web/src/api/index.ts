@@ -22,7 +22,7 @@ export {
 } from './dataclean'
 
 export {
-  generateChart as createChart,
+  generateVisualization as createChart,
 } from './analysis'
 
 export {

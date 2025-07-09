@@ -5,7 +5,7 @@
  * through the /api/plan endpoint.
  */
 
-const BASE_URL = '/api/plan'
+const BASE_URL = 'http://localhost:8000/api/plan'
 
 export interface PlanRequest {
   objective: string

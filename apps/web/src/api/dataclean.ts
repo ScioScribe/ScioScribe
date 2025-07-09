@@ -5,7 +5,7 @@
  * through the /api/dataclean endpoint.
  */
 
-const BASE_URL = '/api/dataclean'
+const BASE_URL = 'http://localhost:8000/api/dataclean'
 
 export interface DataCleanRequest {
   data: unknown[]

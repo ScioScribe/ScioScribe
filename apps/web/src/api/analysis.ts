@@ -1,20 +1,21 @@
 /**
  * Analysis API functions
  * 
- * This module provides functions to interact with the chart generation service
- * through the /api/analysis/generate-chart endpoint.
+ * This module provides functions to interact with the visualization generation service
+ * through the /api/analysis/generate-visualization endpoint.
  */
 
-const BASE_URL = '/api/analysis'
+const BASE_URL = 'http://localhost:8000/api/analysis'
 
-export interface GenerateChartRequest {
+export interface GenerateVisualizationRequest {
   prompt: string
   plan: string
   csv: string
 }
 
-export interface GenerateChartResponse {
+export interface GenerateVisualizationResponse {
   html: string
+  message: string
 }
 
 export interface AnalysisError {
@@ -24,15 +25,15 @@ export interface AnalysisError {
 }
 
 /**
- * Generates a Plotly chart based on user prompt, plan, and CSV data
+ * Generates a Plotly visualization based on user prompt, plan, and CSV data
  * 
- * @param request - The chart generation request containing prompt, plan, and CSV data
- * @returns Promise resolving to HTML containing the Plotly chart
+ * @param request - The visualization generation request containing prompt, plan, and CSV data
+ * @returns Promise resolving to HTML containing the Plotly visualization
  * @throws Error if the request fails or returns an error
  */
-export async function generateChart(request: GenerateChartRequest): Promise<GenerateChartResponse> {
+export async function generateVisualization(request: GenerateVisualizationRequest): Promise<GenerateVisualizationResponse> {
   try {
-    const response = await fetch(`${BASE_URL}/generate-chart`, {
+    const response = await fetch(`${BASE_URL}/generate-visualization`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -42,15 +43,15 @@ export async function generateChart(request: GenerateChartRequest): Promise<Gene
 
     if (!response.ok) {
       const errorData: AnalysisError = await response.json()
-      throw new Error(`Chart generation failed: ${errorData.message}`)
+      throw new Error(`Visualization generation failed: ${errorData.message}`)
     }
 
-    const result: GenerateChartResponse = await response.json()
+    const result: GenerateVisualizationResponse = await response.json()
     return result
   } catch (error) {
     if (error instanceof Error) {
       throw error
     }
-    throw new Error('Unknown error occurred during chart generation')
+    throw new Error('Unknown error occurred during visualization generation')
   }
 } 

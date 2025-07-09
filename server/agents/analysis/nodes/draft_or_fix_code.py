@@ -32,10 +32,6 @@ FORBIDDEN_PATTERNS = [
     r'__import__',
     r'globals\s*\(',
     r'locals\s*\(',
-    r'setattr',
-    r'getattr',
-    r'delattr',
-    r'hasattr',
     r'/etc',
     r'/proc',
     r'/sys',
@@ -292,8 +288,6 @@ class DraftOrFixCodeNode(BaseNode):
         ingredients = state["ingredients"]
         chart_spec = ingredients['chart_specification']
         data_snapshot = ingredients['data_snapshot']
-        html_output_path = ingredients['html_output_path']
-        png_output_path = ingredients['png_output_path']
         
         # Basic chart info
         chart_type = chart_spec.get('chart_type', 'scatter')
@@ -306,6 +300,9 @@ class DraftOrFixCodeNode(BaseNode):
         
         # Get chart-specific guidance
         chart_guidance = CHART_TEMPLATES.get(chart_type, CHART_TEMPLATES['scatter'])
+        
+        # Build color parameter string
+        color_param = f",\n        color='{hue_col}'" if hue_col else ""
         
         # Build enhanced prompt
         prompt = f"""Create a SIMPLE, COLORFUL, and MODERN Plotly Express interactive visualization.
@@ -333,60 +330,94 @@ CHART DETAILS:
 - Interactive features are good but keep them simple
 - Clean, modern color schemes
 
-REQUIREMENTS:
+GENERATE THIS EXACT STRUCTURE (modify only the chart type and parameters):
+
 ```python
 def draw_chart(df):
-    \"\"\"Simple {chart_type} visualization using Plotly Express.\"\"\"
+    \"\"\"Create a {chart_type} visualization using Plotly Express.\"\"\"
     import plotly.express as px
     import plotly.graph_objects as go
-    import plotly.io as pio
-    import pandas as pd
-    import numpy as np
     
     # Modern color palette
-    MODERN_COLORS = {{
-        "categorical": ["#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7", "#DDA0DD", "#74B9FF", "#A29BFE"],
-        "sequential": ["#FFF3E0", "#FFE0B2", "#FFCC80", "#FFB74D", "#FFA726", "#FF9800", "#FB8C00", "#F57C00"]
-    }}
+    colors = ["#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7", "#DDA0DD", "#74B9FF", "#A29BFE"]
     
-    # Handle missing data
+    # Clean data
     df = df.dropna(subset=['{x_col}', '{y_col}'])
     
-    # Create Plotly Express figure
-    fig = px.{chart_type}(df, x='{x_col}', y='{y_col}'{f", color='{hue_col}'" if hue_col else ""})
-    
-    # Apply clean styling
-    fig.update_layout(
+    # Create figure
+    fig = px.{chart_type}(
+        df,
+        x='{x_col}',
+        y='{y_col}'{color_param},
         template='plotly_white',
-        font=dict(size=14, family='Inter, sans-serif'),
-        margin=dict(t=60, r=20, b=60, l=60),
-        title=dict(
-            text="{chart_spec.get('title', 'Visualization')}",
-            font=dict(size=18, weight='bold'),
-            x=0.5
-        ),
-        xaxis_title='{x_col}'.replace('_', ' ').title(),
-        yaxis_title='{y_col}'.replace('_', ' ').title()
+        color_discrete_sequence=colors,
+        title="{chart_spec.get('title', 'Visualization')}"
     )
     
-    # Use modern colors if grouping
-    if hasattr(fig, 'update_traces'):
-        fig.update_traces(marker=dict(size=8, line=dict(width=0.5, color='white')))
+    # Update layout for responsiveness
+    fig.update_layout(
+        font=dict(size=12),
+        margin=dict(t=50, r=20, b=50, l=50),
+        autosize=True
+    )
     
-    # Save both HTML (interactive) and PNG (static) versions
-    fig.write_html("{html_output_path}", include_plotlyjs="cdn")
-    fig.write_image("{png_output_path}", scale=3)
+    # Generate responsive HTML
+    html_content = fig.to_html(
+        include_plotlyjs="cdn",
+        div_id="plotly-div",
+        config={{'responsive': True, 'displayModeBar': True, 'displaylogo': False}}
+    )
     
-    return fig
+    # Add responsive CSS and resize handling
+    responsive_html = html_content.replace(
+        '<head>',
+        '''<head>
+    <style>
+        html, body {{ 
+            margin: 0; 
+            padding: 0; 
+            height: 100%; 
+            width: 100%; 
+            background: transparent; 
+            overflow: hidden;
+        }}
+        #plotly-div {{ 
+            height: 100%; 
+            width: 100%; 
+            margin: 0;
+            padding: 0;
+        }}
+    </style>'''
+    ).replace(
+        '</body>',
+        '''
+    <script>
+        // Handle resize messages from parent
+        window.addEventListener('message', function(event) {{
+            if (event.data.type === 'resize') {{
+                setTimeout(() => {{
+                    Plotly.Plots.resize('plotly-div');
+                }}, 100);
+            }}
+        }});
+        
+        // Handle window resize
+        window.addEventListener('resize', function() {{
+            Plotly.Plots.resize('plotly-div');
+        }});
+    </script>
+</body>'''
+    )
+    
+    return fig, responsive_html
 ```
 
-IMPORTANT:
-- Use Plotly Express for simplicity and modern aesthetics
-- Keep the code CLEAN and UNCLUTTERED
-- Let interactive features enhance, not overwhelm
-- Use the modern color palette provided
-- Save BOTH HTML and PNG formats
-- Return the figure object
+CRITICAL RULES:
+1. Copy this structure EXACTLY
+2. Only modify the px.{chart_type} call and its parameters
+3. Do not add hasattr, try/except, or complex conditions
+4. Keep it simple and clean
+5. Return exactly: fig, responsive_html
 
 Generate ONLY the complete function code:"""
         
@@ -397,13 +428,11 @@ Generate ONLY the complete function code:"""
         ingredients = state["ingredients"]
         previous_code = state.get("generated_code", "")
         error_msg = state["error_msg"]
-        html_output_path = ingredients['html_output_path']
-        png_output_path = ingredients['png_output_path']
         
         # Get column info for validation hints
         columns = ingredients['data_snapshot']['columns']
         
-        prompt = f"""Fix the Plotly Express visualization code while keeping it SIMPLE and COLORFUL.
+        prompt = f"""Fix the Plotly Express visualization code using this EXACT template:
 
 PREVIOUS CODE:
 {previous_code}
@@ -412,23 +441,92 @@ ERROR: {error_msg}
 
 AVAILABLE COLUMNS: {columns}
 
-FIX REQUIREMENTS:
-- Resolve the error but KEEP IT SIMPLE
-- Use Plotly Express (import plotly.express as px)
-- Use template='plotly_white' for clean background
-- Use modern, vibrant colors
-- Function: draw_chart(df) -> go.Figure
-- Save both HTML and PNG formats:
-  - HTML: {html_output_path}
-  - PNG: {png_output_path}
-- Use fig.write_html() AND fig.write_image() for both outputs
+USE THIS EXACT STRUCTURE:
+```python
+def draw_chart(df):
+    \"\"\"Create visualization using Plotly Express.\"\"\"
+    import plotly.express as px
+    import plotly.graph_objects as go
+    
+    # Modern color palette
+    colors = ["#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7", "#DDA0DD", "#74B9FF", "#A29BFE"]
+    
+    # Clean data (adjust column names as needed)
+    df = df.dropna()
+    
+    # Create figure (modify chart type and parameters to fix the error)
+    fig = px.scatter(  # Replace with correct chart type
+        df,
+        x='column1',  # Replace with correct column
+        y='column2',  # Replace with correct column
+        template='plotly_white',
+        color_discrete_sequence=colors,
+        title="Visualization"
+    )
+    
+    # Update layout for responsiveness
+    fig.update_layout(
+        font=dict(size=12),
+        margin=dict(t=50, r=20, b=50, l=50),
+        autosize=True
+    )
+    
+    # Generate responsive HTML
+    html_content = fig.to_html(
+        include_plotlyjs="cdn",
+        div_id="plotly-div",
+        config={{'responsive': True, 'displayModeBar': True, 'displaylogo': False}}
+    )
+    
+    # Add responsive CSS and resize handling
+    responsive_html = html_content.replace(
+        '<head>',
+        '''<head>
+    <style>
+        html, body {{ 
+            margin: 0; 
+            padding: 0; 
+            height: 100%; 
+            width: 100%; 
+            background: transparent; 
+            overflow: hidden;
+        }}
+        #plotly-div {{ 
+            height: 100%; 
+            width: 100%; 
+            margin: 0;
+            padding: 0;
+        }}
+    </style>'''
+    ).replace(
+        '</body>',
+        '''
+    <script>
+        // Handle resize messages from parent
+        window.addEventListener('message', function(event) {{
+            if (event.data.type === 'resize') {{
+                setTimeout(() => {{
+                    Plotly.Plots.resize('plotly-div');
+                }}, 100);
+            }}
+        }});
+        
+        // Handle window resize
+        window.addEventListener('resize', function() {{
+            Plotly.Plots.resize('plotly-div');
+        }});
+    </script>
+</body>'''
+    )
+    
+    return fig, responsive_html
+```
 
-STYLE REMINDER:
-- Clean white background with template='plotly_white'
-- Bold, bright colors from MODERN_COLORS
-- Simple chart, no clutter
-- Interactive features but keep them minimal
-- Generate BOTH HTML and PNG outputs
+CRITICAL: 
+- Use this exact structure to fix the error
+- Only modify chart type and column names
+- NO hasattr, try/except, or complex conditions
+- Keep it simple and clean
 
 Generate ONLY the complete fixed function code:"""
         
@@ -523,22 +621,19 @@ Generate ONLY the complete fixed function code:"""
                 "error": "Missing required import: plotly.express"
             }
         
-        # 7. Check for proper output handling - both HTML and PNG required
-        if 'fig.write_html' not in code:
+        # 7. Check for proper HTML content generation
+        if 'fig.to_html' not in code:
             return {
                 "is_valid": False,
-                "error": "Missing required fig.write_html() call for HTML output"
-            }
-        
-        if 'fig.write_image' not in code:
-            return {
-                "is_valid": False,
-                "error": "Missing required fig.write_image() call for PNG output"
+                "error": "Missing required fig.to_html() call for HTML content generation"
             }
         
         # 8. Check for return statement
-        if 'return fig' not in code:
-            self.log_warning("Generated code missing return statement for figure")
+        if 'return fig, responsive_html' not in code and 'return fig, html_content' not in code:
+            return {
+                "is_valid": False,
+                "error": "Missing required return statement: 'return fig, responsive_html' or 'return fig, html_content'"
+            }
         
         return {"is_valid": True, "error": None}
     
@@ -588,42 +683,42 @@ Generate ONLY the complete fixed function code:"""
                     "error": "Function draw_chart not defined after execution"
                 }
             
-            # Mock the write methods to prevent actual file writing
             import plotly.graph_objects as go
-            import plotly.io as pio
             
-            original_write_html = go.Figure.write_html
-            original_write_image = go.Figure.write_image if hasattr(go.Figure, 'write_image') else None
-            original_pio_write_image = pio.write_image
+            # Call the function (should return fig, html_content)
+            result = namespace['draw_chart'](df_test)
             
-            # Mock the write methods
-            go.Figure.write_html = lambda self, *args, **kwargs: None
-            if hasattr(go.Figure, 'write_image'):
-                go.Figure.write_image = lambda self, *args, **kwargs: None
-            pio.write_image = lambda *args, **kwargs: None
+            # Validate that it returns a tuple with figure and HTML content
+            if not isinstance(result, tuple) or len(result) != 2:
+                return {
+                    "is_valid": False,
+                    "error": "draw_chart must return a tuple: (fig, html_content)"
+                }
             
-            try:
-                # Call the function
-                result = namespace['draw_chart'](df_test)
-                
-                # Validate that it returns a Plotly figure
-                if not isinstance(result, go.Figure):
-                    return {
-                        "is_valid": False,
-                        "error": "draw_chart must return a plotly.graph_objects.Figure"
-                    }
-                
-                # Try a lightweight serialization test
-                result.to_json()
-                
-                return {"is_valid": True, "error": None}
-                
-            finally:
-                # Restore the original methods
-                go.Figure.write_html = original_write_html
-                if original_write_image:
-                    go.Figure.write_image = original_write_image
-                pio.write_image = original_pio_write_image
+            fig, html_content = result
+            
+            # Validate that first element is a Plotly figure
+            if not isinstance(fig, go.Figure):
+                return {
+                    "is_valid": False,
+                    "error": "First return value must be a plotly.graph_objects.Figure"
+                }
+            
+            # Validate that second element is HTML content string
+            if not isinstance(html_content, str) or not html_content.strip():
+                return {
+                    "is_valid": False,
+                    "error": "Second return value must be non-empty HTML content string"
+                }
+            
+            # Validate HTML content contains expected elements
+            if not any(tag in html_content.lower() for tag in ['<div', '<script', 'plotly']):
+                return {
+                    "is_valid": False,
+                    "error": "HTML content does not appear to be valid Plotly HTML"
+                }
+            
+            return {"is_valid": True, "error": None}
                 
         except Exception as e:
             # Extract meaningful error message

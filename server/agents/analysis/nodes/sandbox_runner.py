@@ -47,17 +47,10 @@ class SandboxRunnerNode(BaseNode):
         try:
             ingredients = state["ingredients"]
             generated_code = state["generated_code"]
-            csv_path = ingredients["csv_path"]
-            html_output_path = ingredients["html_output_path"]
-            png_output_path = ingredients["png_output_path"]
+            csv_data_content = ingredients["csv_data_content"]
             
             # Execute in sandboxed environment
-            execution_result = self._execute_sandboxed(
-                generated_code, 
-                csv_path, 
-                html_output_path,
-                png_output_path
-            )
+            execution_result = self._execute_sandboxed(generated_code, csv_data_content)
             
             if not execution_result["success"]:
                 self.log_warning(f"Execution failed: {execution_result['error']}")
@@ -67,23 +60,11 @@ class SandboxRunnerNode(BaseNode):
                     "retry_count": state.get("retry_count", 0) + 1
                 }
             
-            # Post-execution safety checks for both outputs
-            safety_check = self._post_execution_checks(
-                Path(html_output_path), 
-                Path(png_output_path)
-            )
-            if not safety_check["is_safe"]:
-                self.log_warning(f"Safety check failed: {safety_check['error']}")
-                return {
-                    "error_msg": f"Output validation error: {safety_check['error']}",
-                    "warnings": execution_result.get("warnings", []),
-                    "retry_count": state.get("retry_count", 0) + 1
-                }
-            
-            # Success!
-            self.log_info("Code executed successfully and passed all checks")
+            # Success! Store the HTML content
+            self.log_info("Code executed successfully and returned HTML content")
             return {
                 "error_msg": None,
+                "html_content": execution_result.get("html_content", ""),
                 "warnings": execution_result.get("warnings", [])
             }
             
@@ -101,20 +82,23 @@ class SandboxRunnerNode(BaseNode):
         indented_lines = [indent + line if line.strip() else line for line in lines]
         return '\n'.join(indented_lines)
     
-    def _execute_sandboxed(self, code: str, csv_path: str, html_output_path: str, png_output_path: str) -> Dict[str, Any]:
+    def _execute_sandboxed(self, code: str, csv_data_content: str) -> Dict[str, Any]:
         """
         Execute generated Plotly code in a sandboxed environment with timeout
         
         Args:
             code: Validated Python code
-            csv_path: Path to data file
-            html_output_path: Path where HTML plot should be saved
-            png_output_path: Path where PNG plot should be saved
+            csv_data_content: Content of the CSV data file
             
         Returns:
-            Execution result with success flag and any warnings
+            Execution result with success flag, HTML content, and any warnings
         """
         try:
+            # Create temporary CSV file from content
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as csv_file:
+                csv_file.write(csv_data_content)
+                temp_csv_path = csv_file.name
+            
             # Indent the generated code for insertion into try block
             indented_code = self._indent_code(code)
             
@@ -137,20 +121,34 @@ signal.signal(signal.SIGALRM, timeout_handler)
 signal.alarm({EXECUTION_TIMEOUT})
 
 try:
-    # Load data
-    df = pd.read_csv('{csv_path}')
+    # Load data from temporary CSV file
+    df = pd.read_csv('{temp_csv_path}')
     
     # Generated code (indented for try block)
 {indented_code}
     
-    # Execute the function
+    # Execute the function (should return fig, html_content)
     result = draw_chart(df)
     
-    # Verify the result is a Plotly figure
-    if not isinstance(result, go.Figure):
-        raise ValueError("draw_chart must return a plotly.graph_objects.Figure")
+    # Verify the result is a tuple with figure and HTML content
+    if not isinstance(result, tuple) or len(result) != 2:
+        raise ValueError("draw_chart must return a tuple: (fig, html_content)")
     
+    fig, html_content = result
+    
+    # Verify first element is a Plotly figure
+    if not isinstance(fig, go.Figure):
+        raise ValueError("First return value must be a plotly.graph_objects.Figure")
+    
+    # Verify second element is HTML content string
+    if not isinstance(html_content, str) or not html_content.strip():
+        raise ValueError("Second return value must be non-empty HTML content string")
+    
+    # Output the HTML content for capture
     print("SUCCESS")
+    print("HTML_CONTENT_START")
+    print(html_content)
+    print("HTML_CONTENT_END")
     
 except Exception as e:
     import traceback
@@ -171,8 +169,9 @@ finally:
                 timeout=EXECUTION_TIMEOUT + 1
             )
             
-            # Clean up temp file
+            # Clean up temp files
             os.unlink(script_path)
+            os.unlink(temp_csv_path)
             
             # Check results
             if result.returncode == 0 and "SUCCESS" in result.stdout:
@@ -180,9 +179,26 @@ finally:
                 if result.stderr and "WARNING" in result.stderr:
                     warnings.append(f"Runtime warnings: {result.stderr}")
                 
+                # Extract HTML content from stdout
+                html_content = ""
+                stdout_lines = result.stdout.split('\n')
+                capturing = False
+                for line in stdout_lines:
+                    if line == "HTML_CONTENT_START":
+                        capturing = True
+                        continue
+                    elif line == "HTML_CONTENT_END":
+                        capturing = False
+                        break
+                    elif capturing:
+                        if html_content:
+                            html_content += '\n'
+                        html_content += line
+                
                 return {
                     "success": True,
                     "error": None,
+                    "html_content": html_content,
                     "warnings": warnings
                 }
             else:

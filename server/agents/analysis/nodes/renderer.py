@@ -9,11 +9,8 @@ This module implements a LangGraph-based renderer that orchestrates three nodes:
 The graph implements a lean retry loop without fallback rendering.
 """
 
-import json
-import hashlib
-from pathlib import Path
-from datetime import datetime
-from typing import Dict, Any, List, Annotated
+import os
+from typing import Dict, Any, List, Annotated, Optional
 from typing_extensions import TypedDict
 
 import pandas as pd
@@ -26,11 +23,7 @@ from .sandbox_runner import SandboxRunnerNode
 from .output_assembler import OutputAssemblerNode
 
 # Constants
-PLOTS_DIR = Path(__file__).parent.parent / "plots"
 MAX_RETRIES = 3
-
-# Ensure plots directory exists
-PLOTS_DIR.mkdir(exist_ok=True)
 
 # Style dictionary for LLM guidance - MODERN & BRIGHT
 STYLE_DICTIONARY = {
@@ -55,9 +48,7 @@ class RendererState(TypedDict):
     - error_msg: Current error message (None if no error)
     - retry_count: Number of retries attempted
     - warnings: List of warnings accumulated
-    - plot_image_path: Final output path (primary format)
-    - plot_html_path: HTML output path (interactive)
-    - plot_png_path: PNG output path (static)
+    - html_content: HTML content string from visualization
     - llm_code_used: Final code that worked
     """
     ingredients: Dict[str, Any]
@@ -65,9 +56,7 @@ class RendererState(TypedDict):
     error_msg: str
     retry_count: int
     warnings: List[str]
-    plot_image_path: str
-    plot_html_path: str
-    plot_png_path: str
+    html_content: str
     llm_code_used: str
 
 
@@ -79,9 +68,9 @@ class RendererNode(BaseNode):
     with automatic error correction and retry logic.
     """
     
-    def __init__(self, llm: Any):
+    def __init__(self, llm: Any, role_context: Optional[Dict[str, Any]] = None):
         """Initialize the renderer with its sub-nodes"""
-        super().__init__(llm)
+        super().__init__(llm, role_context)
         
         # Initialize sub-nodes
         self.draft_or_fix = DraftOrFixCodeNode(llm=self.llm)
@@ -157,9 +146,7 @@ class RendererNode(BaseNode):
                 "error_msg": None,
                 "retry_count": 0,
                 "warnings": [],
-                "plot_image_path": "",
-                "plot_html_path": "",
-                "plot_png_path": "",
+                "html_content": "",
                 "llm_code_used": ""
             }
             
@@ -167,12 +154,10 @@ class RendererNode(BaseNode):
             result = self.graph.invoke(initial_state)
             
             # Handle final result
-            if result.get("plot_html_path") or result.get("plot_png_path"):
-                # Success path - return both HTML and PNG paths
+            if result.get("html_content"):
+                # Success path - return HTML content
                 return {
-                    "plot_image_path": result.get("plot_html_path", ""),  # Primary path (HTML for interactivity)
-                    "plot_html_path": result.get("plot_html_path", ""),
-                    "plot_png_path": result.get("plot_png_path", ""),
+                    "html_content": result["html_content"],
                     "llm_code_used": result["llm_code_used"],
                     "warnings": result.get("warnings", [])
                 }
@@ -182,9 +167,7 @@ class RendererNode(BaseNode):
                 self.log_error(f"Renderer failed after {result.get('retry_count', 0)} retries: {error_msg}")
                 
                 return {
-                    "plot_image_path": "",
-                    "plot_html_path": "",
-                    "plot_png_path": "",
+                    "html_content": "",
                     "llm_code_used": result.get("generated_code", ""),
                     "warnings": [f"Visualization failed after {result.get('retry_count', 0)} retries: {error_msg}"]
                 }
@@ -192,9 +175,7 @@ class RendererNode(BaseNode):
         except Exception as e:
             self.log_error(f"Renderer graph failed: {str(e)}")
             return {
-                "plot_image_path": "",
-                "plot_html_path": "",
-                "plot_png_path": "",
+                "html_content": "",
                 "llm_code_used": "",
                 "warnings": [f"Renderer error: {str(e)}"]
             }
@@ -210,8 +191,9 @@ class RendererNode(BaseNode):
         user_ask = state["user_prompt"]
         chart_spec = state["chart_specification"]
         
-        # Data snapshot
-        df = pd.read_csv(state["csv_file_path"])
+        # Data snapshot - load from text content
+        import io
+        df = pd.read_csv(io.StringIO(state["csv_data_content"]))
         data_snapshot = {
             "columns": list(df.columns),
             "dtypes": df.dtypes.astype(str).to_dict(),
@@ -219,22 +201,12 @@ class RendererNode(BaseNode):
             "shape": df.shape
         }
         
-        # Output paths - generate both HTML and PNG
-        spec_hash = hashlib.md5(json.dumps(chart_spec, sort_keys=True).encode()).hexdigest()[:8]
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_filename = f"llm_chart_{spec_hash}_{timestamp}"
-        
-        html_path = PLOTS_DIR / f"{base_filename}.html"
-        png_path = PLOTS_DIR / f"{base_filename}.png"
-        
         return {
             "user_ask": user_ask,
             "chart_specification": chart_spec,
             "data_snapshot": data_snapshot,
             "style_dictionary": STYLE_DICTIONARY,
-            "html_output_path": str(html_path),
-            "png_output_path": str(png_path),
-            "csv_path": state["csv_file_path"]
+            "csv_data_content": state["csv_data_content"]
         }
     
     # Node wrappers to maintain state updates
