@@ -65,6 +65,10 @@ easyocr_processor = EasyOCRProcessor(languages=['en'], gpu=False)  # CPU mode fo
 # Initialize in-memory data store
 data_store = get_data_store()
 
+# Initialize conversation system
+from agents.dataclean.conversation.conversation_graph import ConversationGraph
+conversation_graph = ConversationGraph()
+
 
 @router.post("/process-file-complete", response_model=ProcessFileCompleteResponse)
 async def process_file_complete(
@@ -1154,6 +1158,138 @@ async def get_storage_stats():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get storage stats: {str(e)}")
+
+
+# === CONVERSATION API ENDPOINTS ===
+
+@router.post("/conversation/start")
+async def start_conversation(
+    user_id: str = "demo-user",
+    session_id: Optional[str] = None,
+    artifact_id: Optional[str] = None,
+    file_path: Optional[str] = None
+):
+    """
+    Start a new conversation session for data cleaning.
+    
+    Args:
+        user_id: User identifier
+        session_id: Optional session ID for resuming
+        artifact_id: Optional data artifact ID
+        file_path: Optional file path for processing
+        
+    Returns:
+        Session information and conversation state
+    """
+    try:
+        result = await conversation_graph.start_conversation(
+            user_id=user_id,
+            session_id=session_id,
+            artifact_id=artifact_id,
+            file_path=file_path
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start conversation: {str(e)}")
+
+
+@router.post("/conversation/message")
+async def process_conversation_message(
+    user_message: str,
+    session_id: str,
+    user_id: str = "demo-user",
+    artifact_id: Optional[str] = None
+):
+    """
+    Process a user message in a conversation.
+    
+    Args:
+        user_message: The user's natural language input
+        session_id: Session identifier
+        user_id: User identifier
+        artifact_id: Optional data artifact ID
+        
+    Returns:
+        Conversation response with processing results
+    """
+    try:
+        result = await conversation_graph.process_message(
+            user_message=user_message,
+            session_id=session_id,
+            user_id=user_id,
+            artifact_id=artifact_id
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process message: {str(e)}")
+
+
+@router.post("/conversation/confirm")
+async def handle_conversation_confirmation(
+    session_id: str,
+    confirmed: bool,
+    user_id: str = "demo-user"
+):
+    """
+    Handle user confirmation for operations that require approval.
+    
+    Args:
+        session_id: Session identifier
+        confirmed: Whether the user confirmed the operation
+        user_id: User identifier
+        
+    Returns:
+        Confirmation response
+    """
+    try:
+        result = await conversation_graph.handle_confirmation(
+            session_id=session_id,
+            user_id=user_id,
+            confirmed=confirmed
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to handle confirmation: {str(e)}")
+
+
+@router.get("/conversation/session/{session_id}")
+async def get_conversation_session(session_id: str):
+    """
+    Get conversation session summary.
+    
+    Args:
+        session_id: Session identifier
+        
+    Returns:
+        Session summary information
+    """
+    try:
+        result = await conversation_graph.get_session_summary(session_id)
+        if result.get("status") == "error":
+            raise HTTPException(status_code=404, detail=result.get("message", "Session not found"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get session: {str(e)}")
+
+
+@router.get("/conversation/capabilities")
+async def get_conversation_capabilities():
+    """
+    Get information about conversation capabilities.
+    
+    Returns:
+        Conversation capabilities and supported intents
+    """
+    try:
+        capabilities = conversation_graph.get_conversation_capabilities()
+        return {
+            "status": "success",
+            "capabilities": capabilities
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get capabilities: {str(e)}")
 
 
 async def process_file_background(artifact_id: str, file_path: str):
