@@ -63,6 +63,7 @@ class ExperimentPlanState(TypedDict):
     user_approved: Optional[bool]              # Whether user has approved current stage
     review_stage: Optional[str]                # Current review stage (approved, requires_changes, etc.)
     finalized_at: Optional[str]                # When the plan was finalized
+    approvals: Optional[Dict[str, bool]]       # Persistent approval flags for each stage
 
 
 # Stage constants for tracking progress

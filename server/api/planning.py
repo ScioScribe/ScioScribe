@@ -157,20 +157,25 @@ async def start_hitl_planning_session(request: StartHITLPlanningRequest):
             try:
                 state_snapshot = await graph.aget_state(config)
                 if state_snapshot.next and any("approval" in str(node) for node in state_snapshot.next):
-                    # We're interrupted before an approval node, manually set pending_approval
+                    # We're interrupted before an approval node, but check if it's already approved
                     next_node = str(state_snapshot.next[0]) if state_snapshot.next else ""
                     stage_name = next_node.replace("_approval", "") if "_approval" in next_node else "unknown"
                     
-                    current_state["pending_approval"] = {
-                        "stage": stage_name,
-                        "timestamp": datetime.utcnow().isoformat(),
-                        "status": "waiting"
-                    }
-                    
-                    # Update the state in the checkpoint
-                    await graph.aupdate_state(config, current_state)
-                    
-                    logger.info(f"Set pending_approval for stage: {stage_name}")
+                    # Only set pending_approval if the stage hasn't been approved yet
+                    approvals = current_state.get('approvals', {})
+                    if not approvals.get(stage_name, False):
+                        current_state["pending_approval"] = {
+                            "stage": stage_name,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "status": "waiting"
+                        }
+                        
+                        # Update the state in the checkpoint
+                        await graph.aupdate_state(config, current_state)
+                        
+                        logger.info(f"Set pending_approval for stage: {stage_name}")
+                    else:
+                        logger.info(f"Stage {stage_name} already approved, not setting pending_approval")
             except Exception as e:
                 logger.warning(f"Failed to check/set pending_approval: {e}")
         
@@ -218,7 +223,7 @@ async def stream_chat(session_id: str, request: StreamChatRequest):
             # Add user message to state and clear pending approval flag
             updated_state = add_chat_message(current_state, "user", request.user_input)
             if "pending_approval" in updated_state and updated_state["pending_approval"]:
-                updated_state["pending_approval"] = {}
+                updated_state["pending_approval"] = None
 
             # Update the state in the checkpoint
             await graph.aupdate_state(config, updated_state)
@@ -265,20 +270,25 @@ async def stream_chat(session_id: str, request: StreamChatRequest):
                 try:
                     state_snapshot = await graph.aget_state(config)
                     if state_snapshot.next and any("approval" in str(node) for node in state_snapshot.next):
-                        # We're interrupted before an approval node, manually set pending_approval
+                        # We're interrupted before an approval node, but check if it's already approved
                         next_node = str(state_snapshot.next[0]) if state_snapshot.next else ""
                         stage_name = next_node.replace("_approval", "") if "_approval" in next_node else "unknown"
                         
-                        final_state["pending_approval"] = {
-                            "stage": stage_name,
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "status": "waiting"
-                        }
-                        
-                        # Update the state in the checkpoint
-                        await graph.aupdate_state(config, final_state)
-                        
-                        logger.info(f"Set pending_approval for stage: {stage_name}")
+                        # Only set pending_approval if the stage hasn't been approved yet
+                        approvals = final_state.get('approvals', {})
+                        if not approvals.get(stage_name, False):
+                            final_state["pending_approval"] = {
+                                "stage": stage_name,
+                                "timestamp": datetime.utcnow().isoformat(),
+                                "status": "waiting"
+                            }
+                            
+                            # Update the state in the checkpoint
+                            await graph.aupdate_state(config, final_state)
+                            
+                            logger.info(f"Set pending_approval for stage: {stage_name}")
+                        else:
+                            logger.info(f"Stage {stage_name} already approved, not setting pending_approval")
                 except Exception as e:
                     logger.warning(f"Failed to check/set pending_approval: {e}")
             

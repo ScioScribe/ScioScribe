@@ -93,7 +93,8 @@ def create_default_state(experiment_id: str, research_query: str) -> ExperimentP
         pending_approval=None,
         user_approved=None,
         review_stage=None,
-        finalized_at=None
+        finalized_at=None,
+        approvals={}  # Initialize empty approvals dictionary for tracking permanent approval flags
     )
     
     # Validate the created state
