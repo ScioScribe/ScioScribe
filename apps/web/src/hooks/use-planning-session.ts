@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
-import { getPlanningSessionStatus, type PlanningSessionStatus } from "@/api/planning"
+import { getPlanningSessionStatus } from "@/api/planning"
 
 interface PlanningSessionState {
   sessionId: string | null
@@ -87,7 +87,7 @@ export function usePlanningSession(options: UsePlanningSessionOptions = {}) {
     })
   }, [])
 
-  const setApprovalState = useCallback((isWaiting: boolean, pendingApproval?: any) => {
+  const setApprovalState = useCallback((isWaiting: boolean) => {
     setSessionState(prev => ({
       ...prev,
       isWaitingForApproval: isWaiting,

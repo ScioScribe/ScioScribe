@@ -18,7 +18,7 @@ export interface StartPlanningSessionResponse {
   experiment_id: string
   current_stage: string
   is_waiting_for_approval: boolean
-  pending_approval?: any
+  pending_approval?: Record<string, unknown>
   streaming_enabled: boolean
   checkpoint_available: boolean
 }
@@ -29,7 +29,7 @@ export interface StreamChatRequest {
 
 export interface StreamEvent {
   event_type: "update" | "approval_request" | "error"
-  data: any
+  data: Record<string, unknown>
   timestamp: string
 }
 
@@ -38,7 +38,7 @@ export interface PlanningSessionStatus {
   experiment_id: string
   current_stage: string
   is_waiting_for_approval: boolean
-  pending_approval?: any
+  pending_approval?: Record<string, unknown>
   streaming_enabled: boolean
   checkpoint_available: boolean
 }

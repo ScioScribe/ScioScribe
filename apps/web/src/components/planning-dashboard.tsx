@@ -9,8 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
-import { MessageSquare, FileText, Activity, Settings } from "lucide-react"
+import { MessageSquare, FileText, Activity } from "lucide-react"
 
 interface PlanningDashboardProps {
   initialPlan?: string
@@ -38,7 +37,7 @@ export function PlanningDashboard({
   }
 
   // Handle state changes from the planning state editor
-  const handleStateChange = (state: any) => {
+  const handleStateChange = (state: Record<string, unknown>) => {
     console.log("Planning state updated:", state)
     
     // You can add logic here to sync the state with other components

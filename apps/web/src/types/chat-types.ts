@@ -21,7 +21,7 @@ export interface SessionState {
   experiment_id: string | null
   is_active: boolean
   is_waiting_for_approval: boolean
-  pending_approval?: any
+  pending_approval?: Record<string, unknown>
   stream_connection?: EventSource | null
   last_activity: Date
 }
@@ -85,9 +85,9 @@ export interface MessageHandlerContext {
   setPlanningSession: (updates: Partial<SessionState>) => void
   datacleanSession: SessionState
   setDatacleanSession: (updates: Partial<SessionState>) => void
-  updatePlanFromPlanningState: (state: any) => Promise<any>
-  updatePlanFromPlanningMessage: (message: string, stage: string) => Promise<any>
-  updateCsvFromDatacleanResponse: (response: any) => Promise<any>
+  updatePlanFromPlanningState: (state: Record<string, unknown>) => Promise<void>
+  updatePlanFromPlanningMessage: (message: string, stage: string) => Promise<void>
+  updateCsvFromDatacleanResponse: (response: Record<string, unknown>) => Promise<void>
   onVisualizationGenerated?: (html: string) => void
   plan: string
   csv: string
@@ -95,14 +95,14 @@ export interface MessageHandlerContext {
 
 export interface StreamEvent {
   event_type: string
-  data: any
+  data: Record<string, unknown>
   timestamp?: string
 }
 
 export interface DatacleanResponse {
   response_type: "text" | "data_preview" | "suggestion" | "confirmation" | "error"
   message: string
-  data?: any
+  data?: Record<string, unknown>
   suggestions?: Array<{
     type: string
     description: string
@@ -113,7 +113,7 @@ export interface DatacleanResponse {
 
 export interface PlanningStreamEvent {
   event_type: "update" | "approval_request" | "error" | "heartbeat"
-  data: any
+  data: Record<string, unknown>
 }
 
 export interface ChatSuggestion {

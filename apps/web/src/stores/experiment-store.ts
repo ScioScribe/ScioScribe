@@ -5,7 +5,6 @@
  * providing a centralized state management solution for the application.
  */
 
-// @ts-ignore - Zustand will be available after npm install
 import { create } from 'zustand'
 import type { Experiment } from '@/api/database'
 import { 
@@ -17,8 +16,48 @@ import {
 } from '@/api/database'
 import { IRIS_CSV_DATA, IRIS_EXPERIMENT_PLAN } from '@/data/placeholder'
 
+// Type definitions for planning state
+interface PlanningVariables {
+  independent?: string
+  dependent?: string
+  controlled?: string
+}
+
+interface PlanningMessage {
+  sender: string
+  content: string
+}
+
+interface PlanningApprovals {
+  [key: string]: boolean
+}
+
+interface PlanningState {
+  experiment_id?: string
+  current_stage?: string
+  objective?: string
+  research_query?: string
+  methodology?: string
+  variables?: PlanningVariables
+  design?: string
+  data_requirements?: string
+  analysis_plan?: string
+  chat_history?: PlanningMessage[]
+  is_complete?: boolean
+  approvals?: PlanningApprovals
+}
+
+// Type definitions for dataclean response
+interface DatacleanData {
+  [key: string]: unknown
+}
+
+interface DatacleanResponse {
+  data?: DatacleanData[] | string | DatacleanData
+}
+
 // Planning state conversion utility
-const convertPlanningStateToString = (planningState: any): string => {
+const convertPlanningStateToString = (planningState: PlanningState): string => {
   try {
     if (!planningState) return ""
     
@@ -87,7 +126,7 @@ const convertPlanningStateToString = (planningState: any): string => {
     if (planningState.chat_history && planningState.chat_history.length > 0) {
       formattedPlan += `## Planning Session History\n\n`
       
-      planningState.chat_history.forEach((message: any, index: number) => {
+      planningState.chat_history.forEach((message: PlanningMessage, index: number) => {
         const messagePrefix = message.sender === "user" ? "🧑" : "🤖"
         formattedPlan += `${index + 1}. ${messagePrefix} **${message.sender}**: ${message.content}\n\n`
       })
@@ -120,7 +159,7 @@ const convertPlanningStateToString = (planningState: any): string => {
 }
 
 // Array to CSV conversion utility
-const convertArrayToCsv = (data: any[]): string => {
+const convertArrayToCsv = (data: DatacleanData[]): string => {
   try {
     if (!data || data.length === 0) return ""
     
@@ -185,11 +224,11 @@ interface ExperimentActions {
   refreshVisualization: () => void
   
   // Planning integration functions
-  updatePlanFromPlanningState: (planningState: any) => Promise<void>
+  updatePlanFromPlanningState: (planningState: PlanningState) => Promise<void>
   updatePlanFromPlanningMessage: (message: string, stage?: string) => Promise<void>
   
   // Dataclean integration functions
-  updateCsvFromDatacleanResponse: (response: any) => Promise<void>
+  updateCsvFromDatacleanResponse: (response: DatacleanResponse) => Promise<void>
   updateCsvFromDatacleanData: (csvData: string) => Promise<void>
   
   // Reset actions
@@ -256,7 +295,7 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
   },
   
   // Planning integration functions
-  updatePlanFromPlanningState: async (planningState: any) => {
+  updatePlanFromPlanningState: async (planningState: PlanningState) => {
     try {
       console.log("🎯 Updating plan from planning state:", planningState)
       
@@ -292,7 +331,7 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
   },
    
    // Dataclean integration functions
-   updateCsvFromDatacleanResponse: async (response: any) => {
+   updateCsvFromDatacleanResponse: async (response: DatacleanResponse) => {
      try {
        console.log("🧹 Updating CSV from dataclean response:", response)
        

@@ -1,7 +1,7 @@
 "use client"
 
 import { PlanningDashboard } from "@/components/planning-dashboard"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+// import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Info } from "lucide-react"

@@ -48,7 +48,7 @@ export async function handlePlanningMessage(message: string, context: MessageHan
         setPlanningSession({
           is_active: true,
           is_waiting_for_approval: false,
-          pending_approval: null
+          pending_approval: undefined
         })
       }
     }
@@ -238,24 +238,25 @@ export function handlePlanningStreamEvent(streamEvent: PlanningStreamEvent, cont
  * @param data Update data from the stream
  * @param context Message handler context
  */
-function handlePlanningUpdate(data: any, context: MessageHandlerContext): void {
+function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHandlerContext): void {
   const { setMessages, setPlanningSession, updatePlanFromPlanningState, updatePlanFromPlanningMessage } = context
   
   console.log("📊 Planning update received:", data)
   
-  const state = data.state || {}
-  const currentStage = state.current_stage || "unknown"
-  const reasoning = state.reasoning || ""
-  const chatHistory = state.chat_history || []
+  const state = (data.state as Record<string, unknown>) || {}
+  const currentStage = (state.current_stage as string) || "unknown"
+  const reasoning = (state.reasoning as string) || ""
+  const chatHistory = (state.chat_history as Array<unknown>) || []
   
   const latestAiMessage = chatHistory
-    .filter((msg: any) => msg.sender === "ai")
-    .pop()
+    .filter((msg: unknown) => (msg as Record<string, unknown>)?.sender === "ai")
+    .pop() as Record<string, unknown> | undefined
   
-  if (latestAiMessage) {
+  if (latestAiMessage && latestAiMessage.content) {
+    const messageContent = latestAiMessage.content as string
     const updateMessage: Message = {
       id: (Date.now() + Math.random()).toString(),
-      content: `🤖 **Agent Reasoning** (${currentStage})\n\n${latestAiMessage.content}\n\n${reasoning ? `**Reasoning Process:**\n${reasoning}\n\n` : ""}*This is a real-time update from the planning agent.*`,
+      content: `🤖 **Agent Reasoning** (${currentStage})\n\n${messageContent}\n\n${reasoning ? `**Reasoning Process:**\n${reasoning}\n\n` : ""}*This is a real-time update from the planning agent.*`,
       sender: "ai",
       timestamp: new Date(),
       mode: "plan",
@@ -266,16 +267,16 @@ function handlePlanningUpdate(data: any, context: MessageHandlerContext): void {
     
     // Update planning state
     updatePlanFromPlanningState(state)
-      .then(result => {
-        console.log("📥 UPDATE PLAN FROM PLANNING STATE RESPONSE:", JSON.stringify(result, null, 2))
+      .then(() => {
+        console.log("📥 UPDATE PLAN FROM PLANNING STATE: Success")
       })
       .catch(error => {
         console.error("❌ Failed to update plan from planning state:", error)
       })
     
-    updatePlanFromPlanningMessage(latestAiMessage.content, currentStage)
-      .then(result => {
-        console.log("📥 UPDATE PLAN FROM PLANNING MESSAGE RESPONSE:", JSON.stringify(result, null, 2))
+    updatePlanFromPlanningMessage(messageContent, currentStage)
+      .then(() => {
+        console.log("📥 UPDATE PLAN FROM PLANNING MESSAGE: Success")
       })
       .catch(error => {
         console.error("❌ Failed to update plan from planning message:", error)
@@ -285,8 +286,8 @@ function handlePlanningUpdate(data: any, context: MessageHandlerContext): void {
   // Update session state
   setPlanningSession({
     is_active: true,
-    is_waiting_for_approval: state.is_waiting_for_approval || false,
-    pending_approval: state.pending_approval || null,
+    is_waiting_for_approval: Boolean(state.is_waiting_for_approval),
+    pending_approval: (state.pending_approval as Record<string, unknown>) || undefined,
     last_activity: new Date()
   })
 }
@@ -296,7 +297,7 @@ function handlePlanningUpdate(data: any, context: MessageHandlerContext): void {
  * @param data Approval request data
  * @param context Message handler context
  */
-function handlePlanningApprovalRequest(data: any, context: MessageHandlerContext): void {
+function handlePlanningApprovalRequest(data: Record<string, unknown>, context: MessageHandlerContext): void {
   const { setMessages, setPlanningSession } = context
   
   console.log("⚠️ Planning approval request:", data)
@@ -326,7 +327,7 @@ function handlePlanningApprovalRequest(data: any, context: MessageHandlerContext
  * @param data Error data from the stream
  * @param context Message handler context
  */
-function handlePlanningStreamError(data: any, context: MessageHandlerContext): void {
+function handlePlanningStreamError(data: Record<string, unknown>, context: MessageHandlerContext): void {
   const { setMessages } = context
   
   console.error("❌ Planning stream error data:", data)

@@ -163,7 +163,7 @@ export interface ConversationMessageResponse {
   session_id: string
   response_type: "text" | "data_preview" | "suggestion" | "confirmation" | "error"
   message: string
-  data?: any
+  data?: unknown
   suggestions?: Array<{
     id: string
     type: string
@@ -189,6 +189,16 @@ export interface ConversationSessionSummary {
   message_count: number
   operations_performed: number
   current_state: string
+}
+
+export interface ConversationCapabilitiesResponse {
+  status: string
+  capabilities: {
+    supported_intents: string[]
+    supported_operations: string[]
+    supported_formats: string[]
+    features: string[]
+  }
 }
 
 /**
@@ -306,15 +316,7 @@ export async function getConversationSession(sessionId: string): Promise<Convers
  * 
  * @returns Promise resolving to capabilities information
  */
-export async function getConversationCapabilities(): Promise<{
-  status: string
-  capabilities: {
-    supported_intents: string[]
-    supported_operations: string[]
-    supported_formats: string[]
-    features: string[]
-  }
-}> {
+export async function getConversationCapabilities(): Promise<ConversationCapabilitiesResponse> {
   try {
     const response = await fetch(`${BASE_URL}/conversation/capabilities`)
 

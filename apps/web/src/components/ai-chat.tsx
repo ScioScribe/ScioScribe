@@ -236,7 +236,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
   }
 
     // Expose debug function globally
-    ;(window as any).logChatState = logCurrentState
+    ;(window as unknown as Record<string, unknown>).logChatState = logCurrentState
     
     // Add global fetch interception for debugging (skip EventSource requests)
     const originalFetch = window.fetch

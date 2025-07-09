@@ -122,9 +122,9 @@ async function processDatacleanResponse(response: DatacleanResponse, context: Me
         // Update CSV data in experiment store if data is available
         if (response.data) {
           console.log("📤 Updating CSV from dataclean response")
-          updateCsvFromDatacleanResponse(response)
-            .then(result => {
-              console.log("📥 UPDATE CSV FROM DATACLEAN RESPONSE:", JSON.stringify(result, null, 2))
+          updateCsvFromDatacleanResponse(response as unknown as Record<string, unknown>)
+            .then(() => {
+              console.log("📥 UPDATE CSV FROM DATACLEAN RESPONSE: Success")
             })
             .catch(error => {
               console.error("❌ Failed to update CSV from dataclean response:", error)
@@ -203,11 +203,12 @@ async function processDatacleanResponse(response: DatacleanResponse, context: Me
  * @param response Initial response from session creation
  * @param context Message handler context
  */
-export function createDatacleanWelcomeMessage(sessionId: string, response: any, context: MessageHandlerContext): void {
+export function createDatacleanWelcomeMessage(sessionId: string, response: Record<string, unknown>, context: MessageHandlerContext): void {
   const { setMessages } = context
   
   // Add welcome message with capabilities
-  const capabilitiesText = response.capabilities?.join('\n• ') || "Data cleaning operations"
+  const capabilities = response.capabilities as string[] | undefined
+  const capabilitiesText = capabilities?.join('\n• ') || "Data cleaning operations"
   
   const welcomeMessage: Message = {
     id: (Date.now() + 1).toString(),

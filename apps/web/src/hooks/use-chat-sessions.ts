@@ -8,7 +8,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { usePlanningSession } from "@/hooks/use-planning-session"
 import { startPlanningSession, type StartPlanningSessionRequest } from "@/api/planning"
-import { startConversation, type StartConversationRequest } from "@/api/dataclean"
+import { startConversation, type StartConversationRequest, type StartConversationResponse } from "@/api/dataclean"
 import { streamingManager } from "@/utils/streaming-connection-manager"
 import type { SessionState } from "@/types/chat-types"
 
@@ -16,7 +16,7 @@ export interface ChatSessionsHookReturn {
   planningSession: SessionState
   datacleanSession: SessionState
   initializePlanningSession: (researchQuery: string) => Promise<{ session_id: string; experiment_id: string }>
-  initializeDatacleanSession: (userId?: string) => Promise<{ session_id: string; response: any }>
+  initializeDatacleanSession: (userId?: string) => Promise<{ session_id: string; response: StartConversationResponse }>
   cleanupPlanningSession: () => void
   cleanupDatacleanSession: () => void
   updatePlanningSession: (updates: Partial<SessionState>) => void

@@ -1,6 +1,6 @@
 import type React from "react"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
 import { FileText } from "lucide-react"
@@ -22,14 +22,14 @@ export function TextEditor({ value, onChange }: TextEditorProps) {
     setContent(value)
   }, [value])
 
-  useEffect(() => {
-    updateLineNumbers()
-  }, [content])
-
-  const updateLineNumbers = () => {
+  const updateLineNumbers = useCallback(() => {
     const lines = content.split("\n").length
     setLineCount(lines)
-  }
+  }, [content])
+
+  useEffect(() => {
+    updateLineNumbers()
+  }, [content, updateLineNumbers])
 
   const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newContent = e.target.value

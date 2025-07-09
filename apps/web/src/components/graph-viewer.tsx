@@ -195,7 +195,7 @@ export function GraphViewer({ htmlContent, onRefresh }: GraphViewerProps) {
     } else {
       setCurrentHtml(irisPlaceholderHTML)
     }
-  }, [htmlContent])
+  }, [htmlContent, irisPlaceholderHTML])
 
   const toggleFullscreen = () => {
     if (!isFullscreen) {

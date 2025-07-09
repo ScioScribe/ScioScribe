@@ -3,7 +3,7 @@
 import type React from "react"
 import { useState, useEffect, useCallback } from "react"
 import { TextEditor } from "@/components/text-editor"
-import { getPlanningSessionStatus } from "@/api/planning"
+import { getPlanningSessionStatus, type PlanningSessionStatus } from "@/api/planning"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -11,7 +11,7 @@ import { RefreshCw, Download, Eye, EyeOff } from "lucide-react"
 
 interface PlanningStateEditorProps {
   sessionId: string | null
-  onStateChange?: (state: any) => void
+  onStateChange?: (state: Record<string, unknown>) => void
   autoRefresh?: boolean
   refreshInterval?: number
 }
@@ -26,7 +26,7 @@ export function PlanningStateEditor({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-  const [sessionStatus, setSessionStatus] = useState<any>(null)
+  const [sessionStatus, setSessionStatus] = useState<PlanningSessionStatus | null>(null)
   const [isExpanded, setIsExpanded] = useState(true)
 
   const fetchPlanningState = useCallback(async () => {
@@ -51,9 +51,9 @@ export function PlanningStateEditor({
       setStateJson(formattedJson)
       setLastUpdated(new Date())
       
-      // Call the callback if provided
+      // Call the callback if provided - convert to Record
       if (onStateChange) {
-        onStateChange(status)
+        onStateChange(status as unknown as Record<string, unknown>)
       }
       
       console.log("✅ Planning state fetched successfully")
@@ -64,7 +64,7 @@ export function PlanningStateEditor({
     } finally {
       setLoading(false)
     }
-  }, [sessionId]) // Remove onStateChange dependency
+  }, [sessionId, onStateChange]) // Include onStateChange in dependencies
 
   // Initial fetch
   useEffect(() => {
@@ -112,14 +112,10 @@ export function PlanningStateEditor({
   const getStatusBadge = () => {
     if (!sessionStatus) return null
 
-    const { current_stage, is_waiting_for_approval, completed_stages } = sessionStatus
+    const { current_stage, is_waiting_for_approval } = sessionStatus
     
     if (is_waiting_for_approval) {
       return <Badge variant="outline" className="bg-yellow-100 text-yellow-800">⏳ Waiting for Approval</Badge>
-    }
-    
-    if (completed_stages && completed_stages.length > 0) {
-      return <Badge variant="outline" className="bg-green-100 text-green-800">✅ {completed_stages.length} Stages Complete</Badge>
     }
     
     return <Badge variant="outline" className="bg-blue-100 text-blue-800">🔄 {current_stage || "Active"}</Badge>
