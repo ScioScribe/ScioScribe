@@ -24,16 +24,16 @@ export default function Home() {
       <Title />
       <div className="flex-1 grid gap-4 px-4 pb-4" style={{ gridTemplateColumns: "1.7fr 2fr 1fr" }}>
         {/* Left Column */}
-        <div className="max-h-[95vh]">
+        <div className="h-[95vh]">
           <TextEditor value={editorText} onChange={setEditorText} />
         </div>
 
         {/* Middle Section - Upper and Lower Boxes */}
         <div className="flex flex-col gap-4 h-full">
-          <div className="max-h-[45vh] min-h-0">
+          <div className="h-[47vh] min-h-0">
             <DataTableViewer csvData={IRIS_CSV_DATA} />
           </div>
-          <div className="max-h-[45vh] min-h-0">
+          <div className="h-[47vh] min-h-0">
             <GraphViewer 
               htmlContent={visualizationHtml}
               onRefresh={handleRefreshVisualization}
@@ -42,7 +42,7 @@ export default function Home() {
         </div>
 
         {/* AI Chat */}
-        <div className="max-h-[95vh]">
+        <div className="h-[95vh]">
           <AiChat 
             plan={editorText}
             csv={IRIS_CSV_DATA}
