@@ -9,10 +9,7 @@ import logging
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from langgraph.graph import StateGraph, END
-try:
-    from langgraph.checkpoint.sqlite import SqliteSaver
-except ImportError:
-    SqliteSaver = None
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import ToolNode
 
@@ -51,7 +48,7 @@ logger = logging.getLogger(__name__)
 def create_planning_graph(
     debugger: Optional[StateDebugger] = None,
     log_level: str = "INFO",
-    checkpointer: Optional[SqliteSaver] = None
+    checkpointer: Optional[BaseCheckpointSaver] = None
 ) -> StateGraph:
     """
     Create a human-in-the-loop enabled planning graph.
@@ -62,7 +59,7 @@ def create_planning_graph(
     Args:
         debugger: Optional StateDebugger instance for logging
         log_level: Logging level for the graph
-        checkpointer: Optional checkpointer for state persistence
+        checkpointer: Checkpointer for state persistence (defaults to MemorySaver)
         
     Returns:
         Compiled StateGraph with HITL capabilities
@@ -70,9 +67,9 @@ def create_planning_graph(
     if debugger is None:
         debugger = get_global_debugger()
     
-    # Create checkpointer if not provided
+    # Use MemorySaver if no checkpointer is provided
     if checkpointer is None:
-        checkpointer = SqliteSaver.from_conn_string(":memory:")
+        checkpointer = MemorySaver()
     
     logger.info("Creating HITL planning graph with checkpointing")
     

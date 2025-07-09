@@ -16,10 +16,6 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sse_starlette import EventSourceResponse
-try:
-    from langgraph.checkpoint.sqlite import SqliteSaver
-except ImportError:
-    SqliteSaver = None
 from langgraph.checkpoint.memory import MemorySaver
 
 from agents.planning.graph.graph_builder import (
@@ -44,10 +40,6 @@ router = APIRouter(prefix="/api/planning", tags=["planning-hitl"])
 # Global instances
 _global_debugger = get_global_debugger()
 _active_graphs: Dict[str, Dict[str, Any]] = {}
-
-# Create checkpointer directory
-CHECKPOINT_DIR = Path("checkpoints")
-CHECKPOINT_DIR.mkdir(exist_ok=True)
 
 
 # Request/Response Models
@@ -85,18 +77,9 @@ class StreamEvent(BaseModel):
 def _get_or_create_graph_components(session_id: str) -> Dict[str, Any]:
     """Get or create graph components for a session."""
     if session_id not in _active_graphs:
-        # Create checkpointer for this session
-        if SqliteSaver is not None:
-            try:
-                checkpoint_path = CHECKPOINT_DIR / f"{session_id}.db"
-                checkpointer = SqliteSaver.from_conn_string(str(checkpoint_path))
-                logger.info(f"Using SqliteSaver for session {session_id}")
-            except Exception as e:
-                logger.warning(f"SqliteSaver failed for session {session_id}, using MemorySaver: {e}")
-                checkpointer = MemorySaver()
-        else:
-            logger.info(f"SqliteSaver not available, using MemorySaver for session {session_id}")
-            checkpointer = MemorySaver()
+        # Use an in-memory checkpointer for each session
+        logger.info(f"Using MemorySaver for session {session_id}")
+        checkpointer = MemorySaver()
         
         # Create graph
         graph = create_planning_graph(
@@ -294,11 +277,6 @@ async def delete_hitl_session(session_id: str):
         if session_id in _active_graphs:
             del _active_graphs[session_id]
         
-        # Clean up checkpoint file
-        checkpoint_path = CHECKPOINT_DIR / f"{session_id}.db"
-        if checkpoint_path.exists():
-            checkpoint_path.unlink()
-        
         logger.info(f"Deleted HITL planning session {session_id}")
         
         return {
@@ -321,8 +299,8 @@ async def hitl_health_check():
         # Check OpenAI configuration
         openai_status = "configured" if validate_openai_config() else "not_configured"
         
-        # Check checkpoint directory
-        checkpoint_status = "available" if CHECKPOINT_DIR.exists() else "not_available"
+        # Checkpoint status is now memory-based
+        checkpoint_status = "memory_based"
         
         return {
             "status": "healthy",
