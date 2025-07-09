@@ -18,7 +18,10 @@ from typing import Dict, Any, List, Optional, Tuple
 import logging
 
 # Core imports from focused modules
-from .graph_builder import create_planning_graph, get_graph_metadata
+from .graph_builder import (
+    create_planning_graph,
+    check_user_approval
+)
 from .executor import PlanningGraphExecutor
 from .error_handling import error_recovery_context, safe_agent_execution, safe_conditional_check
 from .node_handlers import (
@@ -168,7 +171,12 @@ def get_planning_graph_info() -> Dict[str, Any]:
     Returns:
         Dictionary with detailed system information
     """
-    base_info = get_graph_metadata()
+    # Basic graph metadata since get_graph_metadata might not exist in v2
+    base_info = {
+        "graph_type": "LangGraph StateGraph with HITL",
+        "state_type": "ExperimentPlanState",
+        "features": ["Human-in-the-loop approval", "Real-time streaming", "State checkpointing"]
+    }
     
     # Add additional system information
     system_info = {
@@ -384,6 +392,9 @@ __all__ = [
     "get_planning_graph_info",
     "create_planning_session",
     "validate_planning_system",
+    
+    # HITL-specific functions
+    "check_user_approval",
     
     # State and configuration
     "ExperimentPlanState",

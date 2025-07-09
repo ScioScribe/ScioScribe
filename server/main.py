@@ -49,7 +49,7 @@ async def root():
         "version": "1.0.0",
         "status": "healthy",
         "available_modules": [
-            "experiment-planning",
+            "experiment-planning-hitl",
             "data-cleaning",
             "analysis"
         ]

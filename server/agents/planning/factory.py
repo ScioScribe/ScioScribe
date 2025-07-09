@@ -87,7 +87,13 @@ def create_default_state(experiment_id: str, research_query: str) -> ExperimentP
         errors=[],
         chat_history=[],
         created_at=now,
-        updated_at=now
+        updated_at=now,
+        
+        # Human-in-the-loop State
+        pending_approval=None,
+        user_approved=None,
+        review_stage=None,
+        finalized_at=None
     )
     
     # Validate the created state
@@ -96,12 +102,13 @@ def create_default_state(experiment_id: str, research_query: str) -> ExperimentP
     return state
 
 
-def create_new_experiment_state(research_query: str) -> ExperimentPlanState:
+def create_new_experiment_state(research_query: str, experiment_id: Optional[str] = None) -> ExperimentPlanState:
     """
     Create a new ExperimentPlanState with auto-generated ID.
     
     Args:
         research_query: Initial research question or idea from the user
+        experiment_id: Optional existing experiment ID to use
         
     Returns:
         ExperimentPlanState with new experiment ID
@@ -109,7 +116,8 @@ def create_new_experiment_state(research_query: str) -> ExperimentPlanState:
     Raises:
         StateValidationError: If validation fails
     """
-    experiment_id = generate_experiment_id()
+    if experiment_id is None:
+        experiment_id = generate_experiment_id()
     return create_default_state(experiment_id, research_query)
 
 

@@ -116,38 +116,39 @@ class BaseAgent(ABC):
             StateValidationError: If state validation fails
         """
         start_time = datetime.utcnow()
-        
+        current_state = state.copy()
+
         try:
             # Validate input state
-            self._validate_input_state(state)
+            self._validate_input_state(current_state)
             
             # Log user input if provided
             if user_input.strip():
-                state = add_chat_message(state, "user", user_input)
+                current_state = add_chat_message(current_state, "user", user_input)
                 self.logger.info(f"User input received: {user_input[:100]}...")
             
             # Process state with performance monitoring
             with performance_context(f"{self.agent_name}_process", self.debugger):
-                updated_state = self.process_state(state)
+                updated_state = self.process_state(current_state)
             
             # Validate output state
             self._validate_output_state(updated_state)
             
             # Log successful execution
             duration = (datetime.utcnow() - start_time).total_seconds()
-            self._log_execution_success(state, updated_state, duration)
+            self._log_execution_success(current_state, updated_state, duration)
             
             return updated_state
             
         except StateValidationError as e:
             self.logger.error(f"State validation error in {self.agent_name}: {e}")
-            state = add_error(state, f"{self.agent_name} validation error: {e}")
-            return state
+            current_state = add_error(current_state, f"{self.agent_name} validation error: {e}")
+            return current_state
             
         except Exception as e:
             self.logger.error(f"Unexpected error in {self.agent_name}: {e}")
-            state = add_error(state, f"{self.agent_name} execution error: {e}")
-            return state
+            current_state = add_error(current_state, f"{self.agent_name} execution error: {e}")
+            return current_state
     
     def can_process_stage(self, state: ExperimentPlanState) -> bool:
         """

@@ -122,7 +122,11 @@ def safe_agent_execution(
         user_input = _get_latest_user_input(state)
         
         # Execute the agent with error handling
-        updated_state = agent.execute(state, user_input)
+        agent_output = agent.execute(state, user_input)
+        
+        # Merge the agent's output back into the original state
+        updated_state = state.copy()
+        updated_state.update(agent_output)
         
         # Post-execution validation
         validate_experiment_plan_state(updated_state)

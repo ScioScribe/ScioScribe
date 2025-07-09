@@ -58,6 +58,12 @@ class ExperimentPlanState(TypedDict):
     created_at: datetime
     updated_at: datetime
 
+    # Human-in-the-loop State
+    pending_approval: Optional[Dict[str, Any]]  # {stage, timestamp, status}
+    user_approved: Optional[bool]              # Whether user has approved current stage
+    review_stage: Optional[str]                # Current review stage (approved, requires_changes, etc.)
+    finalized_at: Optional[str]                # When the plan was finalized
+
 
 # Stage constants for tracking progress
 PLANNING_STAGES = [

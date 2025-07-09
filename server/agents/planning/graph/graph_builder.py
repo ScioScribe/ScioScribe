@@ -1,15 +1,20 @@
 """
-Graph construction and compilation for the experiment planning system.
+Human-in-the-loop enabled graph builder for experiment planning.
 
-This module provides the core functionality for building and compiling
-the LangGraph StateGraph that orchestrates all planning agents into
-a cohesive conversational flow.
+This module implements proper LangGraph HITL functionality with interrupts,
+checkpoints, and user approval mechanisms for frontend integration.
 """
 
-from typing import Optional
 import logging
-import traceback
+from typing import Optional, Dict, Any, List
+from datetime import datetime
 from langgraph.graph import StateGraph, END
+try:
+    from langgraph.checkpoint.sqlite import SqliteSaver
+except ImportError:
+    SqliteSaver = None
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.prebuilt import ToolNode
 
 from ..state import ExperimentPlanState
 from ..agents import (
@@ -45,34 +50,37 @@ logger = logging.getLogger(__name__)
 
 def create_planning_graph(
     debugger: Optional[StateDebugger] = None,
-    log_level: str = "INFO"
+    log_level: str = "INFO",
+    checkpointer: Optional[SqliteSaver] = None
 ) -> StateGraph:
     """
-    Create the main planning graph with all agents and routing logic.
+    Create a human-in-the-loop enabled planning graph.
     
-    This function constructs the StateGraph that orchestrates the six specialized
-    planning agents according to the conversational flow defined in the PRD.
+    This function creates a graph with proper interrupt mechanisms,
+    checkpointing, and user approval flows for frontend integration.
     
     Args:
         debugger: Optional StateDebugger instance for logging
         log_level: Logging level for the graph
+        checkpointer: Optional checkpointer for state persistence
         
     Returns:
-        Compiled StateGraph ready for execution
-        
-    Raises:
-        RuntimeError: If graph compilation fails
+        Compiled StateGraph with HITL capabilities
     """
     if debugger is None:
         debugger = get_global_debugger()
     
-    logger.info("Creating planning graph with StateGraph")
+    # Create checkpointer if not provided
+    if checkpointer is None:
+        checkpointer = SqliteSaver.from_conn_string(":memory:")
+    
+    logger.info("Creating HITL planning graph with checkpointing")
     
     # Initialize the StateGraph with ExperimentPlanState
     graph = StateGraph(ExperimentPlanState)
     
-    # Add agent nodes to the graph
-    logger.info("Adding agent nodes to graph")
+    # Add agent nodes with human-in-the-loop capabilities
+    logger.info("Adding agent nodes with HITL support")
     graph.add_node("objective_agent", objective_agent_node)
     graph.add_node("variable_agent", variable_agent_node)
     graph.add_node("design_agent", design_agent_node)
@@ -80,72 +88,144 @@ def create_planning_graph(
     graph.add_node("data_agent", data_agent_node)
     graph.add_node("review_agent", review_agent_node)
     
-    # Add routing and decision nodes
-    logger.info("Adding router node to graph")
+    # Add approval nodes for user review
+    graph.add_node("objective_approval", create_approval_node("objective"))
+    graph.add_node("variable_approval", create_approval_node("variables"))
+    graph.add_node("design_approval", create_approval_node("design"))
+    graph.add_node("methodology_approval", create_approval_node("methodology"))
+    graph.add_node("data_approval", create_approval_node("data"))
+    graph.add_node("final_approval", create_approval_node("final"))
+    
+    # Add router for section editing
     graph.add_node("router", router_node)
     
     # Set entry point
-    logger.info("Setting graph entry point")
     graph.set_entry_point("objective_agent")
     
-    # Add conditional edges for sequential flow with validation
-    logger.info("Adding conditional edges for sequential flow")
+    # Add edges with human-in-the-loop checkpoints
+    logger.info("Adding edges with HITL checkpoints")
+    
+    # Objective -> Approval -> Variables
     graph.add_conditional_edges(
         "objective_agent",
         objective_completion_check,
         {
-            "continue": "variable_agent",
+            "continue": "objective_approval",
             "retry": "objective_agent"
         }
     )
     
     graph.add_conditional_edges(
+        "objective_approval",
+        check_user_approval,
+        {
+            "approved": "variable_agent",
+            "rejected": "objective_agent",
+            "waiting": "objective_approval"
+        }
+    )
+    
+    # Variables -> Approval -> Design
+    graph.add_conditional_edges(
         "variable_agent",
         variable_completion_check,
         {
-            "continue": "design_agent",
+            "continue": "variable_approval",
             "retry": "variable_agent"
         }
     )
     
     graph.add_conditional_edges(
+        "variable_approval",
+        check_user_approval,
+        {
+            "approved": "design_agent",
+            "rejected": "variable_agent",
+            "waiting": "variable_approval"
+        }
+    )
+    
+    # Design -> Approval -> Methodology
+    graph.add_conditional_edges(
         "design_agent",
         design_completion_check,
         {
-            "continue": "methodology_agent",
+            "continue": "design_approval",
             "retry": "design_agent"
         }
     )
     
     graph.add_conditional_edges(
+        "design_approval",
+        check_user_approval,
+        {
+            "approved": "methodology_agent",
+            "rejected": "design_agent",
+            "waiting": "design_approval"
+        }
+    )
+    
+    # Methodology -> Approval -> Data
+    graph.add_conditional_edges(
         "methodology_agent",
         methodology_completion_check,
         {
-            "continue": "data_agent",
+            "continue": "methodology_approval",
             "retry": "methodology_agent"
         }
     )
     
     graph.add_conditional_edges(
+        "methodology_approval",
+        check_user_approval,
+        {
+            "approved": "data_agent",
+            "rejected": "methodology_agent",
+            "waiting": "methodology_approval"
+        }
+    )
+    
+    # Data -> Approval -> Review
+    graph.add_conditional_edges(
         "data_agent",
         data_completion_check,
         {
-            "continue": "review_agent",
+            "continue": "data_approval",
             "retry": "data_agent"
         }
     )
     
     graph.add_conditional_edges(
+        "data_approval",
+        check_user_approval,
+        {
+            "approved": "review_agent",
+            "rejected": "data_agent",
+            "waiting": "data_approval"
+        }
+    )
+    
+    # Review -> Final Approval -> End
+    graph.add_conditional_edges(
         "review_agent",
         review_completion_check,
         {
-            "complete": END,
+            "complete": "final_approval",
             "edit_section": "router"
         }
     )
     
-    # Router edges for loop-back functionality
-    logger.info("Adding router edges for loop-back functionality")
+    graph.add_conditional_edges(
+        "final_approval",
+        check_user_approval,
+        {
+            "approved": END,
+            "rejected": "router",
+            "waiting": "final_approval"
+        }
+    )
+    
+    # Router for section editing
     graph.add_conditional_edges(
         "router",
         route_to_section,
@@ -159,145 +239,87 @@ def create_planning_graph(
         }
     )
     
-    logger.info("Planning graph structure created successfully")
+    # Compile graph with checkpointing and interrupts
+    logger.info("Compiling HITL graph with checkpointing")
     
-    # Compile the graph with error handling
-    try:
-        logger.info("Compiling planning graph")
-        compiled_graph = graph.compile(
-            checkpointer=None,  # Will add checkpointing later if needed
-            debug=True if log_level == "DEBUG" else False
-        )
-        
-        logger.info("Planning graph compiled successfully")
-        return compiled_graph
-        
-    except Exception as e:
-        logger.error(f"Graph compilation failed: {str(e)}\n{traceback.format_exc()}")
-        raise RuntimeError(f"Failed to compile planning graph: {str(e)}") from e
+    # Set interrupt points for human approval
+    compiled_graph = graph.compile(
+        checkpointer=checkpointer,
+        interrupt_before=[
+            "objective_approval",
+            "variable_approval", 
+            "design_approval",
+            "methodology_approval",
+            "data_approval",
+            "final_approval"
+        ]
+    )
+    
+    logger.info("HITL planning graph compiled successfully")
+    return compiled_graph
 
 
-def validate_graph_structure(graph: StateGraph) -> bool:
+def create_approval_node(stage: str):
     """
-    Validate the structure of a planning graph.
+    Create an approval node for a specific planning stage.
     
-    This function performs basic validation checks on the graph structure
-    to ensure it has all required nodes and edges.
-    
-    Args:
-        graph: The StateGraph to validate
+    This node waits for user approval before proceeding to the next stage.
+    """
+    def approval_node(state: ExperimentPlanState) -> ExperimentPlanState:
+        """Node that waits for user approval."""
+        logger.info(f"Waiting for user approval for {stage} stage")
         
-    Returns:
-        True if graph structure is valid, False otherwise
-    """
-    try:
-        # Check if graph has required nodes
-        required_nodes = {
-            "objective_agent",
-            "variable_agent",
-            "design_agent",
-            "methodology_agent",
-            "data_agent",
-            "review_agent",
-            "router"
+        # Add approval request to state
+        state = state.copy()
+        state['pending_approval'] = {
+            'stage': stage,
+            'timestamp': datetime.utcnow().isoformat(),
+            'status': 'waiting'
         }
         
-        # This is a simplified check - in practice, you'd need to access
-        # the graph's internal structure to validate nodes and edges
-        logger.info("Graph structure validation would be performed here")
+        # Add message to chat history
+        approval_message = f"Please review the {stage} section. Do you approve this section to continue?"
+        state['chat_history'].append({
+            'timestamp': datetime.utcnow(),
+            'role': 'system',
+            'content': approval_message
+        })
         
-        return True
-        
-    except Exception as e:
-        logger.error(f"Graph validation failed: {str(e)}")
-        return False
+        return state
+    
+    return approval_node
 
 
-def get_graph_metadata() -> dict:
+def check_user_approval(state: ExperimentPlanState) -> str:
     """
-    Get metadata about the planning graph structure.
+    Check if user has approved the current stage.
     
     Returns:
-        Dictionary with graph structure information
+        "approved" if user approved
+        "rejected" if user rejected 
+        "waiting" if still waiting for approval
     """
-    return {
-        "graph_type": "LangGraph StateGraph",
-        "state_type": "ExperimentPlanState",
-        "node_count": 7,  # 6 agents + 1 router
-        "agent_nodes": [
-            "objective_agent",
-            "variable_agent",
-            "design_agent",
-            "methodology_agent",
-            "data_agent",
-            "review_agent"
-        ],
-        "router_nodes": ["router"],
-        "entry_point": "objective_agent",
-        "terminal_conditions": [
-            "All stages completed and user approved",
-            "Graph execution reaches END state"
-        ],
-        "features": [
-            "Sequential processing with validation",
-            "Conditional routing based on completion",
-            "Loop-back functionality for editing",
-            "Comprehensive error handling",
-            "State management and persistence"
-        ]
-    }
-
-
-def create_graph_with_custom_config(
-    agent_configs: dict,
-    debugger: Optional[StateDebugger] = None,
-    log_level: str = "INFO"
-) -> StateGraph:
-    """
-    Create a planning graph with custom agent configurations.
+    pending_approval = state.get('pending_approval', {})
     
-    This function allows for more fine-grained control over agent
-    initialization and configuration during graph creation.
+    if not pending_approval:
+        return "waiting"
     
-    Args:
-        agent_configs: Dictionary of agent-specific configurations
-        debugger: Optional StateDebugger instance for logging
-        log_level: Logging level for the graph
-        
-    Returns:
-        Compiled StateGraph with custom configurations
-    """
-    if debugger is None:
-        debugger = get_global_debugger()
+    # Check latest user input for approval/rejection
+    chat_history = state.get('chat_history', [])
+    for message in reversed(chat_history):
+        if message.get('role') == 'user':
+            content = message.get('content', '').lower()
+            
+            # Check for approval keywords
+            if any(keyword in content for keyword in ['approve', 'yes', 'good', 'continue', 'proceed']):
+                logger.info(f"User approved {pending_approval.get('stage')} stage")
+                return "approved"
+            
+            # Check for rejection keywords
+            if any(keyword in content for keyword in ['reject', 'no', 'change', 'modify', 'edit']):
+                logger.info(f"User rejected {pending_approval.get('stage')} stage")
+                return "rejected"
+            
+            break
     
-    logger.info("Creating planning graph with custom configurations")
-    
-    # Initialize agents with custom configurations
-    agents = {}
-    
-    default_config = {"log_level": log_level}
-    
-    agent_classes = {
-        "objective": ObjectiveAgent,
-        "variable": VariableAgent,
-        "design": DesignAgent,
-        "methodology": MethodologyAgent,
-        "data": DataAgent,
-        "review": ReviewAgent
-    }
-    
-    for agent_name, agent_class in agent_classes.items():
-        config = agent_configs.get(agent_name, default_config)
-        agents[agent_name] = agent_class(
-            debugger=debugger,
-            **config
-        )
-        logger.info(f"Initialized {agent_name} agent with custom config")
-    
-    # Create graph using the standard function
-    # (In practice, you'd modify create_planning_graph to accept agent instances)
-    graph = create_planning_graph(debugger=debugger, log_level=log_level)
-    
-    logger.info("Planning graph created with custom configurations")
-    
-    return graph 
+    return "waiting" 
