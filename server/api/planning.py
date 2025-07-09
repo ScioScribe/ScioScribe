@@ -124,7 +124,7 @@ def _is_waiting_for_approval(state: Optional[ExperimentPlanState]) -> bool:
 @router.post("/start", response_model=HITLSessionResponse)
 async def start_hitl_planning_session(request: StartHITLPlanningRequest):
     """
-    Start a new HITL planning session and runs the first step.
+    Start a new HITL planning session and runs until the first approval interrupt.
     """
     try:
         if not validate_openai_config():
@@ -144,13 +144,37 @@ async def start_hitl_planning_session(request: StartHITLPlanningRequest):
             experiment_id=request.experiment_id
         )
         
-        # Use astream to run the graph just for the first step
+        # Run the graph until it hits an interrupt (approval node)
+        current_state = initial_state
         async for event in graph.astream(initial_state, config, stream_mode="values"):
-            # The first event will be the output of the entry point
             current_state = event
-            break  # We only want the first state
+            # Check if we've hit an approval node (interrupt)
+            if _is_waiting_for_approval(current_state):
+                break
         
-        logger.info(f"Started HITL planning session {session_id}")
+        # Check if we're interrupted before an approval node
+        if not _is_waiting_for_approval(current_state):
+            try:
+                state_snapshot = await graph.aget_state(config)
+                if state_snapshot.next and any("approval" in str(node) for node in state_snapshot.next):
+                    # We're interrupted before an approval node, manually set pending_approval
+                    next_node = str(state_snapshot.next[0]) if state_snapshot.next else ""
+                    stage_name = next_node.replace("_approval", "") if "_approval" in next_node else "unknown"
+                    
+                    current_state["pending_approval"] = {
+                        "stage": stage_name,
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "status": "waiting"
+                    }
+                    
+                    # Update the state in the checkpoint
+                    await graph.aupdate_state(config, current_state)
+                    
+                    logger.info(f"Set pending_approval for stage: {stage_name}")
+            except Exception as e:
+                logger.warning(f"Failed to check/set pending_approval: {e}")
+        
+        logger.info(f"Started HITL planning session {session_id}, waiting for approval: {_is_waiting_for_approval(current_state)}")
         
         return HITLSessionResponse(
             session_id=session_id,
@@ -196,34 +220,69 @@ async def stream_chat(session_id: str, request: StreamChatRequest):
             if "pending_approval" in updated_state and updated_state["pending_approval"]:
                 updated_state["pending_approval"] = {}
 
-            # Update the state in the checkpoint, making it ready for resume
+            # Update the state in the checkpoint
             await graph.aupdate_state(config, updated_state)
 
-            # If we were waiting for approval, the user's input was the approval itself,
-            # so we don't need to pass it to the graph again.
-            graph_input = None if was_waiting_for_approval else updated_state
+            # If we were waiting for approval, resume from the approval node
+            # Otherwise, continue with the updated state
+            if was_waiting_for_approval:
+                # Resume from approval node - don't re-inject state
+                graph_input = None
+                logger.info(f"Resuming from approval node for session {session_id}")
+            else:
+                # Continue with updated state
+                graph_input = updated_state
+                logger.info(f"Continuing with updated state for session {session_id}")
 
-            # Resume execution and stream updates
-            async for event in graph.astream(graph_input, config):
-                for node_name, output in event.items():
-                    if node_name == "__interrupt__":
-                        continue  # Skip the interrupt signal
+            # Resume execution and stream updates until next approval or completion
+            async for event in graph.astream(graph_input, config, stream_mode="values"):
+                # The event is the state after each node execution
+                current_state = event
+                
+                # Serialize and send the state update
+                try:
+                    serialized_output = serialize_state_to_dict(current_state)
+                except (SerializationError, TypeError) as e:
+                    logger.warning(f"Could not serialize state update: {e}")
+                    serialized_output = {"error": "Serialization failed", "details": str(e)}
 
-                    # The output can be complex, serialize it safely
-                    try:
-                        serialized_output = serialize_state_to_dict(output)
-                    except (SerializationError, TypeError) as e:
-                        logger.warning(f"Could not serialize output from node {node_name}: {e}")
-                        serialized_output = {"error": "Serialization failed", "details": str(e)}
-
-                    stream_event = StreamEvent(
-                        event_type="update",
-                        data={"node": node_name, "output": serialized_output}
-                    )
-                    yield f"data: {stream_event.json()}\n\n"
+                stream_event = StreamEvent(
+                    event_type="update",
+                    data={"state": serialized_output}
+                )
+                yield f"data: {stream_event.json()}\n\n"
+                
+                # Check if we've reached another approval node
+                if _is_waiting_for_approval(current_state):
+                    logger.info(f"Reached approval node for session {session_id}")
+                    break
 
             # After the stream is done, check if we are waiting for another approval
             final_state = await _get_current_state(session_id)
+            
+            # Check if we're interrupted before an approval node
+            if not _is_waiting_for_approval(final_state):
+                try:
+                    state_snapshot = await graph.aget_state(config)
+                    if state_snapshot.next and any("approval" in str(node) for node in state_snapshot.next):
+                        # We're interrupted before an approval node, manually set pending_approval
+                        next_node = str(state_snapshot.next[0]) if state_snapshot.next else ""
+                        stage_name = next_node.replace("_approval", "") if "_approval" in next_node else "unknown"
+                        
+                        final_state["pending_approval"] = {
+                            "stage": stage_name,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "status": "waiting"
+                        }
+                        
+                        # Update the state in the checkpoint
+                        await graph.aupdate_state(config, final_state)
+                        
+                        logger.info(f"Set pending_approval for stage: {stage_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to check/set pending_approval: {e}")
+            
+            # Send approval request if we're waiting for approval
             if _is_waiting_for_approval(final_state):
                 approval_event = StreamEvent(
                     event_type="approval_request",

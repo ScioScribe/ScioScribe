@@ -36,18 +36,23 @@ def objective_completion_check(state: ExperimentPlanState) -> Literal["continue"
         "continue" if objectives are complete, "retry" if more work needed
     """
     def _check_objective_completion(state: ExperimentPlanState) -> Literal["continue", "retry"]:
-        # Check if objective and hypothesis are adequately defined
+        # Use the validate_objective_completeness function with 0-100 scoring
+        from ..prompts.objective_prompts import validate_objective_completeness
+        
         objective = state.get('experiment_objective')
         hypothesis = state.get('hypothesis')
+        research_query = state.get('research_query', '')
         
-        if objective and hypothesis:
-            # Additional validation for quality
-            if len(objective.strip()) > 20 and len(hypothesis.strip()) > 20:
-                logger.info("Objective completion check: PASS")
-                return "continue"
+        validation_results = validate_objective_completeness(objective, hypothesis, research_query)
+        score = validation_results.get('score', 0)
         
-        logger.info("Objective completion check: RETRY")
-        return "retry"
+        # Only continue if score is ≥80 as requested
+        if score >= 80:
+            logger.info(f"Objective completion check: PASS (score: {score})")
+            return "continue"
+        else:
+            logger.info(f"Objective completion check: RETRY (score: {score}, need ≥80)")
+            return "retry"
     
     return safe_conditional_check(
         _check_objective_completion, 
