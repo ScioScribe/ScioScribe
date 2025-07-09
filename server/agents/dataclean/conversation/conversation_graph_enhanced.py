@@ -1,95 +1,177 @@
 """
-Enhanced LangGraph Conversation Orchestrator with Advanced Intent Classification
+Enhanced conversation graph with advanced features for Phase 3.
 
-This module provides the enhanced conversation workflow that incorporates
-Phase 1.3 advanced intent classification capabilities.
+This module provides enhanced conversation management with multi-turn context,
+branching, error recovery, proactive suggestions, and simplified templates.
 """
 
-from typing import Dict, Any, Optional
 import logging
+from typing import Dict, Any, Optional, List
+from datetime import datetime
+
 from langgraph.graph import StateGraph, END
-from langgraph.graph.state import CompiledStateGraph
 
 from .state_schema import ConversationState, Intent
 from .conversation_session_manager import ConversationSessionManager
+from .intent_classifier import EnhancedIntentClassifier
 from .nodes_enhanced import (
-    enhanced_message_parser_node,
-    enhanced_context_loader_node,
-    enhanced_processing_router_node,
-    enhanced_response_generator_node,
+    enhanced_context_loader,
+    enhanced_response_composer,
+    enhanced_error_recovery,
+    conversation_branch_handler,
+    template_suggestion_handler,
+    conversation_flow_coordinator,
+    enhanced_data_processing
 )
+from .nodes import (
+    data_processor,
+    response_formatter,
+    conversation_finalizer,
+    _prepare_response,
+    _update_conversation_history
+)
+from config import get_openai_client
 
 logger = logging.getLogger(__name__)
 
 
 class EnhancedConversationGraph:
     """
-    Enhanced conversation orchestrator with Phase 1.3 intent classification.
+    Enhanced conversation graph with advanced features for Phase 3.
     
-    This class provides:
-    - Advanced intent classification with confidence scoring
-    - Parameter extraction from natural language
-    - CSV/Excel specific intent handling
-    - Intelligent fallback and suggestions
-    - Enhanced context-aware responses
+    Features:
+    - Multi-turn conversation context management
+    - Conversation branching and flow control
+    - Proactive suggestions and next-step recommendations
+    - Enhanced error recovery with intelligent fallback strategies
+    - Conversation summarization for long conversations
+    - Simplified template suggestions (no complex workflows)
     """
     
     def __init__(self):
-        """Initialize the enhanced conversation graph with session manager."""
-        self.graph = self._build_enhanced_graph()
-        self.compiled_graph = None
+        """Initialize the enhanced conversation graph."""
         self.session_manager = ConversationSessionManager()
+        self.intent_classifier = EnhancedIntentClassifier()
+        self.graph = self._build_enhanced_graph()
+        self.compiled_graph = self.graph.compile()
         
+        logger.info("Enhanced conversation graph initialized")
+    
     def _build_enhanced_graph(self) -> StateGraph:
-        """
-        Build the enhanced LangGraph conversation workflow.
+        """Build the enhanced conversation graph with advanced features."""
+        # Create the graph
+        graph = StateGraph(ConversationState)
         
-        The enhanced graph follows this flow:
-        1. Enhanced message parsing with advanced intent classification
-        2. Enhanced context loading with CSV/Excel specifics
-        3. Enhanced processing routing with parameter handling
-        4. Enhanced response generation with confidence awareness
-        """
-        # Initialize the state graph
-        workflow = StateGraph(ConversationState)
-        
-        # Add enhanced processing nodes
-        workflow.add_node("enhanced_message_parser", enhanced_message_parser_node)
-        workflow.add_node("enhanced_context_loader", enhanced_context_loader_node)
-        workflow.add_node("enhanced_processing_router", enhanced_processing_router_node)
-        workflow.add_node("enhanced_response_generator", enhanced_response_generator_node)
+        # Add enhanced nodes
+        graph.add_node("enhanced_context_loader", enhanced_context_loader)
+        graph.add_node("intent_classifier", self._enhanced_intent_classification)
+        graph.add_node("conversation_branch_handler", conversation_branch_handler)
+        graph.add_node("enhanced_data_processing", enhanced_data_processing)
+        graph.add_node("enhanced_error_recovery", enhanced_error_recovery)
+        graph.add_node("template_suggestion_handler", template_suggestion_handler)
+        graph.add_node("conversation_flow_coordinator", conversation_flow_coordinator)
+        graph.add_node("enhanced_response_composer", enhanced_response_composer)
+        graph.add_node("conversation_finalizer", conversation_finalizer)
         
         # Define the enhanced conversation flow
-        workflow.set_entry_point("enhanced_message_parser")
+        graph.set_entry_point("enhanced_context_loader")
         
-        # Enhanced flow with better processing
-        workflow.add_edge("enhanced_message_parser", "enhanced_context_loader")
-        workflow.add_edge("enhanced_context_loader", "enhanced_processing_router")
-        workflow.add_edge("enhanced_processing_router", "enhanced_response_generator")
-        workflow.add_edge("enhanced_response_generator", END)
+        # Context loading to intent classification
+        graph.add_edge("enhanced_context_loader", "intent_classifier")
         
-        return workflow
+        # Intent classification to conversation branching
+        graph.add_edge("intent_classifier", "conversation_branch_handler")
+        
+        # Conditional edges from conversation branching
+        graph.add_conditional_edges(
+            "conversation_branch_handler",
+            self._route_conversation_path,
+            {
+                "normal": "enhanced_data_processing",
+                "error_recovery": "enhanced_error_recovery",
+                "confirmation": "conversation_flow_coordinator",
+                "multi_step": "conversation_flow_coordinator"
+            }
+        )
+        
+        # Data processing to template suggestions
+        graph.add_edge("enhanced_data_processing", "template_suggestion_handler")
+        
+        # Template suggestions to response composition
+        graph.add_edge("template_suggestion_handler", "enhanced_response_composer")
+        
+        # Error recovery to response composition
+        graph.add_edge("enhanced_error_recovery", "enhanced_response_composer")
+        
+        # Flow coordination to response composition
+        graph.add_edge("conversation_flow_coordinator", "enhanced_response_composer")
+        
+        # Response composition to finalization
+        graph.add_edge("enhanced_response_composer", "conversation_finalizer")
+        
+        # Finalization to end
+        graph.add_edge("conversation_finalizer", END)
+        
+        return graph
     
-    def compile(self) -> CompiledStateGraph:
-        """
-        Compile the enhanced conversation graph for execution.
+    def _route_conversation_path(self, state: ConversationState) -> str:
+        """Route conversation based on the determined path."""
+        conversation_path = state.get("conversation_path", "normal")
         
-        Returns:
-            CompiledStateGraph: The compiled enhanced graph ready for execution
-        """
-        if self.compiled_graph is None:
-            self.compiled_graph = self.graph.compile()
-        return self.compiled_graph
+        if conversation_path == "error_recovery":
+            return "error_recovery"
+        elif conversation_path in ["confirmation", "multi_step"]:
+            return conversation_path
+        else:
+            return "normal"
+    
+    async def _enhanced_intent_classification(self, state: ConversationState) -> Dict[str, Any]:
+        """Enhanced intent classification with conversation context."""
+        try:
+            logger.info("Performing enhanced intent classification")
+            
+            user_message = state.get("user_message", "")
+            conversation_history = state.get("conversation_history", [])
+            data_context = state.get("data_context", {})
+            
+            # Classify intent with enhanced context
+            intent_result = await self.intent_classifier.classify_intent(
+                message=user_message,
+                context={
+                    "conversation_history": conversation_history,
+                    "data_context": data_context
+                }
+            )
+            
+            # Update state with classification results
+            state["intent"] = intent_result.intent
+            state["intent_confidence"] = intent_result.confidence
+            state["extracted_parameters"] = intent_result.extracted_parameters
+            state["confirmation_required"] = intent_result.confidence < 0.5
+            
+            if intent_result.confidence < 0.5:
+                state["confirmation_message"] = f"I'm not sure what you want to do. Could you rephrase your request?"
+            
+            logger.info(f"Intent classified as: {intent_result.intent} (confidence: {intent_result.confidence:.2f})")
+            
+            return state
+            
+        except Exception as e:
+            logger.error(f"Error in enhanced intent classification: {str(e)}")
+            # Fallback to basic classification
+            state["intent"] = Intent.UNKNOWN.value
+            state["confidence"] = 0.0
+            return state
     
     async def start_conversation(
-        self,
-        user_id: str,
+        self, 
+        user_id: str, 
         session_id: Optional[str] = None,
         artifact_id: Optional[str] = None,
         file_path: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Start a new enhanced conversation session or resume an existing one.
+        Start a new enhanced conversation session.
         
         Args:
             user_id: User identifier
@@ -98,50 +180,65 @@ class EnhancedConversationGraph:
             file_path: Optional file path for processing
             
         Returns:
-            Dict containing session information with enhanced capabilities
+            Session information and welcome message
         """
         try:
-            # Try to get existing session first
+            logger.info(f"Starting enhanced conversation for user: {user_id}")
+            
+            # Create or resume session
             if session_id:
-                existing_session = await self.session_manager.get_session(session_id)
-                if existing_session:
-                    logger.info(f"Resumed existing enhanced session {session_id}")
-                    return {
-                        "session_id": session_id,
-                        "resumed": True,
-                        "status": "active",
-                        "message": "Enhanced session resumed successfully",
-                        "capabilities": "Advanced intent classification enabled"
-                    }
+                session_info = await self.session_manager.get_session(session_id)
+                if session_info:
+                    logger.info(f"Resuming session: {session_id}")
+                else:
+                    session_info = await self.session_manager.create_session(user_id)
+                    logger.info(f"Session not found, created new session: {session_info['session_id']}")
+            else:
+                session_info = await self.session_manager.create_session(user_id)
+                logger.info(f"Created new session: {session_info['session_id']}")
             
-            # Create new session
-            session_state = await self.session_manager.create_session(
-                user_id=user_id,
-                session_id=session_id,
-                artifact_id=artifact_id,
-                file_path=file_path
-            )
+            # Initialize conversation state
+            initial_state = {
+                "session_id": session_info["session_id"],
+                "user_id": user_id,
+                "artifact_id": artifact_id,
+                "conversation_history": session_info.get("conversation_history", []),
+                "data_context": {},
+                "context_loaded": False,
+                "conversation_path": "normal"
+            }
             
-            session_id = session_state["session_id"]
-            logger.info(f"Started new enhanced conversation session {session_id}")
+            # Generate welcome message with simplified templates
+            welcome_message = "👋 **Welcome to ScioScribe Data Cleaning Assistant!**\n\n"
+            
+            if artifact_id:
+                welcome_message += "I can see you have data ready to work with. "
+            else:
+                welcome_message += "Upload a CSV or Excel file to get started. "
+            
+            welcome_message += "I'm here to help you clean, analyze, and explore your data through natural conversation.\n\n"
+            welcome_message += "**Quick start:**\n"
+            welcome_message += "• *\"show me the data\"* - View your data\n"
+            welcome_message += "• *\"analyze the data quality\"* - Check for issues\n"
+            welcome_message += "• *\"clean the data\"* - Fix common problems\n"
+            welcome_message += "• *\"describe the data\"* - Get data overview\n\n"
+            welcome_message += "💡 **Pro tip:** You can ask me questions in natural language!"
             
             return {
-                "session_id": session_id,
-                "resumed": False,
-                "status": "active",
-                "message": "New enhanced conversation session started",
-                "capabilities": "Advanced intent classification, parameter extraction, CSV/Excel support",
-                "data_context": session_state.get("data_context"),
-                "file_format": session_state.get("file_format")
+                "success": True,
+                "session_id": session_info["session_id"],
+                "user_id": user_id,
+                "message": welcome_message,
+                "capabilities": self.get_conversation_capabilities(),
+                "conversation_active": True
             }
             
         except Exception as e:
             logger.error(f"Error starting enhanced conversation: {str(e)}")
             return {
-                "session_id": session_id,
-                "resumed": False,
-                "status": "error",
-                "message": f"Failed to start enhanced conversation: {str(e)}"
+                "success": False,
+                "error": str(e),
+                "message": "Failed to start conversation session"
             }
     
     async def process_message(
@@ -149,380 +246,228 @@ class EnhancedConversationGraph:
         user_message: str,
         session_id: str,
         user_id: str,
-        artifact_id: Optional[str] = None,
-        **kwargs
+        artifact_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Process a user message through the enhanced conversation workflow.
+        Process a user message through the enhanced conversation graph.
         
         Args:
-            user_message: The user's natural language input
+            user_message: User's natural language input
             session_id: Session identifier
             user_id: User identifier
             artifact_id: Optional data artifact ID
-            **kwargs: Additional context parameters
             
         Returns:
-            Dict containing enhanced conversation response with confidence and parameters
+            Enhanced conversation response
         """
         try:
-            logger.info(f"Processing enhanced message for session {session_id}: {user_message}")
+            logger.info(f"Processing enhanced message for session: {session_id}")
             
-            # Get or create session
-            session_state = await self.session_manager.get_session(session_id)
-            if not session_state:
-                # Create new session if not found
-                session_state = await self.session_manager.create_session(
-                    user_id=user_id,
-                    session_id=session_id,
-                    artifact_id=artifact_id,
-                    file_path=kwargs.get("file_path")
-                )
-            
-            # Initialize enhanced state fields
-            initial_state = {
-                **session_state,
-                "user_message": user_message,
-                "artifact_id": artifact_id or session_state.get("artifact_id"),
-                
-                # Enhanced fields for Phase 1.3
-                "intent_confidence": 0.0,
-                "intent_reasoning": "",
-                "alternative_intents": [],
-                "csv_excel_context": session_state.get("csv_excel_context", {}),
-                
-                **kwargs
-            }
-            
-            # Compile and execute the enhanced graph
-            compiled_graph = self.compile()
-            result = await compiled_graph.ainvoke(initial_state)
-            
-            # Update session with enhanced results
-            await self.session_manager.update_session(session_id, result)
-            
-            # Add enhanced conversation turn to history
-            await self.session_manager.add_conversation_turn(
-                session_id=session_id,
-                user_message=user_message,
-                assistant_response=result.get("response", ""),
-                intent=result.get("intent", Intent.UNKNOWN),
-                response_type=result.get("response_type", "info"),
-                metadata={
-                    "operation_result": result.get("operation_result"),
-                    "confirmation_required": result.get("confirmation_required", False),
-                    "intent_confidence": result.get("intent_confidence", 0.0),
-                    "intent_reasoning": result.get("intent_reasoning", ""),
-                    "extracted_parameters": result.get("extracted_parameters", {}),
-                    "alternative_intents": result.get("alternative_intents", [])
+            # Get session info
+            session_info = await self.session_manager.get_session(session_id)
+            if not session_info:
+                return {
+                    "success": False,
+                    "error": "Session not found",
+                    "message": "Session expired. Please start a new conversation."
                 }
-            )
             
-            # Extract enhanced response data
-            response_data = {
-                "response": result.get("response", "I apologize, but I couldn't process your request."),
-                "response_type": result.get("response_type", "error"),
-                "intent": result.get("intent", Intent.UNKNOWN).value,
+            # Initialize conversation state
+            state = {
                 "session_id": session_id,
-                "conversation_history": result.get("conversation_history", []),
-                "confirmation_required": result.get("confirmation_required", False),
-                "operation_result": result.get("operation_result"),
-                "error_message": result.get("error_message"),
-                "data_context": result.get("data_context"),
-                "next_steps": result.get("next_steps"),
-                "suggestions": result.get("suggestions"),
-                
-                # Enhanced Phase 1.3 fields
-                "intent_confidence": result.get("intent_confidence", 0.0),
-                "intent_reasoning": result.get("intent_reasoning", ""),
-                "extracted_parameters": result.get("extracted_parameters", {}),
-                "alternative_intents": result.get("alternative_intents", []),
-                
-                "csv_excel_context": {
-                    "file_format": result.get("file_format"),
-                    "delimiter": result.get("delimiter"),
-                    "encoding": result.get("encoding"),
-                    "sheet_name": result.get("sheet_name"),
-                    "context_info": result.get("csv_excel_context", {})
-                }
+                "user_id": user_id,
+                "artifact_id": artifact_id or session_info.get("artifact_id"),
+                "user_message": user_message,
+                "conversation_history": session_info.get("conversation_history", []),
+                "data_context": {},
+                "context_loaded": False,
+                "conversation_path": "normal"
             }
             
-            logger.info(f"Successfully processed enhanced message for session {session_id}")
-            return response_data
+            # Process through enhanced graph
+            final_state = await self.compiled_graph.ainvoke(state)
+            
+            # Extract response
+            response = final_state.get("response", "I'm ready to help with your data cleaning task!")
+            
+            # Update session with final state
+            await self.session_manager.update_session(session_id, final_state)
+            
+            return {
+                "success": True,
+                "response": response,
+                "session_id": session_id,
+                "intent": final_state.get("intent"),
+                "confidence": final_state.get("confidence", 0.0),
+                "suggestions_provided": final_state.get("suggestions_provided", False),
+                "conversation_active": True,
+                "processing_result": final_state.get("processing_result", {})
+            }
             
         except Exception as e:
-            logger.error(f"Error processing enhanced message for session {session_id}: {str(e)}")
+            logger.error(f"Error processing enhanced message: {str(e)}")
             return {
-                "response": "I apologize, but I encountered an error while processing your request. Please try again.",
-                "response_type": "error",
-                "intent": Intent.UNKNOWN.value,
-                "session_id": session_id,
-                "error_message": str(e),
-                "conversation_history": [],
-                "confirmation_required": False,
-                "operation_result": None,
-                "data_context": None,
-                "next_steps": None,
-                "suggestions": None,
-                
-                # Enhanced error fields
-                "intent_confidence": 0.0,
-                "intent_reasoning": f"Processing failed: {str(e)}",
-                "extracted_parameters": {},
-                "alternative_intents": [],
-                "csv_excel_context": {}
+                "success": False,
+                "error": str(e),
+                "message": "I encountered an error processing your message. Please try again."
             }
     
     async def handle_confirmation(
-        self,
-        session_id: str,
-        user_id: str,
-        confirmed: bool,
-        **kwargs
+        self, 
+        session_id: str, 
+        user_id: str, 
+        confirmed: bool
     ) -> Dict[str, Any]:
         """
-        Handle user confirmation with enhanced context awareness.
+        Handle user confirmation for operations that require approval.
         
         Args:
             session_id: Session identifier
             user_id: User identifier
             confirmed: Whether the user confirmed the operation
-            **kwargs: Additional context parameters
             
         Returns:
-            Dict containing enhanced confirmation response
+            Confirmation response
         """
         try:
-            logger.info(f"Handling enhanced confirmation for session {session_id}: {confirmed}")
+            logger.info(f"Handling confirmation for session: {session_id}")
             
-            # Get current session
-            session_state = await self.session_manager.get_session(session_id)
-            if not session_state:
+            # Get session info
+            session_info = await self.session_manager.get_session(session_id)
+            if not session_info:
                 return {
-                    "response": "Session not found. Please start a new conversation.",
-                    "response_type": "error",
-                    "intent": "error",
-                    "session_id": session_id,
-                    "confirmation_required": False,
-                    "operation_result": None,
-                    "error_message": "Session not found",
-                    "intent_confidence": 0.0
+                    "success": False,
+                    "error": "Session not found",
+                    "message": "Session expired. Please start a new conversation."
                 }
             
-            # Get the pending operation context
-            pending_operation = session_state.get("pending_operation", {})
-            extracted_parameters = session_state.get("extracted_parameters", {})
-            
+            # Process confirmation
             if confirmed:
-                # Process the confirmed operation with enhanced context
-                response_text = "Operation confirmed and will be executed."
-                if extracted_parameters:
-                    param_info = ", ".join([f"{k}: {v}" for k, v in extracted_parameters.items()])
-                    response_text += f" Parameters: {param_info}."
-                
-                operation_result = {
-                    "status": "success", 
-                    "message": "Operation confirmed",
-                    "parameters": extracted_parameters
-                }
-                
-                # Add enhanced conversation turn
-                await self.session_manager.add_conversation_turn(
-                    session_id=session_id,
-                    user_message="Yes, proceed with the operation",
-                    assistant_response=response_text,
-                    intent=Intent.CLEAN,  # Assuming most confirmations are for cleaning
-                    response_type="result",
-                    metadata={
-                        "confirmed": True,
-                        "parameters": extracted_parameters,
-                        "operation": pending_operation
-                    }
-                )
-                
-                return {
-                    "response": response_text,
-                    "response_type": "result",
-                    "intent": "confirmation",
-                    "session_id": session_id,
-                    "confirmation_required": False,
-                    "operation_result": operation_result,
-                    "error_message": None,
-                    "intent_confidence": 1.0,
-                    "extracted_parameters": extracted_parameters
-                }
+                response = "✅ **Confirmed!** I'll proceed with the requested operation."
+                # Here you would typically trigger the actual operation
             else:
-                # Operation was cancelled
-                response_text = "Operation cancelled. Is there anything else I can help you with?"
-                operation_result = {
-                    "status": "cancelled", 
-                    "message": "Operation cancelled by user",
-                    "cancelled_parameters": extracted_parameters
-                }
-                
-                # Add enhanced conversation turn
-                await self.session_manager.add_conversation_turn(
-                    session_id=session_id,
-                    user_message="No, cancel the operation",
-                    assistant_response=response_text,
-                    intent=Intent.CLEAN,
-                    response_type="info",
-                    metadata={
-                        "confirmed": False,
-                        "cancelled_parameters": extracted_parameters
-                    }
-                )
-                
-                return {
-                    "response": response_text,
-                    "response_type": "info",
-                    "intent": "cancellation",
-                    "session_id": session_id,
-                    "confirmation_required": False,
-                    "operation_result": operation_result,
-                    "error_message": None,
-                    "intent_confidence": 1.0,
-                    "extracted_parameters": {}
-                }
-                
-        except Exception as e:
-            logger.error(f"Error handling enhanced confirmation for session {session_id}: {str(e)}")
+                response = "❌ **Cancelled.** The operation has been cancelled. What would you like to do next?"
+            
             return {
-                "response": "I encountered an error while processing your confirmation. Please try again.",
-                "response_type": "error",
-                "intent": "error",
+                "success": True,
+                "response": response,
                 "session_id": session_id,
-                "confirmation_required": False,
-                "operation_result": None,
-                "error_message": str(e),
-                "intent_confidence": 0.0,
-                "extracted_parameters": {}
+                "confirmed": confirmed,
+                "conversation_active": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling confirmation: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Error processing confirmation"
             }
     
-    def get_enhanced_capabilities(self) -> Dict[str, Any]:
+    async def get_session_summary(self, session_id: str) -> Dict[str, Any]:
+        """
+        Get a summary of the conversation session.
+        
+        Args:
+            session_id: Session identifier
+            
+        Returns:
+            Session summary information
+        """
+        try:
+            session_info = await self.session_manager.get_session(session_id)
+            if not session_info:
+                return {
+                    "status": "error",
+                    "message": "Session not found"
+                }
+            
+            conversation_history = session_info.get("conversation_history", [])
+            
+            return {
+                "status": "success",
+                "session_id": session_id,
+                "user_id": session_info.get("user_id"),
+                "artifact_id": session_info.get("artifact_id"),
+                "conversation_turns": len(conversation_history),
+                "created_at": session_info.get("created_at"),
+                "last_activity": session_info.get("last_activity"),
+                "conversation_active": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting session summary: {str(e)}")
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+    
+    def get_conversation_capabilities(self) -> Dict[str, Any]:
         """
         Get information about enhanced conversation capabilities.
         
         Returns:
-            Dict containing enhanced capability information
+            Conversation capabilities and supported intents
         """
         return {
-            "phase_1_3_features": {
-                "advanced_intent_classification": True,
-                "confidence_scoring": True,
-                "parameter_extraction": True,
-                "csv_excel_specific_handling": True,
-                "fallback_suggestions": True,
-                "alternative_intent_suggestions": True
-            },
-            "supported_intents": [intent.value for intent in Intent if intent != Intent.UNKNOWN],
-            "supported_file_formats": ["csv", "excel"],
-            "enhanced_features": {
-                "session_management": [
-                    "Create and resume sessions",
-                    "Session state persistence", 
-                    "Enhanced conversation history tracking",
-                    "CSV/Excel context management with confidence"
-                ],
-                "intent_classification": [
-                    "Pattern-based intent recognition",
-                    "Confidence scoring (0-1)",
-                    "Parameter extraction from natural language",
-                    "CSV/Excel specific intent handling",
-                    "Alternative intent suggestions",
-                    "Intelligent fallback handling"
-                ],
-                "data_exploration": [
-                    "Show data with extracted row counts",
-                    "Describe data structure with confidence",
-                    "Analyze data quality with parameters"
-                ],
-                "data_cleaning": [
-                    "Clean data with column extraction",
-                    "Fix data problems with confidence scoring",
-                    "Remove invalid entries with parameter handling"
-                ],
-                "file_operations": [
-                    "Excel sheet selection with name extraction",
-                    "CSV delimiter detection with preferences",
-                    "Encoding detection and handling"
-                ],
-                "conversation_features": [
-                    "Multi-turn conversations with context",
-                    "Context awareness with confidence tracking",
-                    "Operation confirmation with parameter details",
-                    "Error recovery with intelligent suggestions"
-                ]
-            },
-            "confidence_thresholds": {
-                "high_confidence": ">= 0.8",
-                "medium_confidence": "0.5 - 0.7",
-                "low_confidence": "0.3 - 0.5",
-                "fallback": "< 0.3"
-            },
-            "conversation_flow": [
-                "Enhanced message parsing with intent classification",
-                "Enhanced context loading with CSV/Excel specifics",
-                "Enhanced processing routing with parameter handling",
-                "Enhanced response generation with confidence awareness"
+            "supported_intents": [
+                {
+                    "intent": "show_data",
+                    "description": "Display data samples and structure",
+                    "examples": ["show me the data", "display first 10 rows"]
+                },
+                {
+                    "intent": "analyze",
+                    "description": "Analyze data quality and identify issues",
+                    "examples": ["analyze the data quality", "find data issues"]
+                },
+                {
+                    "intent": "clean",
+                    "description": "Clean and fix data quality issues",
+                    "examples": ["clean the data", "fix the issues"]
+                },
+                {
+                    "intent": "describe",
+                    "description": "Get data description and statistics",
+                    "examples": ["describe the data", "data overview"]
+                },
+                {
+                    "intent": "transform",
+                    "description": "Transform and modify data",
+                    "examples": ["convert dates", "standardize formats"]
+                },
+                {
+                    "intent": "save",
+                    "description": "Save and export processed data",
+                    "examples": ["save the data", "export to CSV"]
+                }
+            ],
+            "features": [
+                "Multi-turn conversation context",
+                "Proactive suggestions",
+                "Enhanced error recovery",
+                "Conversation summarization",
+                "Simplified helpful templates",
+                "Natural language understanding",
+                "Confirmation workflows"
+            ],
+            "supported_file_formats": ["CSV", "Excel (.xlsx, .xls)"],
+            "conversation_types": [
+                "Data exploration",
+                "Quality analysis",
+                "Data cleaning",
+                "Format standardization",
+                "Export and save"
             ]
         }
 
 
-# Enhanced convenience functions
+# Global instance
+_enhanced_conversation_graph = None
 
-async def start_enhanced_conversation_session(
-    user_id: str,
-    session_id: Optional[str] = None,
-    artifact_id: Optional[str] = None,
-    file_path: Optional[str] = None
-) -> Dict[str, Any]:
-    """
-    Start a new enhanced conversation session with Phase 1.3 capabilities.
-    
-    Args:
-        user_id: User identifier
-        session_id: Optional session ID for resuming
-        artifact_id: Optional existing data artifact ID
-        file_path: Optional path to data file
-        
-    Returns:
-        Dict containing enhanced session information
-    """
-    conversation_graph = EnhancedConversationGraph()
-    return await conversation_graph.start_conversation(
-        user_id=user_id,
-        session_id=session_id,
-        artifact_id=artifact_id,
-        file_path=file_path
-    )
-
-
-async def process_enhanced_conversation_message(
-    user_message: str,
-    session_id: str,
-    user_id: str,
-    artifact_id: Optional[str] = None,
-    **kwargs
-) -> Dict[str, Any]:
-    """
-    Process a conversation message with enhanced Phase 1.3 capabilities.
-    
-    Args:
-        user_message: The user's natural language input
-        session_id: Session identifier
-        user_id: User identifier
-        artifact_id: Optional data artifact ID
-        **kwargs: Additional context parameters
-        
-    Returns:
-        Dict containing enhanced conversation response
-    """
-    conversation_graph = EnhancedConversationGraph()
-    return await conversation_graph.process_message(
-        user_message=user_message,
-        session_id=session_id,
-        user_id=user_id,
-        artifact_id=artifact_id,
-        **kwargs
-    ) 
+def get_enhanced_conversation_graph() -> EnhancedConversationGraph:
+    """Get the global enhanced conversation graph instance."""
+    global _enhanced_conversation_graph
+    if _enhanced_conversation_graph is None:
+        _enhanced_conversation_graph = EnhancedConversationGraph()
+    return _enhanced_conversation_graph 

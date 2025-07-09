@@ -6,7 +6,7 @@ Each node wraps existing components to provide conversational orchestration.
 """
 
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import logging
 from datetime import datetime
 import pandas as pd
@@ -72,16 +72,15 @@ async def message_parser_node(state: ConversationState) -> ConversationState:
 
 async def context_loader_node(state: ConversationState) -> ConversationState:
     """
-    Load data context from existing memory store and file system.
+    Load conversation context and data artifact state.
     
-    This node retrieves the current data artifact and file context
-    to provide the necessary information for processing.
+    This node retrieves the current data context from the memory store
+    and enriches the conversation state with relevant information.
     """
     try:
-        session_id = state["session_id"]
-        artifact_id = state.get("artifact_id")
+        logger.info("Loading conversation context")
         
-        logger.info(f"Loading context for session: {session_id}")
+        artifact_id = state.get("artifact_id")
         
         # Get global memory store instance
         memory_store = get_data_store()
@@ -181,7 +180,7 @@ async def processing_router_node(state: ConversationState) -> ConversationState:
         elif intent == Intent.DESCRIBE:
             operation_result = await _handle_describe_data(state, memory_store)
             
-        elif intent in [Intent.CLEAN, Intent.FIX, Intent.REMOVE]:
+        elif intent in [Intent.CLEAN, Intent.REMOVE]:
             # These operations require confirmation
             confirmation_required = True
             if complete_processor:
@@ -474,7 +473,6 @@ async def _handle_sheet_selection(state: ConversationState, file_processor: File
     
     try:
         # Get available sheets using pandas
-        import pandas as pd
         xl_file = pd.ExcelFile(file_path)
         sheets = xl_file.sheet_names
         
@@ -513,9 +511,6 @@ async def _handle_delimiter_detection(state: ConversationState, file_processor: 
     
     try:
         # Use pandas CSV sniffer to detect delimiter
-        import pandas as pd
-        import csv
-        
         with open(file_path, 'r', encoding='utf-8') as f:
             sample = f.read(1024)
             sniffer = csv.Sniffer()
@@ -582,4 +577,110 @@ async def _generate_success_response(operation_result: Dict[str, Any], intent: I
         delimiter = operation_result.get("delimiter", "unknown")
         return f"The detected delimiter for your CSV file is: '{delimiter}'"
     
-    return "Operation completed successfully." 
+    return "Operation completed successfully."
+
+
+# Helper functions for enhanced nodes
+def _format_processing_result(processing_result: Dict[str, Any], intent: str) -> str:
+    """Format processing result for display in conversation."""
+    if not processing_result:
+        return "I'm ready to help with your data cleaning task!"
+    
+    if not processing_result.get("success"):
+        error_msg = processing_result.get("error_message", "Unknown error")
+        return f"I encountered an issue: {error_msg}"
+    
+    message = processing_result.get("message", "")
+    if message:
+        return message
+    
+    # Default formatting based on intent
+    if intent == "show_data":
+        data_shape = processing_result.get("data_shape", (0, 0))
+        return f"Here's your data (shape: {data_shape[0]} rows, {data_shape[1]} columns):"
+    elif intent == "analyze":
+        issues = processing_result.get("quality_issues", [])
+        suggestions = processing_result.get("suggestions", [])
+        return f"Analysis complete! Found {len(issues)} quality issues and {len(suggestions)} suggestions."
+    elif intent == "clean":
+        applied = processing_result.get("transformations_applied", 0)
+        return f"Data cleaning complete! Applied {applied} transformations."
+    elif intent == "describe":
+        description = processing_result.get("description", {})
+        return f"Data description complete! Analyzed {len(description)} columns."
+    
+    return "Operation completed successfully."
+
+
+def _update_conversation_history(
+    conversation_history: List[Dict[str, Any]], 
+    role: str, 
+    content: str, 
+    **kwargs
+) -> List[Dict[str, Any]]:
+    """Update conversation history with new message."""
+    new_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "role": role,
+        "content": content,
+        **kwargs
+    }
+    
+    conversation_history.append(new_entry)
+    return conversation_history
+
+
+def _prepare_response(state: ConversationState) -> ConversationState:
+    """Prepare final response for the conversation."""
+    response = state.get("response", "I'm ready to help with your data cleaning task!")
+    
+    return {
+        **state,
+        "response": response
+    }
+
+
+# Additional nodes for enhanced conversation graph
+async def data_processor(state: ConversationState) -> ConversationState:
+    """Process data operations using existing components."""
+    # This is a wrapper around the existing processing logic
+    return await processing_router_node(state)
+
+
+async def response_formatter(state: ConversationState) -> ConversationState:
+    """Format response for conversation output."""
+    # This is a wrapper around the existing response generation logic
+    return await response_generator_node(state)
+
+
+async def conversation_finalizer(state: ConversationState) -> ConversationState:
+    """Finalize conversation turn and prepare for next interaction."""
+    try:
+        logger.info("Finalizing conversation turn")
+        
+        # Ensure response is set
+        if not state.get("response"):
+            state["response"] = "I'm ready to help with your data cleaning task!"
+        
+        # Update conversation history if not already done
+        conversation_history = state.get("conversation_history", [])
+        
+        # Check if assistant response is already in history
+        if not conversation_history or conversation_history[-1].get("role") != "assistant":
+            conversation_history = _update_conversation_history(
+                conversation_history,
+                "assistant",
+                state["response"],
+                type="response"
+            )
+            state["conversation_history"] = conversation_history
+        
+        # Return the finalized state
+        return state
+        
+    except Exception as e:
+        logger.error(f"Error in conversation_finalizer: {str(e)}")
+        return {
+            **state,
+            "response": "I'm ready to help with your data cleaning task!"
+        } 
