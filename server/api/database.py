@@ -46,6 +46,11 @@ class UpdateCsvRequest(BaseModel):
     csv_data: str = Field(..., description="Updated CSV data content")
 
 
+class UpdateTitleRequest(BaseModel):
+    """Request model for updating experiment title."""
+    title: str = Field(..., description="Updated experiment title")
+
+
 class ExperimentResponse(BaseModel):
     """Response model for experiment data."""
     id: str = Field(..., description="Unique experiment identifier")
@@ -323,6 +328,57 @@ async def update_experiment_csv(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to update experiment CSV: {str(e)}"
+        )
+
+
+@router.put("/experiments/{experiment_id}/title", response_model=ExperimentResponse)
+async def update_experiment_title(
+    experiment_id: str,
+    request: UpdateTitleRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Update the title for a specific experiment.
+    
+    Updates only the title field, leaving other fields unchanged.
+    """
+    try:
+        # Query experiment by ID
+        experiment = db.query(Experiment).filter(Experiment.id == experiment_id).first()
+        
+        if not experiment:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Experiment with ID {experiment_id} not found"
+            )
+        
+        # Update the title
+        experiment.title = request.title
+        experiment.updated_at = datetime.now()
+        
+        # Save changes
+        db.commit()
+        db.refresh(experiment)
+        
+        logger.info(f"Updated title for experiment: {experiment_id}")
+        
+        return _experiment_to_response(experiment)
+        
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        logger.error(f"Database error updating title for experiment {experiment_id}: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error updating title for experiment {experiment_id}: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update experiment title: {str(e)}"
         )
 
 
