@@ -358,7 +358,9 @@ def draw_chart(df):
     fig.update_layout(
         font=dict(size=12),
         margin=dict(t=50, r=20, b=50, l=50),
-        autosize=True
+        autosize=True,
+        width=None,
+        height=None
     )
     
     # Generate responsive HTML
@@ -386,6 +388,11 @@ def draw_chart(df):
             width: 100%; 
             margin: 0;
             padding: 0;
+        }}
+        .plotly-graph-div {{
+            width: 100% !important;
+            height: 100% !important;
+            box-sizing: border-box;
         }}
     </style>'''
     ).replace(
@@ -468,7 +475,9 @@ def draw_chart(df):
     fig.update_layout(
         font=dict(size=12),
         margin=dict(t=50, r=20, b=50, l=50),
-        autosize=True
+        autosize=True,
+        width=None,
+        height=None
     )
     
     # Generate responsive HTML
@@ -496,6 +505,11 @@ def draw_chart(df):
             width: 100%; 
             margin: 0;
             padding: 0;
+        }}
+        .plotly-graph-div {{
+            width: 100% !important;
+            height: 100% !important;
+            box-sizing: border-box;
         }}
     </style>'''
     ).replace(
