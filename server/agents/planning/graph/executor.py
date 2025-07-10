@@ -12,7 +12,7 @@ from datetime import datetime
 
 from ..state import ExperimentPlanState, PLANNING_STAGES
 from .graph_builder import create_planning_graph
-from ..factory import create_new_experiment_state, add_chat_message, add_error, update_state_timestamp
+from ..factory import create_new_experiment_state, add_chat_message, add_error
 from ..debug import StateDebugger, get_global_debugger
 from .helpers import extract_user_intent, get_completion_keywords
 
@@ -142,7 +142,6 @@ class PlanningGraphExecutor:
                 "system", 
                 "I encountered an issue during execution. Let me try to recover..."
             )
-            error_state = update_state_timestamp(error_state)
             
             return error_state
     
@@ -254,7 +253,7 @@ class PlanningGraphExecutor:
                 "errors": errors,
                 "has_errors": len(errors) > 0,
                 "last_updated": state.get('updated_at'),
-                "created_at": state.get('created_at'),
+                # LangGraph manages timestamps via checkpoints
                 "chat_message_count": len(state.get('chat_history', []))
             }
             
@@ -424,18 +423,9 @@ class PlanningGraphExecutor:
             assistant_messages = len([m for m in chat_history if m.get('role') == 'assistant'])
             system_messages = len([m for m in chat_history if m.get('role') == 'system'])
             
-            # Calculate timing if available
-            created_at = state.get('created_at')
-            updated_at = state.get('updated_at')
-            
+            # LangGraph manages session timing via checkpoints
+            # Duration calculation would come from checkpoint metadata if needed
             duration = None
-            if created_at and updated_at:
-                if isinstance(created_at, str):
-                    created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                if isinstance(updated_at, str):
-                    updated_at = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
-                
-                duration = (updated_at - created_at).total_seconds()
             
             metrics = {
                 "total_messages": len(chat_history),

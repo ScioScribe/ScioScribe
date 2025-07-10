@@ -21,7 +21,7 @@ from ..agents import (
 from .error_handling import error_recovery_context, safe_agent_execution
 from ..validation import validate_experiment_plan_state
 from ..transitions import transition_to_stage
-from ..factory import add_chat_message, add_error, update_state_timestamp
+from ..factory import add_chat_message, add_error
 from .helpers import get_latest_user_input, determine_section_to_edit
 
 logger = logging.getLogger(__name__)
@@ -194,7 +194,6 @@ def router_node(state: ExperimentPlanState) -> ExperimentPlanState:
             
             # Update the current stage to the target section
             updated_state = transition_to_stage(updated_state, section_to_edit)
-            updated_state = update_state_timestamp(updated_state)
             
             # Validate output state
             validate_experiment_plan_state(updated_state)
@@ -218,7 +217,6 @@ def router_node(state: ExperimentPlanState) -> ExperimentPlanState:
             # Default to objective setting as fallback
             try:
                 recovery_state = transition_to_stage(recovery_state, "objective_setting")
-                recovery_state = update_state_timestamp(recovery_state)
             except Exception as transition_error:
                 logger.error(f"Fallback transition failed: {transition_error}")
                 # Minimal state changes if transition fails

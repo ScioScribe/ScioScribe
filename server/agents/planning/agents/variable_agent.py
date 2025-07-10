@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from ..factory import add_chat_message, update_state_timestamp
+from ..factory import add_chat_message
 from ..models import VariableOutput
 from ..prompts.variable_prompts import (
     VARIABLE_SYSTEM_PROMPT,
@@ -113,7 +113,6 @@ class VariableAgent(BaseAgent):
             agent_response_text = "I had trouble understanding the variable details. Could you please clarify or provide them in a more structured way?"
 
         updated_state = add_chat_message(state, "assistant", agent_response_text)
-        updated_state = update_state_timestamp(updated_state)
         
         return updated_state
 

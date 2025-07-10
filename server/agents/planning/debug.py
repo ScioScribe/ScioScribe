@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .state import ExperimentPlanState, PLANNING_STAGES
 from .validation import StateValidationError
-from .serialization import serialize_state_to_dict, SerializationError
+from .serialization import serialize_state_to_dict
 
 # Create logger for this module
 logger = logging.getLogger(__name__)
@@ -54,7 +54,6 @@ class StateDebugger:
                 "operation": operation,
                 "experiment_id": state.get("experiment_id"),
                 "current_stage": state.get("current_stage"),
-                "completed_stages": state.get("completed_stages", []),
                 "errors": state.get("errors", []),
                 "details": details or {}
             }
@@ -94,17 +93,17 @@ class StateDebugger:
         }
         
         try:
-            # Check required fields
+            # Check required fields (simplified schema)
             required_fields = [
                 "experiment_id", "research_query", "current_stage",
-                "completed_stages", "created_at", "updated_at"
+                "errors", "chat_history"
             ]
             
             for field in required_fields:
                 if field not in state:
                     report["errors"].append(f"Missing required field: {field}")
                     report["is_valid"] = False
-                elif not state[field]:
+                elif not state[field] and field not in ["errors"]:  # errors can be empty list
                     report["warnings"].append(f"Empty required field: {field}")
             
             # Check stage consistency
@@ -112,13 +111,6 @@ class StateDebugger:
             if current_stage and current_stage not in PLANNING_STAGES:
                 report["errors"].append(f"Invalid current stage: {current_stage}")
                 report["is_valid"] = False
-            
-            # Check completed stages
-            completed_stages = state.get("completed_stages", [])
-            for stage in completed_stages:
-                if stage not in PLANNING_STAGES:
-                    report["errors"].append(f"Invalid completed stage: {stage}")
-                    report["is_valid"] = False
             
             # Analyze field completeness by stage
             for stage in PLANNING_STAGES:
@@ -190,17 +182,15 @@ class StateDebugger:
             summary = {
                 "experiment_id": state.get("experiment_id"),
                 "current_stage": state.get("current_stage"),
-                "completed_stages": state.get("completed_stages", []),
                 "progress": {
                     "total_stages": len(PLANNING_STAGES),
-                    "completed_count": len(state.get("completed_stages", [])),
+                    "completed_count": 0,  # LangGraph manages stage completion
                     "current_stage_index": PLANNING_STAGES.index(state.get("current_stage", "")) if state.get("current_stage") in PLANNING_STAGES else -1
                 },
                 "data_completeness": {},
                 "errors": state.get("errors", []),
                 "chat_history_length": len(state.get("chat_history", [])),
-                "created_at": state.get("created_at"),
-                "updated_at": state.get("updated_at")
+                # LangGraph manages timestamps via checkpoints
             }
             
             # Calculate progress percentage

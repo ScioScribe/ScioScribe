@@ -1,21 +1,22 @@
 """
-Error handling utilities for the experiment planning graph system.
+Error handling and recovery mechanisms for the experiment planning graph system.
 
-This module provides comprehensive error handling and recovery mechanisms
-for LangGraph nodes, including context managers, safe execution wrappers,
-and fallback strategies for robust agent orchestration.
+This module provides comprehensive error handling, recovery patterns, and
+safe execution contexts for all graph operations with detailed logging
+and state recovery capabilities.
 """
 
-from typing import Any, Optional, Callable, TypeVar
-import logging
-import traceback
+from typing import Dict, Any, Optional, Callable, TypeVar
 from contextlib import contextmanager
+import logging
+from datetime import datetime
+import traceback
 
-from ..state import ExperimentPlanState
-from ..validation import validate_experiment_plan_state, StateValidationError
+from ..state import ExperimentPlanState, PLANNING_STAGES
+from ..validation import StateValidationError, validate_experiment_plan_state
+from ..factory import add_chat_message, add_error
+from ..debug import StateDebugger, get_global_debugger
 from ..transitions import transition_to_stage, TransitionError
-from ..factory import add_chat_message, add_error, update_state_timestamp
-from ..debug import get_global_debugger
 
 logger = logging.getLogger(__name__)
 
@@ -135,9 +136,6 @@ def safe_agent_execution(
         if updated_state.get('current_stage') != stage:
             updated_state = transition_to_stage(updated_state, stage)
         
-        # Update timestamp
-        updated_state = update_state_timestamp(updated_state)
-        
         logger.info(f"Safe execution of {node_name} completed successfully")
         return updated_state
         
@@ -160,7 +158,6 @@ def safe_agent_execution(
         
         # Ensure we're in a valid state
         try:
-            recovery_state = update_state_timestamp(recovery_state)
             validate_experiment_plan_state(recovery_state)
         except Exception as validation_error:
             logger.error(f"Recovery state validation failed: {validation_error}")
@@ -257,8 +254,7 @@ def create_error_recovery_state(
         # Add user-friendly message
         recovery_state = add_chat_message(recovery_state, "system", user_message)
         
-        # Update timestamp
-        recovery_state = update_state_timestamp(recovery_state)
+        # State updated (LangGraph manages timestamps via checkpoints)
         
         logger.info(f"Created error recovery state for {node_name}")
         return recovery_state

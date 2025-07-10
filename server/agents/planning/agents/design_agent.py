@@ -15,7 +15,7 @@ from langchain_openai import ChatOpenAI
 
 from .base_agent import BaseAgent
 from ..state import ExperimentPlanState, GROUP_REQUIRED_FIELDS
-from ..factory import add_chat_message, update_state_timestamp
+from ..factory import add_chat_message
 from ..prompts.design_prompts import (
     DESIGN_SYSTEM_PROMPT,
     EXPERIMENTAL_GROUP_QUESTIONS,
@@ -156,7 +156,7 @@ Adhere strictly to the required output format with proper conditions dictionarie
             state['errors'].append(error_message)
             state = add_chat_message(state, "assistant", "I ran into an unexpected error while creating the experimental design. Please review the details and we can try again.")
 
-        return update_state_timestamp(state)
+        return state
     
     def validate_stage_requirements(self, state: ExperimentPlanState) -> Tuple[bool, List[str]]:
         """

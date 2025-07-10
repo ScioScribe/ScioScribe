@@ -24,8 +24,7 @@ from agents.planning.debug import StateDebugger, get_global_debugger
 from agents.planning.validation import StateValidationError
 from agents.planning.serialization import (
     serialize_state_to_dict,
-    deserialize_dict_to_state,
-    SerializationError
+    deserialize_dict_to_state
 )
 from agents.planning.factory import create_new_experiment_state, add_chat_message
 from config import validate_openai_config
@@ -128,7 +127,6 @@ def _get_or_create_graph_components(session_id: str) -> Dict[str, Any]:
         _active_graphs[session_id] = {
             "graph": graph,
             "checkpointer": checkpointer,
-            "created_at": datetime.utcnow(),
             "config": {"configurable": {"thread_id": session_id}}
         }
     

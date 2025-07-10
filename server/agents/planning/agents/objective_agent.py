@@ -14,7 +14,7 @@ from langchain_core.pydantic_v1 import BaseModel, Field
 
 from .base_agent import BaseAgent
 from ..state import ExperimentPlanState
-from ..factory import add_chat_message, update_state_timestamp
+from ..factory import add_chat_message
 from ..models import ObjectiveOutput
 from ..prompts.objective_prompts import (
     OBJECTIVE_SYSTEM_PROMPT,
@@ -108,9 +108,8 @@ class ObjectiveAgent(BaseAgent):
             self.logger.error(f"Error invoking structured LLM: {e}", exc_info=True)
             agent_response_text = "I had trouble understanding that. Could you please rephrase your request or provide more specific details about the objective and hypothesis?"
 
-        # Add agent response to chat history and update timestamp
+        # Add agent response to chat history
         updated_state = add_chat_message(state, "assistant", agent_response_text)
-        updated_state = update_state_timestamp(updated_state)
         
         return updated_state
     

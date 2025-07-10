@@ -13,7 +13,7 @@ import logging
 
 from ..state import ExperimentPlanState, PLANNING_STAGES
 from ..validation import StateValidationError, validate_experiment_plan_state
-from ..factory import update_state_timestamp, add_chat_message, add_error
+from ..factory import add_chat_message, add_error
 from ..debug import StateDebugger, performance_monitor, performance_context, log_agent_interaction
 from ..serialization import serialize_state_to_dict, deserialize_dict_to_state
 
@@ -230,10 +230,6 @@ class BaseAgent(ABC):
     def _validate_output_state(self, state: ExperimentPlanState) -> None:
         """Validate the output state structure."""
         validate_experiment_plan_state(state)
-        
-        # Ensure state timestamp is updated
-        if state.get("updated_at") is None:
-            state = update_state_timestamp(state)
         
         # Log state validation
         self.debugger.log_state_change(

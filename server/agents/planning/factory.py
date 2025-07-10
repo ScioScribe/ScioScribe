@@ -46,8 +46,6 @@ def create_default_state(experiment_id: str, research_query: str) -> ExperimentP
             value=research_query
         )
     
-    now = datetime.utcnow()
-    
     state = ExperimentPlanState(
         # Core Identification
         experiment_id=experiment_id,
@@ -75,26 +73,15 @@ def create_default_state(experiment_id: str, research_query: str) -> ExperimentP
         expected_outcomes=None,
         potential_pitfalls=[],
         
-        # Administrative
+        # Administrative (Optional)
         ethical_considerations=None,
         timeline=None,
         budget_estimate=None,
         
-        # System State
+        # Minimal System State (LangGraph manages the rest)
         current_stage="objective_setting",
-        completed_stages=[],
-        user_feedback=None,
         errors=[],
-        chat_history=[],
-        created_at=now,
-        updated_at=now,
-        
-        # Human-in-the-loop State
-        pending_approval=None,
-        user_approved=None,
-        review_stage=None,
-        finalized_at=None,
-        approvals={}  # Initialize empty approvals dictionary for tracking permanent approval flags
+        chat_history=[]
     )
     
     # Validate the created state
@@ -122,23 +109,9 @@ def create_new_experiment_state(research_query: str, experiment_id: Optional[str
     return create_default_state(experiment_id, research_query)
 
 
-def update_state_timestamp(state: ExperimentPlanState) -> ExperimentPlanState:
-    """
-    Update the updated_at timestamp for a state.
-    
-    Args:
-        state: The state to update
-        
-    Returns:
-        ExperimentPlanState with updated timestamp
-    """
-    state['updated_at'] = datetime.utcnow()
-    return state
-
-
 def advance_stage(state: ExperimentPlanState, new_stage: str) -> ExperimentPlanState:
     """
-    Advance the state to a new stage and update completed stages.
+    Advance the state to a new stage.
     
     Args:
         state: The current state
@@ -155,14 +128,8 @@ def advance_stage(state: ExperimentPlanState, new_stage: str) -> ExperimentPlanS
     # Validate the new stage
     validate_stage(new_stage)
     
-    # Add current stage to completed stages if not already there
-    current_stage = state['current_stage']
-    if current_stage not in state['completed_stages']:
-        state['completed_stages'].append(current_stage)
-    
     # Update to new stage
     state['current_stage'] = new_stage
-    state = update_state_timestamp(state)
     
     return state
 
@@ -216,7 +183,6 @@ def add_chat_message(
     }
     
     state['chat_history'].append(message)
-    state = update_state_timestamp(state)
     
     return state
 
@@ -237,10 +203,6 @@ def add_error(state: ExperimentPlanState, error_message: str) -> ExperimentPlanS
         if 'errors' not in state:
             state['errors'] = []
         state['errors'].append(error_message.strip())
-        
-        # Only update timestamp if field exists
-        if 'updated_at' in state:
-            state = update_state_timestamp(state)
     
     return state
 
@@ -256,6 +218,5 @@ def clear_errors(state: ExperimentPlanState) -> ExperimentPlanState:
         ExperimentPlanState with cleared errors
     """
     state['errors'] = []
-    state = update_state_timestamp(state)
     
     return state 

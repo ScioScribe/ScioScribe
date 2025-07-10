@@ -12,7 +12,6 @@ import logging
 
 from .state import ExperimentPlanState, PLANNING_STAGES
 from .validation import StateValidationError, validate_experiment_plan_state
-from .factory import update_state_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -292,15 +291,8 @@ def transition_to_stage(
     # Validate the transition
     validate_stage_transition(state, target_stage, force)
     
-    # Add current stage to completed stages if moving forward
-    if current_stage not in state["completed_stages"]:
-        direction = get_transition_direction(current_stage, target_stage)
-        if direction == TransitionDirection.FORWARD:
-            state["completed_stages"].append(current_stage)
-    
-    # Update stage and timestamp
+    # Update stage (LangGraph manages completion tracking via checkpoints)
     state["current_stage"] = target_stage
-    state = update_state_timestamp(state)
     
     logger.info(f"Transitioned from {current_stage} to {target_stage}")
     
@@ -395,33 +387,24 @@ def get_stage_progress(state: ExperimentPlanState) -> Dict[str, Any]:
         Dictionary with progress information
     """
     current_stage = state["current_stage"]
-    completed_stages = state["completed_stages"]
-    
     current_index = get_stage_index(current_stage)
     total_stages = len(PLANNING_STAGES)
     
-    # Calculate completion percentage
-    completed_count = len(completed_stages)
-    if current_stage not in completed_stages:
-        completed, _ = check_stage_completion(state, current_stage)
-        if completed:
-            completed_count += 1
-    
-    progress_percentage = (completed_count / total_stages) * 100
+    # Calculate completion percentage based on current stage
+    # (LangGraph manages detailed completion tracking via checkpoints)
+    progress_percentage = ((current_index + 1) / total_stages) * 100
     
     return {
         "current_stage": current_stage,
         "current_stage_index": current_index,
         "total_stages": total_stages,
-        "completed_stages": completed_stages,
-        "completed_count": completed_count,
         "progress_percentage": progress_percentage,
         "is_final_stage": current_stage == PLANNING_STAGES[-1]
     }
 
 
 def reset_stage_progress(state: ExperimentPlanState, target_stage: str) -> ExperimentPlanState:
-    """Reset progress to a specific stage, clearing later stages.
+    """Reset progress to a specific stage.
     
     Args:
         state: Current experiment state
@@ -440,17 +423,8 @@ def reset_stage_progress(state: ExperimentPlanState, target_stage: str) -> Exper
             reason="invalid_stage"
         )
     
-    target_index = get_stage_index(target_stage)
-    
-    # Remove completed stages that come after the target
-    state["completed_stages"] = [
-        stage for stage in state["completed_stages"]
-        if get_stage_index(stage) < target_index
-    ]
-    
-    # Set current stage
+    # Set current stage (LangGraph manages the rest via checkpoints)
     state["current_stage"] = target_stage
-    state = update_state_timestamp(state)
     
     logger.info(f"Reset progress to stage: {target_stage}")
     

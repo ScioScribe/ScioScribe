@@ -243,7 +243,7 @@ def create_planning_session(
             "initial_state": initial_state,
             "status": status,
             "config": config,
-            "created_at": initial_state.get('created_at'),
+            # LangGraph manages timestamps via checkpoints
             "graph_info": executor.get_graph_info()
         }
         

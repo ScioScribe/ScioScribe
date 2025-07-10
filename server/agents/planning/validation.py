@@ -335,10 +335,10 @@ def validate_state_structure(state: Dict[str, Any]) -> bool:
         StateValidationError: If validation fails
     """
     with validation_context("state structure validation"):
-        # Check required fields exist
+        # Check required fields exist (simplified schema)
         required_fields = [
             'experiment_id', 'research_query', 'current_stage', 
-            'completed_stages', 'created_at', 'updated_at'
+            'errors', 'chat_history'
         ]
         
         for field in required_fields:
@@ -353,30 +353,13 @@ def validate_state_structure(state: Dict[str, Any]) -> bool:
         validate_experiment_id(state['experiment_id'])
         validate_stage(state['current_stage'])
         
-        # Validate completed stages
-        if not isinstance(state['completed_stages'], list):
+        # Validate errors list
+        if not isinstance(state['errors'], list):
             raise StateValidationError(
-                "Completed stages must be a list",
-                field="completed_stages",
-                value=state['completed_stages']
+                "Errors must be a list",
+                field="errors",
+                value=state['errors']
             )
-        
-        for stage in state['completed_stages']:
-            if stage not in PLANNING_STAGES:
-                raise StateValidationError(
-                    f"Invalid completed stage: {stage}",
-                    field="completed_stages",
-                    value=stage
-                )
-        
-        # Validate datetime fields
-        for field in ['created_at', 'updated_at']:
-            if not isinstance(state[field], datetime):
-                raise StateValidationError(
-                    f"Field '{field}' must be a datetime object",
-                    field=field,
-                    value=state[field]
-                )
         
         # Validate variable lists
         validate_variable_list(state.get('independent_variables', []), 'independent')

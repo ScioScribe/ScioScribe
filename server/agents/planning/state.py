@@ -6,16 +6,15 @@ that all planning agents use to collaborate and build comprehensive experiment p
 """
 
 from typing import TypedDict, Optional, List, Dict, Any
-from datetime import datetime
 
 
 class ExperimentPlanState(TypedDict):
     """
-    Core state structure for the experiment planning agent system.
+    Simplified state structure for the experiment planning agent system.
     
-    This TypedDict defines all fields that agents use to collaborate and
-    build comprehensive experiment plans. The state is passed between agents
-    and updated incrementally as the plan develops.
+    This TypedDict focuses on domain data only, letting LangGraph handle
+    control flow, approvals, and system state management through its
+    built-in mechanisms (interrupts, checkpoints, etc.).
     """
     
     # Core Identification
@@ -44,26 +43,15 @@ class ExperimentPlanState(TypedDict):
     expected_outcomes: Optional[str]
     potential_pitfalls: List[Dict[str, Any]]     # issue, likelihood, mitigation
     
-    # Administrative
+    # Administrative (Optional)
     ethical_considerations: Optional[str]
     timeline: Optional[Dict[str, Any]]
     budget_estimate: Optional[Dict[str, Any]]
     
-    # System State
+    # Minimal System State (LangGraph manages the rest)
     current_stage: str
-    completed_stages: List[str]
-    user_feedback: Optional[str]
     errors: List[str]
     chat_history: List[Dict[str, Any]]
-    created_at: datetime
-    updated_at: datetime
-
-    # Human-in-the-loop State
-    pending_approval: Optional[Dict[str, Any]]  # {stage, timestamp, status}
-    user_approved: Optional[bool]              # Whether user has approved current stage
-    review_stage: Optional[str]                # Current review stage (approved, requires_changes, etc.)
-    finalized_at: Optional[str]                # When the plan was finalized
-    approvals: Optional[Dict[str, bool]]       # Persistent approval flags for each stage
 
 
 # Stage constants for tracking progress

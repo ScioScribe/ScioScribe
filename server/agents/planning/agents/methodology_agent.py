@@ -15,7 +15,7 @@ from langchain_openai import ChatOpenAI
 
 from .base_agent import BaseAgent
 from ..state import ExperimentPlanState
-from ..factory import add_chat_message, update_state_timestamp
+from ..factory import add_chat_message
 from ..prompts.methodology_prompts import METHODOLOGY_SYSTEM_PROMPT
 from ..models import MethodologyOutput
 
@@ -153,7 +153,7 @@ Adhere strictly to the required output format with all required fields.
             state['errors'].append(error_message)
             state = add_chat_message(state, "assistant", "An unexpected error occurred while I was creating the experimental protocol. Please review the error, and we can try again.")
 
-        return update_state_timestamp(state)
+        return state
     
     def validate_stage_requirements(self, state: ExperimentPlanState) -> Tuple[bool, List[str]]:
         """
