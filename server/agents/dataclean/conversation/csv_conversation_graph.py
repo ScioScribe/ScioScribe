@@ -294,6 +294,8 @@ class CSVConversationGraph:
                 state["intent"] = "rejection"
             elif any(word in message for word in ["analyze", "check", "examine", "review", "show me"]):
                 state["intent"] = "analyze"
+            elif any(word in message for word in ["describe", "overview", "summary", "what's in"]):
+                state["intent"] = "describe"
             else:
                 state["intent"] = "analyze"  # Default to analysis
             
@@ -428,6 +430,8 @@ class CSVConversationGraph:
                     state["response"] = await self._generate_greeting_response(state)
                 elif state.get("intent") == "analyze":
                     state["response"] = await self._generate_analysis_response(state)
+                elif state.get("intent") == "describe":
+                    state["response"] = await self._generate_description_response(state)
                 else:
                     state["response"] = "I'm here to help with your data cleaning needs."
             
@@ -448,7 +452,7 @@ class CSVConversationGraph:
             return "approval"
         elif intent == "transform":
             return "analyze"  # Analyze first, then suggest transformations
-        elif intent in ["greeting", "analyze"]:
+        elif intent in ["greeting", "analyze", "describe"]:
             return "analyze"
         elif intent == "rejection":
             return "response"
@@ -456,18 +460,35 @@ class CSVConversationGraph:
             return "response"
     
     def _route_after_suggestions(self, state: Dict[str, Any]) -> str:
-        """Route after generating suggestions."""
+        """
+        Decide what happens after we have generated suggestions.
+
+        * transform   + suggestions  -> apply directly
+        * greeting    + suggestions  -> ask for approval (legacy behaviour)
+        * analyze     + suggestions  -> just report findings (NO approval yet)
+        * anything else              -> direct response
+        """
         pending = state.get("pending_transformations", [])
         intent = state.get("intent", "")
-        
-        # If user explicitly requested transformation, apply directly
+
+        # User explicitly asked to transform/clean → apply immediately
         if intent == "transform" and pending:
-            return "apply_directly"  # Apply changes directly without asking
-        # If greeting or analysis, show suggestions and ask for approval
-        elif pending and intent in ["greeting", "analyze"]:
+            return "apply_directly"
+
+        # For a greeting (first-time help) we still ask for approval
+        if intent == "greeting" and pending:
             return "approval_needed"
-        else:
+
+        # For pure analysis, show results but don't enter approval
+        if intent == "analyze":
             return "direct_response"
+
+        # For describe intent, show results but don't enter approval
+        if intent == "describe":
+            return "direct_response"
+
+        # Default fall-through
+        return "direct_response"
     
     # Helper Functions
     
@@ -482,6 +503,8 @@ class CSVConversationGraph:
                 # It's already a dictionary
                 state = existing_state.copy()
                 state["user_message"] = request.user_message
+                # Clear previous response to allow new response generation
+                state["response"] = ""
             else:
                 # It's a Pydantic model
                 state = {
@@ -561,20 +584,46 @@ class CSVConversationGraph:
             return f"Hello! I encountered an error analyzing your data: {str(e)}"
     
     async def _generate_analysis_response(self, state: Dict[str, Any]) -> str:
-        """Generate analysis response."""
+        """Generate analysis response without entering approval flow."""
         try:
             quality_issues = state.get("quality_issues", [])
+            pending_transformations = state.get("pending_transformations", [])
+
             if quality_issues:
                 response = f"I've analyzed your data and found {len(quality_issues)} issues:\n"
                 for issue in quality_issues:
                     response += f"• {issue}\n"
-                response += "\nWould you like me to help fix these issues?"
+
+                # Show top 3 suggestions (if any) so the user can decide next steps
+                if pending_transformations:
+                    response += "\nHere are some potential fixes you might consider:\n"
+                    for suggestion in pending_transformations[:3]:
+                        response += f"- {suggestion}\n"
+
                 return response
             else:
                 return "Your data looks good! I didn't find any significant quality issues."
-                
+
         except Exception as e:
             return f"I encountered an error during analysis: {str(e)}"
+    
+    async def _generate_description_response(self, state: Dict[str, Any]) -> str:
+        """Generate data overview description (rows, columns, sample issues)."""
+        try:
+            df = self.csv_processor._parse_csv_string(state["current_csv"])
+            if df is None:
+                return "I couldn't parse your CSV data. Please ensure it's properly formatted."
+
+            rows, cols = len(df), len(df.columns)
+            response = f"Your dataset has {rows} rows and {cols} columns."
+
+            quality_issues = state.get("quality_issues", [])
+            if quality_issues:
+                response += f"\n\nI've also detected {len(quality_issues)} potential quality issues (not shown in detail here). You can ask me to *analyze the data* for a full list."
+
+            return response
+        except Exception as e:
+            return f"I encountered an error describing your data: {str(e)}"
     
     def get_session_summary(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get session summary."""
