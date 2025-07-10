@@ -6,7 +6,7 @@
  * animation for AI messages.
  */
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import type { Message } from "@/types/chat-types"
 
 interface ChatMessageProps {
@@ -22,6 +22,7 @@ export function ChatMessage({ message, enableTypewriter = true }: ChatMessagePro
   const [displayedText, setDisplayedText] = useState("")
   const [isTyping, setIsTyping] = useState(false)
   const [showCursor, setShowCursor] = useState(false)
+  const textRef = useRef<HTMLPreElement>(null)
 
   // Typewriter animation effect
   useEffect(() => {
@@ -39,20 +40,27 @@ export function ChatMessage({ message, enableTypewriter = true }: ChatMessagePro
 
     const text = message.content
     let index = 0
+    let animationFrameId: number | null = null
     
     // Calculate typing speed based on content length
-    const baseSpeed = 25
-    const speedVariation = Math.random() * 15 + 5 // 5-20ms variation
+    const baseSpeed = 20 // Slightly faster base speed
+    const speedVariation = Math.random() * 10 + 5 // 5-15ms variation
     const typingSpeed = baseSpeed + speedVariation
     
     const typeNextChar = () => {
       if (index < text.length) {
-        setDisplayedText(text.slice(0, index + 1))
-        index++
+        // Update text in batches for better performance
+        const batchSize = Math.random() > 0.8 ? 2 : 1 // Occasionally type 2 chars at once
+        const nextIndex = Math.min(index + batchSize, text.length)
+        setDisplayedText(text.slice(0, nextIndex))
+        index = nextIndex
         
-        // Add some randomness to typing speed for natural feel
-        const currentSpeed = typingSpeed + (Math.random() * 10 - 5)
-        setTimeout(typeNextChar, currentSpeed)
+        // Force DOM update by using requestAnimationFrame
+        animationFrameId = requestAnimationFrame(() => {
+          // Add some randomness to typing speed for natural feel
+          const currentSpeed = typingSpeed + (Math.random() * 10 - 5)
+          setTimeout(typeNextChar, currentSpeed)
+        })
       } else {
         setIsTyping(false)
         // Keep cursor visible for a short time after typing completes
@@ -65,19 +73,23 @@ export function ChatMessage({ message, enableTypewriter = true }: ChatMessagePro
 
     return () => {
       clearTimeout(startDelay)
+      if (animationFrameId !== null) {
+        cancelAnimationFrame(animationFrameId)
+      }
     }
   }, [message.content, message.isHtml, isAi, enableTypewriter])
 
   // Cursor blinking effect
   useEffect(() => {
-    if (!showCursor) return
+    if (!showCursor || !isTyping) return
 
     const cursorInterval = setInterval(() => {
-      setShowCursor(prev => !prev)
+      // Force re-render to make cursor blink
+      textRef.current?.setAttribute('data-cursor-state', Date.now().toString())
     }, 530) // Slightly slower than typical cursor blink
 
     return () => clearInterval(cursorInterval)
-  }, [showCursor])
+  }, [showCursor, isTyping])
 
   return (
     <div className="mb-4 animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
@@ -104,27 +116,24 @@ export function ChatMessage({ message, enableTypewriter = true }: ChatMessagePro
             <div dangerouslySetInnerHTML={{ __html: message.content }} />
           ) : (
             <div className="relative">
-              <pre className="whitespace-pre-wrap font-inherit">
+              <pre ref={textRef} className="whitespace-pre-wrap font-inherit">
                 {displayedText}
                 {isTyping && showCursor && (
-                  <span className="inline-block w-2 h-5 bg-blue-500 ml-1 animate-pulse" />
+                  <span 
+                    className="inline-block w-2 h-5 bg-blue-500 ml-1" 
+                    style={{
+                      animation: 'cursor-blink 1.06s infinite',
+                      verticalAlign: 'text-bottom'
+                    }}
+                  />
                 )}
               </pre>
-              {/* Typing indicator for longer messages */}
-              {isTyping && displayedText.length > 50 && (
-                <div className="absolute -bottom-1 left-0 flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500">
-                  <div className="flex space-x-1">
-                    <div className="w-1 h-1 bg-blue-400 rounded-full animate-bounce"></div>
-                    <div className="w-1 h-1 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: "0.1s" }}></div>
-                    <div className="w-1 h-1 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
-                  </div>
-                  <span>typing...</span>
-                </div>
-              )}
             </div>
           )}
         </div>
       )}
+      
+
     </div>
   )
 }

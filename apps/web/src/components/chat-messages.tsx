@@ -32,49 +32,82 @@ export function ChatMessages({
   onRetryConnection
 }: ChatMessagesProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [showScrollButton, setShowScrollButton] = useState(false)
   const [isScrolling, setIsScrolling] = useState(false)
   const scrollTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
+  const lastMessageCountRef = useRef(messages.length)
 
   // Enhanced auto-scroll to bottom with smooth behavior
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     if (scrollAreaRef.current) {
       const scrollElement = scrollAreaRef.current
-      scrollElement.scrollTo({
-        top: scrollElement.scrollHeight,
-        behavior
+      // Use requestAnimationFrame for smoother scrolling during animations
+      requestAnimationFrame(() => {
+        scrollElement.scrollTo({
+          top: scrollElement.scrollHeight,
+          behavior
+        })
       })
     }
   }, [])
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll to bottom when new messages arrive or loading state changes
   useEffect(() => {
     if (autoScroll) {
+      // Check if new messages were added
+      const isNewMessage = messages.length > lastMessageCountRef.current
+      lastMessageCountRef.current = messages.length
+      
       // Use smooth scrolling for new messages, instant for initial load
-      const behavior = messages.length > 1 ? "smooth" : "auto"
+      const behavior = isNewMessage && messages.length > 1 ? "smooth" : "auto"
       scrollToBottom(behavior)
     }
   }, [messages, isLoading, autoScroll, scrollToBottom])
 
-  // Auto-scroll when the content height changes (e.g., typewriter animation)
+  // Enhanced observer for typewriter animation and content changes
   useEffect(() => {
     const scrollElement = scrollAreaRef.current
-    if (!scrollElement) return
+    const contentElement = messagesContainerRef.current
+    
+    if (!scrollElement || !contentElement) return
 
-    // Observe size changes on the scroll container
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const resizeObserver = new ResizeObserver((_entries) => {
+    // MutationObserver to catch text content changes (typewriter animation)
+    const mutationObserver = new MutationObserver(() => {
       if (autoScroll) {
-        // Use instant scroll for rapid updates to keep cursor stable
-        scrollToBottom("auto")
+        // Use instant scroll for continuous updates during typewriter animation
+        requestAnimationFrame(() => {
+          scrollElement.scrollTop = scrollElement.scrollHeight
+        })
       }
     })
 
-    resizeObserver.observe(scrollElement)
+    // Observe text changes in all descendant nodes
+    mutationObserver.observe(contentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      characterDataOldValue: true
+    })
 
-    return () => resizeObserver.disconnect()
-  }, [autoScroll, scrollToBottom])
+    // ResizeObserver for layout changes
+    const resizeObserver = new ResizeObserver(() => {
+      if (autoScroll) {
+        requestAnimationFrame(() => {
+          scrollElement.scrollTop = scrollElement.scrollHeight
+        })
+      }
+    })
+
+    // Observe the content container, not the scroll container
+    resizeObserver.observe(contentElement)
+
+    return () => {
+      mutationObserver.disconnect()
+      resizeObserver.disconnect()
+    }
+  }, [autoScroll])
 
   // Handle scroll events with debouncing to detect if user has scrolled up
   const handleScroll = useCallback(() => {
@@ -83,8 +116,8 @@ export function ChatMessages({
     const scrollElement = scrollAreaRef.current
     const { scrollTop, scrollHeight, clientHeight } = scrollElement
     
-    // Check if user is near the bottom (within 150px threshold)
-    const isNearBottom = scrollHeight - scrollTop - clientHeight < 150
+    // Check if user is near the bottom (within 100px threshold for better UX)
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 100
     
     // Update auto-scroll state
     setAutoScroll(isNearBottom)
@@ -137,9 +170,7 @@ export function ChatMessages({
       <div
         ref={scrollAreaRef}
         onScroll={handleScroll}
-        className={`flex-1 overflow-y-auto px-6 py-4 transition-all duration-200 ${
-          isScrolling ? "scroll-smooth" : ""
-        }`}
+        className="flex-1 overflow-y-auto px-6 py-4 transition-all duration-200"
         style={{
           fontFamily: '"Source Code Pro", ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
           fontSize: "16px",
@@ -147,7 +178,7 @@ export function ChatMessages({
           scrollBehavior: "smooth"
         }}
       >
-        <div className="space-y-0 min-h-full">
+        <div ref={messagesContainerRef} className="space-y-0 min-h-full">
           {messages.map((message, index) => (
             <ChatMessage 
               key={message.id} 
