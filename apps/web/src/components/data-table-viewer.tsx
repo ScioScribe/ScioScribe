@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import React, { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
@@ -55,54 +55,121 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
   const { currentExperiment, csvData: storeCsv } = useExperimentStore()
   const { toast } = useToast()
 
-  const handleUpload = async () => {
+  const convertTableToCSV = (data: Array<Record<string, string>>, headers: string[]): string => {
+    if (!headers.length || !data.length) return ""
+    
+    const csvHeaders = headers.join(',')
+    const csvRows = data.map(row => 
+      headers.map(header => `"${(row[header] || '').replace(/"/g, '""')}"`).join(',')
+    )
+    
+    return [csvHeaders, ...csvRows].join('\n')
+  }
+
+  const generateSessionId = (): string => {
+    return `csv-session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+  }
+
+  const handleStartConversation = async () => {
+    const csvString = convertTableToCSV(tableData, headers)
+    
+    if (!csvString) {
+      toast({ title: "No data", description: "Please add some data first" })
+      return
+    }
+
+    // Get or create session ID
+    const sessionId = datacleanSession?.session_id || generateSessionId()
+    
     try {
-      // 1) Build CSV text from the *current* table state so any inline edits are preserved
-      let csvToUpload = ""
-      if (headers.length && tableData.length) {
-        // Compose CSV: first row = headers, subsequent rows = values in header order
-        csvToUpload = [
-          headers.join(','),
-          ...tableData.map(row => headers.map(h => row[h] || '').join(','))
-        ].join('\n')
-      }
-
-      // Fallback to prop / store values if we have no rows (e.g. not yet rendered)
-      if (!csvToUpload) {
-        csvToUpload = csvData || storeCsv || ""
-      }
-
-      if (!csvToUpload) {
-        toast({ title: "No CSV data", description: "There is no CSV content to upload." })
-        return
-      }
-
-      // Ensure we have an active execute-mode session so the artifact id can be referenced later
-      if (!datacleanSession?.session_id) {
-        toast({ title: "No active session", description: "Start an execute-mode chat session first." })
-        return
-      }
-
-      const experimentId = currentExperiment?.id?.toString() || "demo-experiment"
-
-      console.log("📤 Upload request: ", {
-        experimentId,
-        csvPreview: csvToUpload.slice(0, 120) + (csvToUpload.length > 120 ? '...' : '')
+      // For now, use HTTP endpoint (WebSocket integration will be added in Task 3.2)
+      const response = await fetch('/api/dataclean/csv-conversation/process', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          csv_data: csvString,
+          user_message: "Hi",
+          session_id: sessionId,
+          user_id: "demo-user"
+        })
       })
 
-      toast({ title: "Uploading…", description: "Sending CSV to the server", duration: 1500 })
-      const res = await uploadCsvFile(csvToUpload, experimentId)
+      const result = await response.json()
 
-      toast({ title: "Upload complete", description: "File processed", duration: 2000 })
-
-      // Log the artifact id for debugging purposes (requirement)
-      console.log("📦 CSV uploaded – artifact_id:", res.artifact_id)
-
-      // Persist the artifact id into the current dataclean chat session so subsequent prompts can reference it
-      updateDatacleanSession({ experiment_id: res.artifact_id })
+      if (result.success) {
+        // Update session state
+        updateDatacleanSession({ session_id: sessionId })
+        
+        // Handle CSV response
+        handleCSVResponse({ data: result })
+        
+        toast({ 
+          title: "Conversation Started", 
+          description: "Connected to CSV cleaning assistant" 
+        })
+      } else {
+        throw new Error(result.error_message || "Failed to start conversation")
+      }
     } catch (error: any) {
-      console.error("CSV upload failed", error)
-      toast({ title: "Upload failed", description: error?.message || "Unexpected error", variant: "destructive" })
+      console.error("Failed to start CSV conversation", error)
+      toast({ 
+        title: "Connection failed", 
+        description: error?.message || "Could not connect to CSV assistant", 
+        variant: "destructive" 
+      })
+    }
+  }
+
+  const handleCSVResponse = (response: any) => {
+    const { original_csv, cleaned_csv, changes_made, suggestions, response_message } = response.data
+    
+    if (cleaned_csv && cleaned_csv !== original_csv) {
+      // Parse cleaned CSV and update table
+      try {
+        const lines = cleaned_csv.trim().split('\n')
+        if (lines.length > 1) {
+          const newHeaders = lines[0].split(',').map((h: string) => h.trim())
+          const newData = lines.slice(1).map((line: string, index: number) => {
+            const values = line.split(',').map((v: string) => v.trim().replace(/^"|"$/g, ''))
+            const row: Record<string, string> = { id: (index + 1).toString() }
+            newHeaders.forEach((header, i) => {
+              row[header] = values[i] || ''
+            })
+            return row
+          })
+          
+          setHeaders(newHeaders)
+          setTableData(newData)
+          setFilteredData(newData)
+        }
+      } catch (error) {
+        console.error("Failed to parse cleaned CSV", error)
+      }
+    }
+    
+    // Show response message if provided
+    if (response_message) {
+      toast({ 
+        title: "Assistant Response", 
+        description: response_message,
+        duration: 5000
+      })
+    }
+    
+    // Show changes made
+    if (changes_made && changes_made.length > 0) {
+      toast({ 
+        title: "Data Updated", 
+        description: `Applied ${changes_made.length} changes: ${changes_made.join(', ')}`,
+        duration: 4000
+      })
+    }
+    
+    // Show suggestions
+    if (suggestions && suggestions.length > 0) {
+      console.log("💡 Suggestions received:", suggestions)
     }
   }
 
@@ -149,7 +216,8 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
               variant="ghost" 
               size="sm" 
               className="h-6 px-2 text-xs"
-              onClick={handleUpload}
+              onClick={handleStartConversation}
+              title="Start CSV conversation"
             >
               <Upload className="h-3 w-3" />
             </Button>

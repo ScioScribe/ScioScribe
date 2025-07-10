@@ -33,7 +33,13 @@ from agents.dataclean.models import (
     TransformationAction,
     ValueMapping,
     ProcessFileCompleteRequest,
-    ProcessFileCompleteResponse
+    ProcessFileCompleteResponse,
+    # CSV models (Task 1.1)
+    CSVMessageRequest,
+    CSVProcessingResponse,
+    CSVTransformationRequest,
+    CSVConversationState,
+    CSVAnalysisResult
 )
 from agents.dataclean.file_processor import FileProcessingAgent
 from agents.dataclean.quality_agent import DataQualityAgent
@@ -274,6 +280,160 @@ async def websocket_conversation_session(websocket: WebSocket, session_id: str):
         logger.info(f"Cleaned up WebSocket resources for session {session_id}")
 
 
+# === NEW CSV WEBSOCKET ENDPOINT (Task 2.1) ===
+
+# Active CSV WebSocket connections
+_active_csv_ws_connections: Dict[str, WebSocket] = {}
+
+
+@router.websocket("/csv-conversation/ws/{session_id}")
+async def websocket_csv_conversation(websocket: WebSocket, session_id: str):
+    """
+    WebSocket endpoint for CSV-based conversation data cleaning.
+    
+    This endpoint handles direct CSV string processing without artifacts,
+    enabling streamlined conversation-based data cleaning.
+    """
+    await websocket.accept()
+    _active_csv_ws_connections[session_id] = websocket
+    logger.info(f"CSV WebSocket connection established for session {session_id}")
+    
+    try:
+        while True:
+            try:
+                raw_message = await websocket.receive_text()
+                payload = json.loads(raw_message)
+                message_type = payload.get("type")
+                
+                if message_type == "csv_message":
+                    await _handle_csv_message(websocket, session_id, payload)
+                elif message_type == "csv_approval":
+                    await _handle_csv_approval(websocket, session_id, payload)
+                elif message_type == "ping":
+                    await _send_ws_message(websocket, {
+                        "type": "pong",
+                        "data": {"timestamp": datetime.utcnow().isoformat()},
+                        "session_id": session_id
+                    })
+                else:
+                    logger.warning(f"Unknown CSV WebSocket message type: {message_type}")
+                    
+            except WebSocketDisconnect:
+                logger.info(f"CSV WebSocket disconnected for session {session_id}")
+                break
+            except json.JSONDecodeError as exc:
+                await _send_error_message(websocket, session_id, "Invalid JSON format")
+                logger.error(f"JSON decode error: {exc}")
+            except Exception as exc:
+                logger.error(f"Unhandled CSV WebSocket error: {exc}")
+                await _send_error_message(websocket, session_id, f"Server error: {str(exc)}")
+                
+    finally:
+        # Clean up stored connection
+        _active_csv_ws_connections.pop(session_id, None)
+        logger.info(f"Cleaned up CSV WebSocket resources for session {session_id}")
+
+
+async def _handle_csv_message(websocket: WebSocket, session_id: str, payload: Dict[str, Any]):
+    """Handle CSV message from the frontend."""
+    try:
+        data = payload.get("data", {})
+        
+        # Create CSV message request
+        request = CSVMessageRequest(
+            csv_data=data.get("csv_data", ""),
+            user_message=data.get("user_message", ""),
+            session_id=session_id,
+            user_id=data.get("user_id", "demo-user")
+        )
+        
+        # Process through CSV conversation graph
+        response = await csv_conversation_graph.process_csv_conversation(request)
+        
+        # Send response back to client
+        await _send_ws_message(websocket, {
+            "type": "csv_response",
+            "data": response.dict(),
+            "session_id": session_id
+        })
+        
+    except Exception as exc:
+        logger.error(f"Error handling CSV message: {exc}")
+        await _send_error_message(websocket, session_id, f"Error processing CSV message: {str(exc)}")
+
+
+async def _handle_csv_approval(websocket: WebSocket, session_id: str, payload: Dict[str, Any]):
+    """Handle CSV transformation approval from the frontend."""
+    try:
+        data = payload.get("data", {})
+        
+        # Create approval request
+        request = CSVTransformationRequest(
+            session_id=session_id,
+            transformation_id=data.get("transformation_id", ""),
+            approved=data.get("approved", False),
+            user_feedback=data.get("user_feedback")
+        )
+        
+        # Process approval through CSV conversation graph
+        response = await csv_conversation_graph.handle_approval(request)
+        
+        # Send response back to client
+        await _send_ws_message(websocket, {
+            "type": "csv_approval_response",
+            "data": response.dict(),
+            "session_id": session_id
+        })
+        
+    except Exception as exc:
+        logger.error(f"Error handling CSV approval: {exc}")
+        await _send_error_message(websocket, session_id, f"Error processing CSV approval: {str(exc)}")
+
+
+# === HTTP FALLBACK ENDPOINT (Task 2.3) ===
+
+@router.post("/csv-conversation/process", response_model=CSVProcessingResponse)
+async def process_csv_http(request: CSVMessageRequest) -> CSVProcessingResponse:
+    """
+    HTTP fallback endpoint for CSV processing.
+    
+    This endpoint provides the same functionality as the WebSocket endpoint
+    but through HTTP requests for clients that don't support WebSockets.
+    """
+    try:
+        response = await csv_conversation_graph.process_csv_conversation(request)
+        return response
+    except Exception as e:
+        logger.error(f"Error processing CSV via HTTP: {str(e)}")
+        return CSVProcessingResponse(
+            success=False,
+            original_csv=request.csv_data,
+            session_id=request.session_id,
+            error_message=f"HTTP processing failed: {str(e)}"
+        )
+
+
+@router.post("/csv-conversation/approve")
+async def approve_csv_transformation_http(request: CSVTransformationRequest) -> CSVProcessingResponse:
+    """
+    HTTP endpoint for approving CSV transformations.
+    
+    This endpoint handles transformation approval for clients using HTTP
+    instead of WebSocket connections.
+    """
+    try:
+        response = await csv_conversation_graph.handle_approval(request)
+        return response
+    except Exception as e:
+        logger.error(f"Error handling CSV approval via HTTP: {str(e)}")
+        return CSVProcessingResponse(
+            success=False,
+            original_csv="",
+            session_id=request.session_id,
+            error_message=f"HTTP approval failed: {str(e)}"
+        )
+
+
 # Initialize the file processing agent
 file_processor = FileProcessingAgent()
 
@@ -297,6 +457,10 @@ data_store = get_data_store()
 # Initialize conversation system
 from agents.dataclean.conversation.conversation_graph import ConversationGraph
 conversation_graph = ConversationGraph()
+
+# Initialize CSV conversation system (Task 2.1)
+from agents.dataclean.conversation.csv_conversation_graph import CSVConversationGraph
+csv_conversation_graph = CSVConversationGraph(openai_client)
 
 
 @router.post("/process-file-complete", response_model=ProcessFileCompleteResponse)

@@ -289,4 +289,68 @@ class ProcessFileCompleteResponse(BaseModel):
     unapplied_suggestions: List[Suggestion] = []
     error_message: Optional[str] = None
     warnings: List[str] = []
-    metadata: Dict[str, Any] = {} 
+    metadata: Dict[str, Any] = {}
+
+
+# === NEW CSV-BASED MODELS (Task 1.1) ===
+
+class CSVMessageRequest(BaseModel):
+    """Request for CSV-based conversation message."""
+    csv_data: str = Field(..., description="CSV data as a string")
+    user_message: str = Field(..., description="User's natural language message")
+    session_id: str = Field(..., description="Conversation session identifier")
+    user_id: str = Field(default="demo-user", description="User identifier")
+
+
+class CSVProcessingResponse(BaseModel):
+    """Response from CSV processing conversation."""
+    success: bool = Field(..., description="Whether processing was successful")
+    original_csv: str = Field(..., description="Original CSV data")
+    cleaned_csv: Optional[str] = Field(None, description="Cleaned CSV data if changes were made")
+    changes_made: List[str] = Field(default_factory=list, description="List of changes applied")
+    suggestions: List[str] = Field(default_factory=list, description="Suggestions for improvement")
+    requires_approval: bool = Field(default=False, description="Whether user approval is needed")
+    confidence_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Confidence in processing")
+    session_id: str = Field(..., description="Session identifier")
+    conversation_active: bool = Field(default=True, description="Whether conversation is active")
+    response_message: Optional[str] = Field(None, description="Assistant's response message")
+    intent: Optional[str] = Field(None, description="Detected user intent")
+    pending_transformations: List[str] = Field(default_factory=list, description="Transformations awaiting approval")
+    error_message: Optional[str] = Field(None, description="Error message if processing failed")
+
+
+class CSVConversationState(BaseModel):
+    """State management for CSV-based conversations."""
+    session_id: str = Field(..., description="Unique session identifier")
+    user_id: str = Field(..., description="User identifier")
+    original_csv: str = Field(..., description="Original CSV data")
+    current_csv: str = Field(..., description="Current state of CSV data")
+    user_message: str = Field(..., description="Latest user message")
+    intent: Optional[str] = Field(None, description="Detected user intent")
+    response: Optional[str] = Field(None, description="Assistant's response")
+    conversation_history: List[Dict[str, Any]] = Field(default_factory=list, description="Full conversation history")
+    pending_transformations: List[str] = Field(default_factory=list, description="Transformations awaiting approval")
+    awaiting_approval: bool = Field(default=False, description="Whether waiting for user approval")
+    quality_issues: List[str] = Field(default_factory=list, description="Identified quality issues")
+    applied_transformations: List[str] = Field(default_factory=list, description="Successfully applied transformations")
+    confidence_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Overall confidence score")
+    created_at: datetime = Field(default_factory=datetime.now, description="When conversation started")
+    updated_at: datetime = Field(default_factory=datetime.now, description="Last update timestamp")
+
+
+class CSVTransformationRequest(BaseModel):
+    """Request for CSV transformation approval."""
+    session_id: str = Field(..., description="Session identifier")
+    transformation_id: str = Field(..., description="Transformation identifier")
+    approved: bool = Field(..., description="Whether transformation is approved")
+    user_feedback: Optional[str] = Field(None, description="Optional user feedback")
+
+
+class CSVAnalysisResult(BaseModel):
+    """Result of CSV data analysis."""
+    data_shape: List[int] = Field(..., description="Rows and columns count")
+    column_names: List[str] = Field(..., description="Column names")
+    quality_issues: List[str] = Field(default_factory=list, description="Identified quality issues")
+    suggestions: List[str] = Field(default_factory=list, description="Improvement suggestions")
+    confidence_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Analysis confidence")
+    analysis_notes: List[str] = Field(default_factory=list, description="Analysis notes") 
