@@ -452,8 +452,10 @@ class CSVConversationGraph:
             return "approval"
         elif intent == "transform":
             return "analyze"  # Analyze first, then suggest transformations
-        elif intent in ["greeting", "analyze", "describe"]:
+        elif intent in ["analyze", "describe"]:
             return "analyze"
+        elif intent == "greeting":
+            return "response"  # Greetings should go directly to response
         elif intent == "rejection":
             return "response"
         else:
@@ -561,27 +563,27 @@ class CSVConversationGraph:
         )
     
     async def _generate_greeting_response(self, state: Dict[str, Any]) -> str:
-        """Generate greeting response with data overview."""
+        """Generate greeting response with basic data overview."""
         try:
-            # Parse CSV for basic info
+            # Parse CSV for basic info only (no quality analysis)
             df = self.csv_processor._parse_csv_string(state["current_csv"])
             if df is not None:
                 rows, cols = len(df), len(df.columns)
                 response = f"Hello! I can see you have a dataset with {rows} rows and {cols} columns."
                 
-                quality_issues = state.get("quality_issues", [])
-                if quality_issues:
-                    response += f"\n\nI've identified {len(quality_issues)} potential issues:"
-                    for issue in quality_issues[:3]:
-                        response += f"\n• {issue}"
-                
+                response += "\n\nI'm ready to help you with:"
+                response += "\n• Data quality analysis"
+                response += "\n• Cleaning and fixing issues"
+                response += "\n• Removing duplicates"
+                response += "\n• Handling missing values"
+                response += "\n• Data transformation"
                 response += "\n\nWhat would you like to do with your data?"
                 return response
             else:
                 return "Hello! I'd be happy to help you clean your data. Please make sure your CSV data is properly formatted."
                 
         except Exception as e:
-            return f"Hello! I encountered an error analyzing your data: {str(e)}"
+            return f"Hello! I'm here to help with data cleaning. I encountered an error reading your data: {str(e)}"
     
     async def _generate_analysis_response(self, state: Dict[str, Any]) -> str:
         """Generate analysis response without entering approval flow."""
