@@ -43,7 +43,236 @@ from agents.dataclean.complete_processor import CompleteFileProcessor
 from agents.dataclean.memory_store import get_data_store
 from config import get_openai_client, validate_openai_config
 
+import logging
+import json
+from fastapi import WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
+
+# Set up module logger
+logger = logging.getLogger(__name__)
+
+# Active WebSocket connections for conversation sessions
+_active_ws_connections: Dict[str, WebSocket] = {}
+
+# Router initialization (moved up to support WebSocket decorators)
 router = APIRouter(prefix="/api/dataclean", tags=["data-cleaning"])
+
+# === WebSocket Message Models ===
+class WebSocketMessage(BaseModel):
+    """Generic WebSocket message structure."""
+    type: str = Field(..., description="Message type")
+    data: Dict[str, Any] = Field(..., description="Message payload")
+    session_id: str = Field(..., description="Conversation session identifier")
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+
+
+class UserMessage(BaseModel):
+    """User message sent from the frontend."""
+    type: str = Field(default="user_message")
+    data: Dict[str, str] = Field(..., description="Must contain 'content'")
+    session_id: str
+
+
+class ConversationUpdate(BaseModel):
+    """Assistant response back to the frontend."""
+    type: str = Field(default="conversation_update")
+    data: Dict[str, Any] = Field(..., description="Updated conversation state/response")
+    session_id: str
+
+
+class ApprovalRequest(BaseModel):
+    """Request the user's confirmation for an operation."""
+    type: str = Field(default="approval_request")
+    data: Dict[str, Any] = Field(..., description="Approval details")
+    session_id: str
+
+
+class ApprovalResponse(BaseModel):
+    """User's approval/confirmation response."""
+    type: str = Field(default="approval_response")
+    data: Dict[str, Any] = Field(..., description="Contains 'approved' and optional 'feedback'")
+    session_id: str
+
+
+class ErrorMessage(BaseModel):
+    """Error message pushed to the frontend."""
+    type: str = Field(default="error")
+    data: Dict[str, str] = Field(..., description="Contains 'message'")
+    session_id: str
+
+
+class SessionStatusMessage(BaseModel):
+    """Session status / heartbeat message."""
+    type: str = Field(default="session_status")
+    data: Dict[str, Any] = Field(..., description="Session status payload")
+    session_id: str
+
+
+# === HTTP Conversation Message Models ===
+class ConversationMessageRequest(BaseModel):
+    """Schema for POST /conversation/message request body."""
+    user_message: str = Field(..., description="User's natural language prompt")
+    session_id: str = Field(..., description="Conversation session identifier")
+    user_id: Optional[str] = Field("demo-user", description="User identifier")
+    artifact_id: Optional[str] = Field(None, description="Optional data artifact ID to link")
+
+class ConversationMessageResponseModel(BaseModel):
+    """Canonical shape of conversation response sent back to the frontend."""
+    success: bool
+    session_id: str
+    response: Optional[str] = None
+    intent: Optional[str] = None
+    confidence: Optional[float] = None
+    suggestions_provided: Optional[bool] = None
+    conversation_active: bool
+    processing_result: Optional[Dict[str, Any]] = None
+
+
+# === Helper functions for WebSocket communication ===
+async def _send_ws_message(websocket: WebSocket, payload: Dict[str, Any]):
+    """Serialize and send a dictionary payload via WebSocket."""
+    try:
+        await websocket.send_text(json.dumps(payload))
+    except Exception as exc:
+        logger.error(f"Failed to send WebSocket message: {exc}")
+
+
+async def _send_session_status(websocket: WebSocket, session_id: str):
+    """Send session status information to the frontend."""
+    try:
+        summary = await conversation_graph.get_session_summary(session_id)
+        await _send_ws_message(websocket, {
+            "type": "session_status",
+            "data": summary or {"session_id": session_id, "status": "not_found"},
+            "session_id": session_id
+        })
+    except Exception as exc:
+        logger.error(f"Failed to send session status: {exc}")
+
+
+async def _send_conversation_update(websocket: WebSocket, session_id: str, response: Dict[str, Any]):
+    """Send the assistant's response back to the client."""
+    try:
+        await _send_ws_message(websocket, {
+            "type": "conversation_update",
+            "data": response,
+            "session_id": session_id
+        })
+    except Exception as exc:
+        logger.error(f"Failed to send conversation update: {exc}")
+
+
+async def _send_error_message(websocket: WebSocket, session_id: str, error_msg: str):
+    """Utility to push an error message to the client."""
+    await _send_ws_message(websocket, {
+        "type": "error",
+        "data": {"message": error_msg},
+        "session_id": session_id
+    })
+
+
+# === Internal handlers ===
+async def _handle_user_message(websocket: WebSocket, session_id: str, payload: Dict[str, Any]):
+    """Process a user message coming from the frontend."""
+    try:
+        user_input: str = payload.get("data", {}).get("content", "").strip()
+        user_id: str = payload.get("data", {}).get("user_id", "demo-user")
+        if not user_input:
+            await _send_error_message(websocket, session_id, "Empty user message")
+            return
+
+        # Ensure session exists (create if missing)
+        try:
+            summary = await conversation_graph.get_session_summary(session_id)
+            if not summary or summary.get("status") == "error":
+                # Create a new session with the provided session_id for continuity
+                await conversation_graph.start_conversation(user_id=user_id, session_id=session_id)
+        except Exception:
+            await conversation_graph.start_conversation(user_id=user_id, session_id=session_id)
+
+        # Process the message through the conversation graph
+        result = await conversation_graph.process_message(
+            user_message=user_input,
+            session_id=session_id,
+            user_id=user_id
+        )
+
+        await _send_conversation_update(websocket, session_id, result)
+
+        # Send an updated session status after processing
+        await _send_session_status(websocket, session_id)
+
+    except Exception as exc:
+        logger.error(f"Error handling user message: {exc}")
+        await _send_error_message(websocket, session_id, f"Error processing message: {str(exc)}")
+
+
+async def _handle_approval_response(websocket: WebSocket, session_id: str, payload: Dict[str, Any]):
+    """Handle an approval/confirmation response from the user."""
+    try:
+        approved = bool(payload.get("data", {}).get("approved", False))
+        user_id = payload.get("data", {}).get("user_id", "demo-user")
+
+        result = await conversation_graph.handle_confirmation(
+            session_id=session_id,
+            user_id=user_id,
+            confirmed=approved
+        )
+        await _send_conversation_update(websocket, session_id, result)
+
+    except Exception as exc:
+        logger.error(f"Error handling approval response: {exc}")
+        await _send_error_message(websocket, session_id, f"Error processing approval: {str(exc)}")
+
+
+# === WebSocket Endpoint ===
+@router.websocket("/conversation/ws/{session_id}")
+async def websocket_conversation_session(websocket: WebSocket, session_id: str):
+    """
+    WebSocket endpoint enabling real-time, bidirectional conversation for the
+    data-cleaning assistant. Mirrors the behaviour of the planning WebSocket
+    implementation to keep the frontend contract consistent.
+    """
+    await websocket.accept()
+    _active_ws_connections[session_id] = websocket
+    logger.info(f"WebSocket connection established for data-cleaning session {session_id}")
+
+    # Immediately push session status so the client knows what's happening
+    await _send_session_status(websocket, session_id)
+
+    try:
+        while True:
+            try:
+                raw_message = await websocket.receive_text()
+                payload = json.loads(raw_message)
+                message_type = payload.get("type")
+
+                if message_type == "user_message":
+                    await _handle_user_message(websocket, session_id, payload)
+                elif message_type == "approval_response":
+                    await _handle_approval_response(websocket, session_id, payload)
+                elif message_type == "ping":
+                    await _send_ws_message(websocket, {
+                        "type": "pong",
+                        "data": {"timestamp": datetime.utcnow().isoformat()},
+                        "session_id": session_id
+                    })
+                else:
+                    logger.warning(f"Unknown WebSocket message type received: {message_type}")
+            except WebSocketDisconnect:
+                logger.info(f"WebSocket disconnected for session {session_id}")
+                break
+            except json.JSONDecodeError as exc:
+                await _send_error_message(websocket, session_id, "Invalid JSON format")
+                logger.error(f"JSON decode error: {exc}")
+            except Exception as exc:
+                logger.error(f"Unhandled WebSocket error: {exc}")
+                await _send_error_message(websocket, session_id, f"Server error: {str(exc)}")
+    finally:
+        # Clean up stored connection
+        _active_ws_connections.pop(session_id, None)
+        logger.info(f"Cleaned up WebSocket resources for session {session_id}")
+
 
 # Initialize the file processing agent
 file_processor = FileProcessingAgent()
@@ -1193,32 +1422,28 @@ async def start_conversation(
         raise HTTPException(status_code=500, detail=f"Failed to start conversation: {str(e)}")
 
 
-@router.post("/conversation/message")
-async def process_conversation_message(
-    user_message: str,
-    session_id: str,
-    user_id: str = "demo-user",
-    artifact_id: Optional[str] = None
-):
+# --- Updated conversation message endpoint ---
+@router.post("/conversation/message", response_model=ConversationMessageResponseModel)
+async def process_conversation_message(request: ConversationMessageRequest):
     """
     Process a user message in a conversation.
     
     Args:
-        user_message: The user's natural language input
-        session_id: Session identifier
-        user_id: User identifier
-        artifact_id: Optional data artifact ID
+        request: Pydantic model containing message details
         
     Returns:
         Conversation response with processing results
     """
     try:
         result = await conversation_graph.process_message(
-            user_message=user_message,
-            session_id=session_id,
-            user_id=user_id,
-            artifact_id=artifact_id
+            user_message=request.user_message,
+            session_id=request.session_id,
+            user_id=request.user_id,
+            artifact_id=request.artifact_id
         )
+        # Ensure a predictable boolean field for success
+        if isinstance(result, dict) and "success" not in result:
+            result["success"] = True
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process message: {str(e)}")

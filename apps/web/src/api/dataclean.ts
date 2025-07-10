@@ -332,3 +332,55 @@ export async function getConversationCapabilities(): Promise<ConversationCapabil
     throw error
   }
 } 
+
+// Minimal subset of fields we rely on from the /process-file-complete response
+export interface ProcessFileCompleteResponse {
+  success: boolean
+  artifact_id: string
+  cleaned_data?: unknown
+  data_shape?: number[]
+  [key: string]: unknown // allow additional backend fields without strict typing
+}
+
+/**
+ * Upload a CSV (as text) to the dataclean service using the "process-file-complete"
+ * endpoint. This performs end-to-end processing (upload + quality analysis) in one call.
+ *
+ * The backend returns a rich response; we only require the generated `artifact_id`.
+ */
+export async function uploadCsvFile(csvText: string, experimentId: string = "demo-experiment"): Promise<ProcessFileCompleteResponse> {
+  const formData = new FormData()
+  const blob = new Blob([csvText], { type: 'text/csv' })
+  const file = new File([blob], 'dataset.csv', { type: 'text/csv' })
+
+  formData.append('file', file)
+  // Back-end endpoint parameters – providing experiment_id; the rest use defaults
+  formData.append('experiment_id', experimentId)
+
+  // ---- DEBUG: Log request body ----
+  try {
+    console.group("📤 process-file-complete Request Body")
+    for (const [key, value] of formData.entries()) {
+      if (value instanceof File) {
+        console.log(`${key}: File(name=${value.name}, size=${value.size} bytes, type=${value.type})`)
+      } else {
+        console.log(`${key}:`, value)
+      }
+    }
+    console.groupEnd()
+  } catch (logErr) {
+    // silently ignore logging errors (e.g., non-browser env)
+  }
+
+  const response = await fetch(`${BASE_URL}/process-file-complete`, {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ message: response.statusText }))
+    throw new Error(err.message || 'Upload failed')
+  }
+
+  return await response.json()
+} 

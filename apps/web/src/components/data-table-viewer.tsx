@@ -6,6 +6,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Upload, Download, Search } from "lucide-react"
+import { uploadCsvFile } from "@/api/dataclean"
+import { useChatSessions } from "@/hooks/use-chat-sessions"
+import { useToast } from "@/components/ui/use-toast"
+import { useExperimentStore } from "@/stores/experiment-store"
 import { parseCSVData, getCSVHeaders } from "@/data/placeholder"
 
 interface DataTableViewerProps {
@@ -47,8 +51,59 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
     ))
   }
 
-  const handleUpload = () => {
-    console.log("📁 Upload functionality would be implemented here")
+  const { datacleanSession, updateDatacleanSession } = useChatSessions()
+  const { currentExperiment, csvData: storeCsv } = useExperimentStore()
+  const { toast } = useToast()
+
+  const handleUpload = async () => {
+    try {
+      // 1) Build CSV text from the *current* table state so any inline edits are preserved
+      let csvToUpload = ""
+      if (headers.length && tableData.length) {
+        // Compose CSV: first row = headers, subsequent rows = values in header order
+        csvToUpload = [
+          headers.join(','),
+          ...tableData.map(row => headers.map(h => row[h] || '').join(','))
+        ].join('\n')
+      }
+
+      // Fallback to prop / store values if we have no rows (e.g. not yet rendered)
+      if (!csvToUpload) {
+        csvToUpload = csvData || storeCsv || ""
+      }
+
+      if (!csvToUpload) {
+        toast({ title: "No CSV data", description: "There is no CSV content to upload." })
+        return
+      }
+
+      // Ensure we have an active execute-mode session so the artifact id can be referenced later
+      if (!datacleanSession?.session_id) {
+        toast({ title: "No active session", description: "Start an execute-mode chat session first." })
+        return
+      }
+
+      const experimentId = currentExperiment?.id?.toString() || "demo-experiment"
+
+      console.log("📤 Upload request: ", {
+        experimentId,
+        csvPreview: csvToUpload.slice(0, 120) + (csvToUpload.length > 120 ? '...' : '')
+      })
+
+      toast({ title: "Uploading…", description: "Sending CSV to the server", duration: 1500 })
+      const res = await uploadCsvFile(csvToUpload, experimentId)
+
+      toast({ title: "Upload complete", description: "File processed", duration: 2000 })
+
+      // Log the artifact id for debugging purposes (requirement)
+      console.log("📦 CSV uploaded – artifact_id:", res.artifact_id)
+
+      // Persist the artifact id into the current dataclean chat session so subsequent prompts can reference it
+      updateDatacleanSession({ experiment_id: res.artifact_id })
+    } catch (error: any) {
+      console.error("CSV upload failed", error)
+      toast({ title: "Upload failed", description: error?.message || "Unexpected error", variant: "destructive" })
+    }
   }
 
   const handleDownload = () => {

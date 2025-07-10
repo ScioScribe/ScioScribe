@@ -54,11 +54,13 @@ async function sendDatacleanMessage(sessionId: string, message: string, context:
   try {
     console.log("📤 Sending dataclean message:", message)
     
+    const datacleanSession = context.getDatacleanSession()
     const requestPayload = {
       user_message: message,
       session_id: sessionId,
-      user_id: "demo-user"
-    }
+      user_id: "demo-user",
+      artifact_id: datacleanSession.experiment_id || undefined
+    } as const
     console.log("📤 SEND CONVERSATION MESSAGE REQUEST:", requestPayload)
     
     // Send message to dataclean conversation endpoint
@@ -208,16 +210,40 @@ export function createDatacleanWelcomeMessage(sessionId: string, response: Recor
   const { setMessages } = context
   
   // Add welcome message with capabilities
-  const capabilities = response.capabilities as string[] | undefined
-  const capabilitiesText = capabilities?.join('\n• ') || "Data cleaning operations"
-  
+  const capabilitiesRaw = response.capabilities as unknown
+  let capabilitiesText = "Data cleaning operations"
+  if (Array.isArray(capabilitiesRaw)) {
+    capabilitiesText = capabilitiesRaw.join('\n• ')
+  } else if (capabilitiesRaw && typeof capabilitiesRaw === 'object') {
+    const keys = Object.keys(capabilitiesRaw)
+    capabilitiesText = keys.map(k => k.replace(/_/g, ' ')).join('\n• ')
+  }
+ 
+  const welcomeContent = [
+    "🧹 **Data Cleaning Assistant Started**",
+    `Session ID: ${sessionId}`,
+    response.message,
+    "\n**Available Capabilities:**",
+    `• ${capabilitiesText}`,
+    "\n**How I can help:**",
+    "• Clean and preprocess your data",
+    "• Handle missing values and outliers",
+    "• Apply transformations and filters",
+    "• Validate data quality",
+    "• Generate cleaned datasets",
+    "• Provide data cleaning suggestions",
+    "• Guide you through the cleaning process",
+    "\nWhat would you like to do with your data?"
+  ].join("\n\n")
+
   const welcomeMessage: Message = {
     id: (Date.now() + 1).toString(),
-    content: `🧹 **Data Cleaning Assistant Started**\n\nSession ID: ${sessionId}\n\n${response.message}\n\n**Available Capabilities:**\n• ${capabilitiesText}\n\n**How I can help:**\n• Clean and preprocess your data\n• Handle missing values and outliers  \n• Apply transformations and filters\n• Validate data quality\n• Generate cleaned datasets\n• Provide data cleaning suggestions\n• Guide you through the cleaning process\n\nWhat would you like to do with your data?`,
+    content: welcomeContent,
     sender: "ai",
     timestamp: new Date(),
     mode: "execute",
     response_type: "text"
   }
+
   setMessages((prev) => [...prev, welcomeMessage])
-} 
+}
