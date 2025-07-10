@@ -152,8 +152,63 @@ def _is_waiting_for_approval(state: Optional[ExperimentPlanState]) -> bool:
     if not state:
         return False
     
-    pending_approval = state.get('pending_approval', {})
-    return bool(pending_approval and pending_approval.get('status') == 'waiting')
+    # With the new system, we don't use pending_approval in state
+    # Instead, we check if the graph is interrupted before an agent node
+    # This will be handled by checking the graph state snapshot
+    return False
+
+
+async def _is_graph_interrupted(session_id: str) -> bool:
+    """Check if the graph is currently interrupted (waiting for user input)."""
+    try:
+        graph_components = _get_or_create_graph_components(session_id)
+        graph = graph_components["graph"]
+        config = graph_components["config"]
+        
+        state_snapshot = await graph.aget_state(config)
+        
+        # Check if we're interrupted before any agent node
+        if state_snapshot and state_snapshot.next:
+            next_nodes = [str(node) for node in state_snapshot.next]
+            # These are the nodes we interrupt before
+            interrupt_nodes = ["variable_agent", "design_agent", "methodology_agent", "data_agent", "review_agent"]
+            return any(node in interrupt_nodes for node in next_nodes)
+        
+        return False
+    except Exception as e:
+        logger.error(f"Failed to check graph interrupt status: {e}")
+        return False
+
+
+async def _get_current_stage_from_graph(session_id: str) -> Optional[str]:
+    """Get the current stage from the graph state."""
+    try:
+        graph_components = _get_or_create_graph_components(session_id)
+        graph = graph_components["graph"]
+        config = graph_components["config"]
+        
+        state_snapshot = await graph.aget_state(config)
+        
+        if state_snapshot and state_snapshot.next:
+            next_nodes = [str(node) for node in state_snapshot.next]
+            # Map agent nodes to stage names
+            node_to_stage = {
+                "objective_agent": "objective_setting",
+                "variable_agent": "variable_identification",
+                "design_agent": "experimental_design",
+                "methodology_agent": "methodology_protocol",
+                "data_agent": "data_planning",
+                "review_agent": "final_review"
+            }
+            
+            for node in next_nodes:
+                if node in node_to_stage:
+                    return node_to_stage[node]
+        
+        return None
+    except Exception as e:
+        logger.error(f"Failed to get current stage from graph: {e}")
+        return None
 
 
 # API Endpoints
@@ -180,56 +235,30 @@ async def start_hitl_planning_session(request: StartHITLPlanningRequest):
             experiment_id=request.experiment_id
         )
         
-        # Run the graph until it hits an interrupt (approval node)
+        # Run the graph until it hits an interrupt (before an agent node)
         current_state = initial_state
         async for event in graph.astream(initial_state, config, stream_mode="values"):
             # Only process non-None events
             if event is not None:
                 current_state = event
-                # Check if we've hit an approval node (interrupt)
-                if _is_waiting_for_approval(current_state):
-                    break
         
         # Ensure current_state is not None
         if current_state is None:
             logger.warning("current_state is None, using initial_state as fallback")
             current_state = initial_state
         
-        # Check if we're interrupted before an approval node
-        if not _is_waiting_for_approval(current_state):
-            try:
-                state_snapshot = await graph.aget_state(config)
-                if state_snapshot and state_snapshot.next and any("approval" in str(node) for node in state_snapshot.next):
-                    # We're interrupted before an approval node, but check if it's already approved
-                    next_node = str(state_snapshot.next[0]) if state_snapshot.next else ""
-                    stage_name = next_node.replace("_approval", "") if "_approval" in next_node else "unknown"
-                    
-                    # Only set pending_approval if the stage hasn't been approved yet
-                    approvals = current_state.get('approvals', {})
-                    if not approvals.get(stage_name, False):
-                        current_state["pending_approval"] = {
-                            "stage": stage_name,
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "status": "waiting"
-                        }
-                        
-                        # Update the state in the checkpoint
-                        await graph.aupdate_state(config, current_state)
-                        
-                        logger.info(f"Set pending_approval for stage: {stage_name}")
-                    else:
-                        logger.info(f"Stage {stage_name} already approved, not setting pending_approval")
-            except Exception as e:
-                logger.warning(f"Failed to check/set pending_approval: {e}")
+        # Check if we're interrupted before an agent node
+        is_interrupted = await _is_graph_interrupted(session_id)
+        current_stage = await _get_current_stage_from_graph(session_id)
         
-        logger.info(f"Started HITL planning session {session_id}, waiting for approval: {_is_waiting_for_approval(current_state)}")
+        logger.info(f"Started HITL planning session {session_id}, interrupted: {is_interrupted}, stage: {current_stage}")
         
         return HITLSessionResponse(
             session_id=session_id,
             experiment_id=current_state["experiment_id"],
-            current_stage=current_state["current_stage"],
-            is_waiting_for_approval=_is_waiting_for_approval(current_state),
-            pending_approval=current_state.get("pending_approval"),
+            current_stage=current_stage or current_state.get("current_stage", "objective_setting"),
+            is_waiting_for_approval=is_interrupted,
+            pending_approval={"stage": current_stage, "status": "waiting"} if is_interrupted else None,
             streaming_enabled=True,
             checkpoint_available=True
         )
@@ -260,9 +289,11 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
         if current_state:
             await _send_planning_update(websocket, session_id, current_state)
             
-            # If waiting for approval, send approval request
-            if _is_waiting_for_approval(current_state):
-                await _send_approval_request(websocket, session_id, current_state.get("pending_approval", {}))
+            # If graph is interrupted, send approval request
+            is_interrupted = await _is_graph_interrupted(session_id)
+            if is_interrupted:
+                current_stage = await _get_current_stage_from_graph(session_id)
+                await _send_approval_request(websocket, session_id, {"stage": current_stage, "status": "waiting"})
         
         # Listen for messages from frontend
         while True:
@@ -321,11 +352,14 @@ async def _send_session_status(websocket: WebSocket, session_id: str):
     """Send session status to frontend."""
     try:
         current_state = await _get_current_state(session_id)
+        is_interrupted = await _is_graph_interrupted(session_id) if current_state else False
+        current_stage = await _get_current_stage_from_graph(session_id) if current_state else None
+        
         status_data = {
             "session_id": session_id,
             "is_active": current_state is not None,
-            "current_stage": current_state.get("current_stage") if current_state else None,
-            "is_waiting_for_approval": _is_waiting_for_approval(current_state) if current_state else False
+            "current_stage": current_stage or (current_state.get("current_stage") if current_state else None),
+            "is_waiting_for_approval": is_interrupted
         }
         
         await _send_websocket_message(websocket, {
@@ -425,34 +459,22 @@ async def _handle_approval_response(websocket: WebSocket, session_id: str, messa
             await _send_error_message(websocket, session_id, "Session not found")
             return
 
-        # Handle approval
-        if _is_waiting_for_approval(current_state):
-            # Clear pending approval and mark stage as approved/rejected
-            pending_approval = current_state.get("pending_approval", {})
-            stage = pending_approval.get("stage")
-            
-            updated_state = current_state.copy()
-            updated_state["pending_approval"] = None
-            
-            if stage:
-                approvals = updated_state.get("approvals", {})
-                approvals[stage] = approved
-                updated_state["approvals"] = approvals
-                logger.info(f"Marked stage {stage} as {'approved' if approved else 'rejected'}")
-            
+        # Check if graph is interrupted (waiting for approval)
+        is_interrupted = await _is_graph_interrupted(session_id)
+        if is_interrupted:
             # Add approval response to chat history
             approval_message = f"{'Approved' if approved else 'Rejected'}"
             if feedback:
                 approval_message += f": {feedback}"
-            updated_state = add_chat_message(updated_state, "user", approval_message)
+            updated_state = add_chat_message(current_state, "user", approval_message)
             
             await graph.aupdate_state(config, updated_state)
             
-            # Continue processing if approved
+            # Continue processing if approved, otherwise stay interrupted
             if approved:
                 await _process_planning_execution(websocket, session_id, updated_state, graph, config, resume_from_approval=True)
             else:
-                # Send rejection confirmation
+                # Send rejection confirmation - user can provide feedback to retry
                 await _send_planning_update(websocket, session_id, updated_state)
         else:
             await _send_error_message(websocket, session_id, "No pending approval to respond to")
@@ -470,17 +492,12 @@ async def _process_planning_execution(websocket: WebSocket, session_id: str, sta
         
         # Execute graph and stream updates
         if resume_from_approval:
-            # Resume from approval node
-            logger.info("Resuming planning execution from approval node")
+            # Resume from interrupt
+            logger.info("Resuming planning execution from interrupt")
             async for event in graph.astream(None, config, stream_mode="values"):
                 if event is not None:
                     final_state = event
                     await _send_planning_update(websocket, session_id, final_state)
-                    
-                    # Check if we've reached another approval point
-                    if _is_waiting_for_approval(final_state):
-                        await _send_approval_request(websocket, session_id, final_state.get("pending_approval", {}))
-                        break
         else:
             # Continue with normal processing
             logger.info("Starting new planning execution")
@@ -488,32 +505,13 @@ async def _process_planning_execution(websocket: WebSocket, session_id: str, sta
                 if event is not None:
                     final_state = event
                     await _send_planning_update(websocket, session_id, final_state)
-                    
-                    if _is_waiting_for_approval(final_state):
-                        await _send_approval_request(websocket, session_id, final_state.get("pending_approval", {}))
-                        break
 
-        # Check if we need to set pending approval for the next stage
-        if not _is_waiting_for_approval(final_state):
-            try:
-                state_snapshot = await graph.aget_state(config)
-                if state_snapshot and state_snapshot.next and any("approval" in str(node) for node in state_snapshot.next):
-                    next_node = str(state_snapshot.next[0]) if state_snapshot.next else ""
-                    stage_name = next_node.replace("_approval", "") if "_approval" in next_node else "unknown"
-                    
-                    # Only set pending_approval if the stage hasn't been approved yet
-                    approvals = final_state.get('approvals', {})
-                    if not approvals.get(stage_name, False):
-                        final_state["pending_approval"] = {
-                            "stage": stage_name,
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "status": "waiting"
-                        }
-                        await graph.aupdate_state(config, final_state)
-                        await _send_approval_request(websocket, session_id, final_state["pending_approval"])
-                        logger.info(f"Set pending approval for stage: {stage_name}")
-            except Exception as e:
-                logger.warning(f"Failed to check/set pending approval: {e}")
+        # Check if we're now interrupted at the next stage
+        is_interrupted = await _is_graph_interrupted(session_id)
+        if is_interrupted:
+            current_stage = await _get_current_stage_from_graph(session_id)
+            await _send_approval_request(websocket, session_id, {"stage": current_stage, "status": "waiting"})
+            logger.info(f"Interrupted at stage: {current_stage}")
                 
     except Exception as e:
         logger.error(f"Error in planning execution: {e}")
@@ -530,12 +528,15 @@ async def get_hitl_session_status(session_id: str):
         if not current_state:
             raise HTTPException(status_code=404, detail="Session not found")
         
+        is_interrupted = await _is_graph_interrupted(session_id)
+        current_stage = await _get_current_stage_from_graph(session_id)
+        
         return HITLSessionResponse(
             session_id=session_id,
             experiment_id=current_state["experiment_id"],
-            current_stage=current_state["current_stage"],
-            is_waiting_for_approval=_is_waiting_for_approval(current_state),
-            pending_approval=current_state.get("pending_approval"),
+            current_stage=current_stage or current_state.get("current_stage", "objective_setting"),
+            is_waiting_for_approval=is_interrupted,
+            pending_approval={"stage": current_stage, "status": "waiting"} if is_interrupted else None,
             streaming_enabled=True,
             checkpoint_available=session_id in _active_graphs
         )
