@@ -1,15 +1,15 @@
 /**
  * Chat Messages Component
  * 
- * This component displays the list of chat messages with proper scrolling,
- * loading states, typing indicators, and real-time WebSocket connection status.
+ * This component displays the list of chat messages with enhanced auto-scroll,
+ * loading states, and real-time WebSocket connection status.
  */
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useCallback } from "react"
 import { ChatMessage } from "@/components/chat-message"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Wifi, WifiOff, Loader2, Zap, Clock, RefreshCw } from "lucide-react"
+import { Wifi, WifiOff, Loader2, Zap, Clock, RefreshCw, ChevronDown } from "lucide-react"
 import type { Message } from "@/types/chat-types"
 
 interface ChatMessagesProps {
@@ -18,8 +18,6 @@ interface ChatMessagesProps {
   selectedMode: string
   isConnected?: boolean
   connectionStatus?: string
-  isTyping?: boolean
-  typingText?: string
   lastActivity?: Date
   onRetryConnection?: () => void
 }
@@ -30,37 +28,102 @@ export function ChatMessages({
   selectedMode,
   isConnected = false,
   connectionStatus = "disconnected",
-  isTyping = false,
-  typingText = "",
   lastActivity,
   onRetryConnection
 }: ChatMessagesProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
+  const [showScrollButton, setShowScrollButton] = useState(false)
+  const [isScrolling, setIsScrolling] = useState(false)
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
 
-  // Auto-scroll to bottom when new messages arrive (only if user hasn't scrolled up)
-  useEffect(() => {
-    if (scrollAreaRef.current && autoScroll) {
-      const scrollElement = scrollAreaRef.current
-      const isNearBottom = scrollElement.scrollHeight - scrollElement.scrollTop <= scrollElement.clientHeight + 100
-      
-      if (isNearBottom) {
-        scrollElement.scrollTop = scrollElement.scrollHeight
-      }
-    }
-  }, [messages, isLoading, isTyping, autoScroll])
-
-  // Handle scroll events to detect if user has scrolled up
-  const handleScroll = () => {
+  // Enhanced auto-scroll to bottom with smooth behavior
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     if (scrollAreaRef.current) {
       const scrollElement = scrollAreaRef.current
-      const isNearBottom = scrollElement.scrollHeight - scrollElement.scrollTop <= scrollElement.clientHeight + 100
-      setAutoScroll(isNearBottom)
+      scrollElement.scrollTo({
+        top: scrollElement.scrollHeight,
+        behavior
+      })
     }
-  }
+  }, [])
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (autoScroll) {
+      // Use smooth scrolling for new messages, instant for initial load
+      const behavior = messages.length > 1 ? "smooth" : "auto"
+      scrollToBottom(behavior)
+    }
+  }, [messages, isLoading, autoScroll, scrollToBottom])
+
+  // Auto-scroll when the content height changes (e.g., typewriter animation)
+  useEffect(() => {
+    const scrollElement = scrollAreaRef.current
+    if (!scrollElement) return
+
+    // Observe size changes on the scroll container
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const resizeObserver = new ResizeObserver((_entries) => {
+      if (autoScroll) {
+        // Use instant scroll for rapid updates to keep cursor stable
+        scrollToBottom("auto")
+      }
+    })
+
+    resizeObserver.observe(scrollElement)
+
+    return () => resizeObserver.disconnect()
+  }, [autoScroll, scrollToBottom])
+
+  // Handle scroll events with debouncing to detect if user has scrolled up
+  const handleScroll = useCallback(() => {
+    if (!scrollAreaRef.current) return
+    
+    const scrollElement = scrollAreaRef.current
+    const { scrollTop, scrollHeight, clientHeight } = scrollElement
+    
+    // Check if user is near the bottom (within 150px threshold)
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 150
+    
+    // Update auto-scroll state
+    setAutoScroll(isNearBottom)
+    
+    // Show/hide scroll button based on scroll position
+    const shouldShowButton = scrollHeight - scrollTop - clientHeight > 200
+    setShowScrollButton(shouldShowButton)
+    
+    // Set scrolling state for visual feedback
+    setIsScrolling(true)
+    
+    // Clear previous timeout
+    if (scrollTimeoutRef.current !== undefined) {
+      clearTimeout(scrollTimeoutRef.current)
+    }
+    
+    // Reset scrolling state after a delay
+    scrollTimeoutRef.current = setTimeout(() => {
+      setIsScrolling(false)
+    }, 150)
+  }, [])
+
+  // Cleanup scroll timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (scrollTimeoutRef.current !== undefined) {
+        clearTimeout(scrollTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  // Handle scroll to bottom button click
+  const handleScrollToBottom = useCallback(() => {
+    scrollToBottom("smooth")
+    setAutoScroll(true)
+  }, [scrollToBottom])
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="flex-1 flex flex-col min-h-0 relative">
       {/* Connection Status Bar */}
       <ConnectionStatusBar 
         isConnected={isConnected}
@@ -74,26 +137,32 @@ export function ChatMessages({
       <div
         ref={scrollAreaRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-6 py-4"
+        className={`flex-1 overflow-y-auto px-6 py-4 transition-all duration-200 ${
+          isScrolling ? "scroll-smooth" : ""
+        }`}
         style={{
           fontFamily: '"Source Code Pro", ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
           fontSize: "16px",
           lineHeight: "24px",
+          scrollBehavior: "smooth"
         }}
       >
-        <div className="space-y-0">
-          {messages.map((message) => (
-            <ChatMessage key={message.id} message={message} />
+        <div className="space-y-0 min-h-full">
+          {messages.map((message, index) => (
+            <ChatMessage 
+              key={message.id} 
+              message={message} 
+              enableTypewriter={
+                message.sender === "ai" && 
+                !message.isHtml && 
+                index === messages.length - 1 // Only animate the latest AI message
+              }
+            />
           ))}
-
-          {/* Typing indicator */}
-          {isTyping && (
-            <TypingIndicator selectedMode={selectedMode} typingText={typingText} />
-          )}
 
           {/* Loading indicator */}
           {isLoading && (
-            <div className="mb-4">
+            <div className="mb-4 animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
               <div className="text-gray-700 dark:text-gray-300 mt-1 pl-4">
                 <LoadingIndicator selectedMode={selectedMode} />
               </div>
@@ -102,22 +171,35 @@ export function ChatMessages({
         </div>
       </div>
       
-      {/* Scroll to bottom button (when user scrolled up) */}
-      {!autoScroll && (
-        <div className="absolute bottom-4 right-4">
-          <button
-            onClick={() => {
-              if (scrollAreaRef.current) {
-                scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight
-                setAutoScroll(true)
-              }
-            }}
-            className="bg-blue-500 hover:bg-blue-600 text-white rounded-full p-2 shadow-lg transition-all duration-200"
+      {/* Enhanced Scroll to bottom button */}
+      {showScrollButton && (
+        <div className="absolute bottom-4 right-4 z-10">
+          <Button
+            onClick={handleScrollToBottom}
+            size="sm"
+            variant="secondary"
+            className={`
+              bg-white/90 dark:bg-gray-800/90 
+              hover:bg-white dark:hover:bg-gray-800 
+              border border-gray-200 dark:border-gray-700
+              shadow-lg backdrop-blur-sm
+              transition-all duration-200 ease-in-out
+              hover:scale-105 active:scale-95
+              ${autoScroll ? "opacity-50" : "opacity-100"}
+            `}
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-            </svg>
-          </button>
+            <ChevronDown className="h-4 w-4 mr-1" />
+            <span className="text-sm">Scroll to bottom</span>
+          </Button>
+        </div>
+      )}
+      
+      {/* Scroll indicator */}
+      {!autoScroll && (
+        <div className="absolute bottom-20 right-4 z-10">
+          <div className="bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-200 px-3 py-1 rounded-full text-xs font-medium shadow-sm border border-amber-200 dark:border-amber-700">
+            Auto-scroll paused
+          </div>
         </div>
       )}
     </div>
@@ -265,51 +347,6 @@ function ConnectionStatusBar({ isConnected, connectionStatus, selectedMode, last
             </Button>
           )}
         </div>
-      </div>
-    </div>
-  )
-}
-
-/**
- * Typing Indicator Component
- */
-interface TypingIndicatorProps {
-  selectedMode: string
-  typingText?: string
-}
-
-function TypingIndicator({ selectedMode, typingText }: TypingIndicatorProps) {
-  const [dots, setDots] = useState(".")
-
-  // Animate dots
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setDots(prev => {
-        switch (prev) {
-          case ".": return ".."
-          case "..": return "..."
-          case "...": return "."
-          default: return "."
-        }
-      })
-    }, 500)
-
-    return () => clearInterval(interval)
-  }, [])
-
-  return (
-    <div className="mb-4">
-      <div className="text-gray-500 dark:text-gray-400 mt-1 pl-4 flex items-center gap-2">
-        <div className="flex items-center gap-1">
-          <div className="flex space-x-1">
-            <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
-            <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: "0.1s" }}></div>
-            <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
-          </div>
-        </div>
-        <span className="text-sm italic">
-          {typingText || `AI is ${selectedMode === "plan" ? "planning" : selectedMode === "execute" ? "processing" : "analyzing"}${dots}`}
-        </span>
       </div>
     </div>
   )

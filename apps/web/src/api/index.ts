@@ -11,8 +11,8 @@ export * from './dataclean'
 // Analysis API
 export * from './analysis'
 
-// Plan API
-export * from './plan'
+// Planning API
+export * from './planning'
 
 // Database API
 export * from './database'
@@ -28,11 +28,14 @@ export {
   generateVisualization as createChart,
 } from './analysis'
 
+// Convenience re-exports for planning utilities
 export {
-  generatePlan as buildPlan,
-  createPlanFromTemplate as useTemplate,
-  exportPlan as downloadPlan,
-} from './plan'
+  createPlanningSession as startPlanningSession,
+  connectPlanningSession as openPlanningConnection,
+  sendPlanningMessage as sendPlanMessage,
+  sendApprovalResponse as sendPlanApproval,
+  getPlanningSessionStatus as getPlanStatus,
+} from './planning'
 
 export {
   getExperiments as fetchExperiments,

@@ -100,9 +100,10 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
 
       // Persist the artifact id into the current dataclean chat session so subsequent prompts can reference it
       updateDatacleanSession({ experiment_id: res.artifact_id })
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("CSV upload failed", error)
-      toast({ title: "Upload failed", description: error?.message || "Unexpected error", variant: "destructive" })
+      const message = error instanceof Error ? error.message : "Unexpected error"
+      toast({ title: "Upload failed", description: message, variant: "destructive" })
     }
   }
 
