@@ -106,16 +106,6 @@ class Settings(BaseSettings):
         description="Maximum iterations for agent loops"
     )
     
-    # Database Configuration
-    firestore_project_id: Optional[str] = Field(
-        default=None,
-        description="Firebase project ID for data persistence"
-    )
-    use_firestore: bool = Field(
-        default=False,
-        description="Enable Firestore for data persistence"
-    )
-    
     # Logging Configuration
     log_level: str = Field(
         default="INFO",
@@ -353,7 +343,6 @@ def get_system_info() -> Dict[str, Any]:
         "log_level": settings.log_level,
         "api_host": settings.api_host,
         "api_port": settings.api_port,
-        "use_firestore": settings.use_firestore,
         "max_execution_time": settings.max_execution_time,
         "max_iterations": settings.max_iterations,
         "max_file_size": settings.max_file_size,
