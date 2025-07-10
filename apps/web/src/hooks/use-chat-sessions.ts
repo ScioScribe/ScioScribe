@@ -2,20 +2,18 @@
  * Chat Sessions Hook
  * 
  * This hook manages the lifecycle of chat sessions for both planning and data cleaning modes.
- * It handles session initialization, state management, cleanup, and timeout handling.
+ * It handles session initialization, state management, cleanup, and WebSocket connection management.
  */
 
 import { useState, useEffect, useCallback } from "react"
 import { usePlanningSession } from "@/hooks/use-planning-session"
-import { startPlanningSession, type StartPlanningSessionRequest } from "@/api/planning"
 import { startConversation, type StartConversationRequest, type StartConversationResponse } from "@/api/dataclean"
-import { streamingManager } from "@/utils/streaming-connection-manager"
+import { websocketManager } from "@/utils/streaming-connection-manager"
 import type { SessionState } from "@/types/chat-types"
 
 export interface ChatSessionsHookReturn {
   planningSession: SessionState
   datacleanSession: SessionState
-  initializePlanningSession: (researchQuery: string) => Promise<{ session_id: string; experiment_id: string }>
   initializeDatacleanSession: (userId?: string) => Promise<{ session_id: string; response: StartConversationResponse }>
   cleanupPlanningSession: () => void
   cleanupDatacleanSession: () => void
@@ -23,6 +21,7 @@ export interface ChatSessionsHookReturn {
   updateDatacleanSession: (updates: Partial<SessionState>) => void
   isPlanningSessionActive: boolean
   isDatacleanSessionActive: boolean
+  isPlanningSessionConnected: boolean
 }
 
 export function useChatSessions(): ChatSessionsHookReturn {
@@ -35,7 +34,7 @@ export function useChatSessions(): ChatSessionsHookReturn {
     experiment_id: null,
     is_active: false,
     is_waiting_for_approval: false,
-    stream_connection: null,
+    websocket_connection: null,
     last_activity: new Date()
   })
 
@@ -44,53 +43,12 @@ export function useChatSessions(): ChatSessionsHookReturn {
     experiment_id: null,
     is_active: false,
     is_waiting_for_approval: false,
-    stream_connection: null,
+    websocket_connection: null,
     last_activity: new Date()
   })
 
   // Use the planning session hook
   const planningSessionHook = usePlanningSession({ autoRefresh: false })
-
-  /**
-   * Initialize a new planning session
-   * @param researchQuery The research query to start the session with
-   * @returns Session and experiment IDs
-   */
-  const initializePlanningSession = useCallback(async (researchQuery: string) => {
-    try {
-      console.log("🎯 Initializing planning session with query:", researchQuery)
-      
-      const requestBody: StartPlanningSessionRequest = {
-        research_query: researchQuery,
-      }
-      console.log("📤 START PLANNING SESSION REQUEST:", requestBody)
-      
-      const response = await startPlanningSession(requestBody)
-      console.log("📥 START PLANNING SESSION RESPONSE BODY:", JSON.stringify(response, null, 2))
-
-      console.log("🔄 Setting up new planning session state")
-      const newSessionState = {
-        session_id: response.session_id,
-        experiment_id: response.experiment_id,
-        is_active: true,
-        is_waiting_for_approval: false,
-        stream_connection: null,
-        last_activity: new Date()
-      }
-      
-      console.log("📊 New planning session state:", newSessionState)
-      setPlanningSession(newSessionState)
-
-      // Update the planning session hook
-      planningSessionHook.startSession(response.session_id, response.experiment_id)
-
-      console.log("✅ Planning session initialized:", response.session_id)
-      return { session_id: response.session_id, experiment_id: response.experiment_id }
-    } catch (error) {
-      console.error("❌ Failed to initialize planning session:", error)
-      throw error
-    }
-  }, [planningSessionHook])
 
   /**
    * Initialize a new dataclean session
@@ -114,7 +72,7 @@ export function useChatSessions(): ChatSessionsHookReturn {
         experiment_id: null,
         is_active: true,
         is_waiting_for_approval: false,
-        stream_connection: null,
+        websocket_connection: null,
         last_activity: new Date()
       })
 
@@ -137,7 +95,8 @@ export function useChatSessions(): ChatSessionsHookReturn {
       console.log("📊 Session state before cleanup:", currentState)
       
       if (currentState.session_id) {
-        streamingManager.closeConnection(currentState.session_id)
+        // Close WebSocket connection
+        websocketManager.closeConnection(currentState.session_id)
       }
       
       const cleanedState = {
@@ -145,7 +104,7 @@ export function useChatSessions(): ChatSessionsHookReturn {
         experiment_id: null,
         is_active: false,
         is_waiting_for_approval: false,
-        stream_connection: null,
+        websocket_connection: null,
         last_activity: new Date()
       }
       
@@ -163,19 +122,22 @@ export function useChatSessions(): ChatSessionsHookReturn {
   const cleanupDatacleanSession = useCallback(() => {
     console.log("🧹 Cleaning up dataclean session")
     
-    if (datacleanSession.session_id) {
-      streamingManager.closeConnection(datacleanSession.session_id)
-    }
-    
-    setDatacleanSession({
-      session_id: null,
-      experiment_id: null,
-      is_active: false,
-      is_waiting_for_approval: false,
-      stream_connection: null,
-      last_activity: new Date()
+    // Get current state via setter callback to avoid dependency
+    setDatacleanSession(currentState => {
+      if (currentState.session_id) {
+        websocketManager.closeConnection(currentState.session_id)
+      }
+      
+      return {
+        session_id: null,
+        experiment_id: null,
+        is_active: false,
+        is_waiting_for_approval: false,
+        websocket_connection: null,
+        last_activity: new Date()
+      }
     })
-  }, [datacleanSession.session_id])
+  }, [])
 
   /**
    * Update planning session state
@@ -183,10 +145,33 @@ export function useChatSessions(): ChatSessionsHookReturn {
    */
   const updatePlanningSession = useCallback((updates: Partial<SessionState>) => {
     console.log("🔄 updatePlanningSession called with:", updates)
-    setPlanningSession(prev => ({
-      ...prev,
-      ...updates
-    }))
+
+    setPlanningSession(prev => {
+      // Safeguard: never allow critical identifiers to be cleared accidentally
+      const safeUpdates: Partial<SessionState> = { ...updates }
+
+      if ("session_id" in safeUpdates && (safeUpdates.session_id === null || safeUpdates.session_id === undefined)) {
+        console.warn("⚠️ Attempt to clear session_id ignored")
+        delete safeUpdates.session_id
+      }
+
+      if ("experiment_id" in safeUpdates && (safeUpdates.experiment_id === null || safeUpdates.experiment_id === undefined)) {
+        console.warn("⚠️ Attempt to clear experiment_id ignored")
+        delete safeUpdates.experiment_id
+      }
+
+      const updatedState: SessionState = {
+        ...prev,
+        ...safeUpdates
+      }
+
+      // Maintain websocket reference if connection exists for this session
+      if (updatedState.session_id && websocketManager.isConnected(updatedState.session_id)) {
+        updatedState.websocket_connection = websocketManager.getConnection(updatedState.session_id)
+      }
+
+      return updatedState
+    })
   }, [])
 
   /**
@@ -201,53 +186,137 @@ export function useChatSessions(): ChatSessionsHookReturn {
     }))
   }, [])
 
-  // Session timeout and health check handling
+  /**
+   * Check if planning session has an active WebSocket connection
+   */
+  const isPlanningSessionConnected = useCallback(() => {
+    return planningSession.session_id ? websocketManager.isConnected(planningSession.session_id) : false
+  }, [planningSession.session_id])
+
+  // WebSocket health monitoring and session timeout handling
   useEffect(() => {
-    const checkSessionTimeout = () => {
+    const checkSessionHealth = () => {
       const now = new Date()
       const timeoutMs = 30 * 60 * 1000 // 30 minutes
 
-      if (planningSession.is_active && 
-          now.getTime() - planningSession.last_activity.getTime() > timeoutMs) {
-        console.log("⏰ Planning session timed out")
-        cleanupPlanningSession()
-      }
+      // Use functional setState to avoid dependencies on session objects
+      setPlanningSession(prev => {
+        if (prev.is_active && now.getTime() - prev.last_activity.getTime() > timeoutMs) {
+          console.log("⏰ Planning session timed out")
+          cleanupPlanningSession()
+        }
+        return prev
+      })
 
-      if (datacleanSession.is_active && 
-          now.getTime() - datacleanSession.last_activity.getTime() > timeoutMs) {
-        console.log("⏰ Dataclean session timed out")
-        cleanupDatacleanSession()
-      }
+      setDatacleanSession(prev => {
+        if (prev.is_active && now.getTime() - prev.last_activity.getTime() > timeoutMs) {
+          console.log("⏰ Dataclean session timed out")
+          cleanupDatacleanSession()
+        }
+        return prev
+      })
       
-      // Perform streaming health check
-      streamingManager.performHealthCheck()
+      // Perform WebSocket health check
+      websocketManager.performHealthCheck()
     }
 
-    const timeoutInterval = setInterval(checkSessionTimeout, 60000) // Check every minute
-    return () => clearInterval(timeoutInterval)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planningSession.is_active, planningSession.last_activity, datacleanSession.is_active, datacleanSession.last_activity])
+    const healthInterval = setInterval(checkSessionHealth, 60000) // Check every minute
+    return () => clearInterval(healthInterval)
+  }, [cleanupPlanningSession, cleanupDatacleanSession]) // Remove session objects from dependencies
+
+  // WebSocket connection status monitoring
+  useEffect(() => {
+    const monitorConnections = () => {
+      // Update planning session connection status using functional setState to avoid dependencies
+      setPlanningSession(prev => {
+        if (prev.session_id) {
+          const isConnected = websocketManager.isConnected(prev.session_id)
+          // Use connection status instead of object comparison to avoid infinite loops
+          const hasConnection = !!prev.websocket_connection
+          
+          if (isConnected && !hasConnection) {
+            console.log(`🔍 Planning WebSocket connection established`)
+            return {
+              ...prev,
+              websocket_connection: websocketManager.getConnection(prev.session_id)
+            }
+          } else if (!isConnected && hasConnection) {
+            console.log(`🔍 Planning WebSocket connection lost`)
+            return {
+              ...prev,
+              websocket_connection: null
+            }
+          }
+        }
+        return prev
+      })
+      
+      // Update dataclean session connection status using functional setState
+      setDatacleanSession(prev => {
+        if (prev.session_id) {
+          const isConnected = websocketManager.isConnected(prev.session_id)
+          const hasConnection = !!prev.websocket_connection
+          
+          if (isConnected && !hasConnection) {
+            return {
+              ...prev,
+              websocket_connection: websocketManager.getConnection(prev.session_id)
+            }
+          } else if (!isConnected && hasConnection) {
+            return {
+              ...prev,
+              websocket_connection: null
+            }
+          }
+        }
+        return prev
+      })
+    }
+
+    const connectionMonitorInterval = setInterval(monitorConnections, 5000) // Check every 5 seconds
+    return () => clearInterval(connectionMonitorInterval)
+  }, [])
 
   // Cleanup sessions on unmount
   useEffect(() => {
     return () => {
+      console.log("🔒 Cleaning up all sessions on unmount")
       cleanupPlanningSession()
       cleanupDatacleanSession()
-      streamingManager.closeAllConnections()
+      websocketManager.closeAllConnections()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // Empty dependency array - only run on mount/unmount
+  }, []) // Remove cleanup functions from dependencies to prevent effect recreation
+
+  // Debug logging for session state changes
+  useEffect(() => {
+    console.log("📊 Planning session state updated:", {
+      session_id: planningSession.session_id,
+      is_active: planningSession.is_active,
+      is_waiting_for_approval: planningSession.is_waiting_for_approval,
+      has_websocket: !!planningSession.websocket_connection,
+      websocket_ready_state: planningSession.websocket_connection?.readyState
+    })
+  }, [planningSession])
+
+  useEffect(() => {
+    console.log("📊 Dataclean session state updated:", {
+      session_id: datacleanSession.session_id,
+      is_active: datacleanSession.is_active,
+      has_websocket: !!datacleanSession.websocket_connection
+    })
+  }, [datacleanSession])
 
   return {
     planningSession,
     datacleanSession,
-    initializePlanningSession,
     initializeDatacleanSession,
     cleanupPlanningSession,
     cleanupDatacleanSession,
     updatePlanningSession,
     updateDatacleanSession,
     isPlanningSessionActive: planningSession.is_active,
-    isDatacleanSessionActive: datacleanSession.is_active
+    isDatacleanSessionActive: datacleanSession.is_active,
+    isPlanningSessionConnected: isPlanningSessionConnected()
   }
 } 

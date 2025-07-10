@@ -1,6 +1,5 @@
 "use client"
 
-import type React from "react"
 import { useState, useEffect, useCallback } from "react"
 import { TextEditor } from "@/components/text-editor"
 import { getPlanningSessionStatus, type PlanningSessionStatus } from "@/api/planning"
@@ -64,7 +63,8 @@ export function PlanningStateEditor({
     } finally {
       setLoading(false)
     }
-  }, [sessionId, onStateChange]) // Include onStateChange in dependencies
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]) // Remove onStateChange from dependencies
 
   // Initial fetch
   useEffect(() => {
@@ -128,7 +128,7 @@ export function PlanningStateEditor({
       <div className="flex flex-wrap gap-2 text-sm text-gray-600 dark:text-gray-400">
         <span>Session: {sessionId?.substring(0, 8)}...</span>
         <span>Stage: {sessionStatus.current_stage || "Unknown"}</span>
-        <span>Experiment: {sessionStatus.experiment_id?.substring(0, 8)}...</span>
+        <span>Status: {sessionStatus.is_active ? "Active" : "Inactive"}</span>
         {lastUpdated && (
           <span>Updated: {lastUpdated.toLocaleTimeString()}</span>
         )}

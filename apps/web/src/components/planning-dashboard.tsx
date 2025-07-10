@@ -1,6 +1,5 @@
 "use client"
 
-import type React from "react"
 import { useState, useEffect } from "react"
 import { AiChat } from "@/components/ai-chat"
 import { PlanningStateEditor } from "@/components/planning-state-editor"
@@ -54,7 +53,8 @@ export function PlanningDashboard({
     if (planningSession.sessionState.sessionId) {
       console.log("Planning session active:", planningSession.sessionState)
     }
-  }, [planningSession.sessionState])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planningSession.sessionState.sessionId, planningSession.sessionState.isActive]) // Use primitive values instead of object
 
   const getSessionStatusInfo = () => {
     const { sessionState } = planningSession

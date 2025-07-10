@@ -15,11 +15,12 @@ import type { Message, MessageHandlerContext, DatacleanResponse } from "@/types/
  * @param context Context containing state and handlers
  */
 export async function handleExecuteMessage(message: string, context: MessageHandlerContext): Promise<void> {
-  const { setMessages, datacleanSession } = context
+  const { setMessages, getDatacleanSession } = context
   
   console.log("🧹 Handling execute message:", message)
   
   try {
+    const datacleanSession = getDatacleanSession()
     // Send message to dataclean conversation endpoint
     if (datacleanSession.session_id) {
       await sendDatacleanMessage(datacleanSession.session_id, message, context)
@@ -65,7 +66,7 @@ async function sendDatacleanMessage(sessionId: string, message: string, context:
     console.log("📥 SEND CONVERSATION MESSAGE RESPONSE:", JSON.stringify(response, null, 2))
     
     // Process the response based on type
-    await processDatacleanResponse(response, context)
+    await processDatacleanResponse(response as DatacleanResponse, context)
     
     // Update session activity
     setDatacleanSession({

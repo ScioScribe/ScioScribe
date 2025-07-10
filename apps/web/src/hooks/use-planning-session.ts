@@ -45,10 +45,10 @@ export function usePlanningSession(options: UsePlanningSessionOptions = {}) {
       setSessionState(prev => ({
         ...prev,
         sessionId: status.session_id,
-        experimentId: status.experiment_id,
+        experimentId: null, // PlanningSessionStatus doesn't have experiment_id
         isActive: true,
         isWaitingForApproval: status.is_waiting_for_approval,
-        currentStage: status.current_stage,
+        currentStage: status.current_stage ?? null,
         lastUpdated: new Date()
       }))
       

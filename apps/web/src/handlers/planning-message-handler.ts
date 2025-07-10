@@ -1,26 +1,77 @@
 /**
  * Planning Message Handler
  * 
- * This module handles message processing for the planning mode, including
- * streaming connection management, approval handling, and event processing.
+ * This module handles message processing for the planning mode using
+ * WebSocket bidirectional communication instead of POST endpoints.
  */
 
-import { sendPlanningMessage, parseStreamEvent } from "@/api/planning"
-import { streamingManager } from "@/utils/streaming-connection-manager"
-import type { Message, MessageHandlerContext, ApprovalResponse, PlanningStreamEvent } from "@/types/chat-types"
+import { websocketManager } from "@/utils/streaming-connection-manager"
+import type { 
+  Message, 
+  MessageHandlerContext, 
+  ApprovalResponse, 
+  WebSocketMessage 
+} from "@/types/chat-types"
 
 /**
- * Handles incoming messages for the planning mode
+ * Helper function to safely update planning session state while preserving session continuity
+ * @param setPlanningSession Session setter function
+ * @param updates Partial session updates
+ * @param context Description of the update for logging
+ */
+function safeUpdateSession(
+  setPlanningSession: MessageHandlerContext['setPlanningSession'], 
+  updates: Partial<Parameters<MessageHandlerContext['setPlanningSession']>[0]>, 
+  context: string
+) {
+  console.log(`🔄 Safe session update - ${context}:`, updates)
+  
+  // Ensure we never accidentally clear critical session data
+  const safeUpdates = { ...updates }
+  if ('session_id' in safeUpdates && !safeUpdates.session_id) {
+    console.warn("⚠️ Attempted to clear session_id - removing from updates")
+    delete safeUpdates.session_id
+  }
+  if ('experiment_id' in safeUpdates && !safeUpdates.experiment_id) {
+    console.warn("⚠️ Attempted to clear experiment_id - removing from updates")
+    delete safeUpdates.experiment_id
+  }
+  
+  setPlanningSession(safeUpdates)
+}
+
+/**
+ * Handles incoming messages for the planning mode using WebSocket
  * @param message User message to process
  * @param context Context containing state and handlers
  */
 export async function handlePlanningMessage(message: string, context: MessageHandlerContext): Promise<void> {
-  const { setMessages, planningSession, setPlanningSession } = context
+  const { setMessages, getPlanningSession, setPlanningSession } = context
   
-  console.log("🎯 Handling planning message:", message)
-  console.log("📊 Current planning session state:", planningSession)
+  console.log("🎯 Handling planning message with WebSocket:", message)
   
   try {
+    const planningSession = getPlanningSession()
+    console.log("📊 Current planning session state:", {
+      session_id: planningSession.session_id,
+      experiment_id: planningSession.experiment_id,
+      is_active: planningSession.is_active,
+      is_waiting_for_approval: planningSession.is_waiting_for_approval,
+      current_stage: planningSession.current_stage
+    })
+    
+    // Ensure we have a WebSocket connection
+    if (!planningSession.session_id) {
+      console.error("❌ Session ID is null/undefined when trying to send message")
+      throw new Error("Session ID is null - session may have been reset unexpectedly")
+    }
+    
+    // Check if WebSocket is connected
+    if (!websocketManager.isConnected(planningSession.session_id)) {
+      console.error("❌ WebSocket not connected for session:", planningSession.session_id)
+      throw new Error("WebSocket connection not established")
+    }
+    
     // Check if we're waiting for approval and parse user response
     if (planningSession.is_waiting_for_approval && planningSession.pending_approval) {
       console.log("🔍 Parsing approval response for message:", message)
@@ -43,32 +94,34 @@ export async function handlePlanningMessage(message: string, context: MessageHan
         console.log("📝 Adding approval confirmation message")
         setMessages((prev) => [...prev, approvalResponseMessage])
         
-        // Clear pending approval state but keep session active
-        console.log("🔄 Clearing approval state but keeping session active")
-        setPlanningSession({
-          is_active: true,
+        // Send approval response via WebSocket
+        await sendApprovalResponse(planningSession.session_id, approvalResponse)
+        
+        // Clear approval state after sending response (preserve session continuity)
+        console.log("🔄 Clearing approval state after sending WebSocket response")
+        safeUpdateSession(setPlanningSession, {
           is_waiting_for_approval: false,
-          pending_approval: undefined
-        })
+          pending_approval: undefined,
+          last_activity: new Date()
+        }, "approval_response_processed")
+        
+        return // Exit early for approval responses
       }
     }
     
-    console.log("📤 Sending planning stream message to session:", planningSession.session_id)
+    console.log("📤 Sending user message via WebSocket to session:", planningSession.session_id)
     
-    // Double-check session is still valid before sending message
-    if (!planningSession.session_id) {
-      console.error("❌ Session ID is null/undefined when trying to send message")
-      throw new Error("Session ID is null - session may have been reset unexpectedly")
-    }
+    // Send user message via WebSocket
+    await sendUserMessage(planningSession.session_id, message)
     
-    await sendPlanningStreamMessage(planningSession.session_id, message, context)
+    console.log("✅ User message sent successfully via WebSocket")
     
   } catch (error) {
     console.error("❌ Planning message error:", error)
     
     const errorMessage: Message = {
       id: (Date.now() + 1).toString(),
-      content: `❌ **Planning Session Error**\n\nFailed to continue planning session.\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}\n\n**Troubleshooting:**\n• Check that the backend server is running on localhost:8000\n• Verify the planning API endpoint is accessible\n• Try refreshing the page and starting a new session\n\nPlease try again or contact support if the problem persists.`,
+      content: `❌ **Planning Session Error**\n\nFailed to continue planning session.\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}\n\n**Troubleshooting:**\n• Check that the backend server is running on localhost:8000\n• Verify the WebSocket connection is established\n• Try refreshing the page and starting a new session\n\nPlease try again or contact support if the problem persists.`,
       sender: "ai",
       timestamp: new Date(),
       mode: "plan",
@@ -79,190 +132,170 @@ export async function handlePlanningMessage(message: string, context: MessageHan
 }
 
 /**
- * Sets up streaming connection for planning session
- * @param sessionId Session ID to connect to
- * @param context Message handler context
- */
-export async function setupPlanningStream(sessionId: string, context: MessageHandlerContext): Promise<void> {
-  const { setMessages, setPlanningSession } = context
-  
-  try {
-    console.log("🔄 Setting up planning stream for session:", sessionId)
-    
-    const url = `http://localhost:8000/api/planning/stream/chat/${sessionId}`
-    
-    const eventSource = streamingManager.createConnection(
-      sessionId,
-      url,
-      {
-        onMessage: (event) => {
-          console.log("📥 RAW STREAM EVENT RECEIVED:", event.data)
-          console.log("📥 Event timestamp:", new Date().toISOString())
-          
-          try {
-            const streamEvent = parseStreamEvent(event.data)
-            console.log("🔍 PARSED STREAM EVENT:", JSON.stringify(streamEvent, null, 2))
-            
-            if (streamEvent) {
-              console.log("✅ Processing stream event of type:", streamEvent.event_type)
-              handlePlanningStreamEvent(streamEvent, context)
-            } else {
-              console.warn("⚠️ Failed to parse stream event, trying manual JSON parse")
-              
-              try {
-                const manualParsed = JSON.parse(event.data)
-                console.log("🔧 MANUAL JSON PARSE RESULT:", JSON.stringify(manualParsed, null, 2))
-                
-                if (manualParsed.event_type || manualParsed.data) {
-                  console.log("✅ Manual parse successful, processing event")
-                  handlePlanningStreamEvent(manualParsed, context)
-                }
-              } catch (manualError) {
-                console.error("❌ Manual JSON parse also failed:", manualError)
-              }
-            }
-          } catch (error) {
-            console.error("❌ Error parsing stream event:", error)
-          }
-        },
-        onError: (error) => {
-          console.error("❌ Planning stream error:", error)
-          
-          const errorMessage: Message = {
-            id: (Date.now() + 1).toString(),
-            content: `🔌 **Stream Connection Error**\n\nLost connection to planning stream.\n\nAttempting to reconnect...\n\nIf the problem persists, please refresh the page.`,
-            sender: "ai",
-            timestamp: new Date(),
-            mode: "plan",
-            response_type: "error"
-          }
-          setMessages((prev) => [...prev, errorMessage])
-        },
-        onOpen: () => {
-          console.log("✅ Planning stream connection established")
-          
-          // Update session with connection info
-          setPlanningSession({
-            stream_connection: eventSource
-          })
-        }
-      },
-      {
-        maxReconnectAttempts: 5,
-        reconnectDelay: 3000
-      }
-    )
-    
-    if (!eventSource) {
-      throw new Error("Failed to create planning stream connection")
-    }
-    
-  } catch (error) {
-    console.error("❌ Failed to setup planning stream:", error)
-    throw error
-  }
-}
-
-/**
- * Sends a message to the planning stream
+ * Sends a user message via WebSocket
  * @param sessionId Session ID to send message to
  * @param message Message content
- * @param context Message handler context
  */
-export async function sendPlanningStreamMessage(sessionId: string, message: string, context: MessageHandlerContext): Promise<void> {
-  const { setPlanningSession } = context
+async function sendUserMessage(sessionId: string, message: string): Promise<void> {
+  const userMessage: WebSocketMessage = {
+    type: "user_message",
+    data: {
+      content: message
+    },
+    session_id: sessionId
+  }
   
-  try {
-    console.log("📤 Sending planning stream message:", message)
-    
-    const requestPayload = { user_input: message }
-    console.log("📤 SEND PLANNING MESSAGE REQUEST:", requestPayload)
-    
-    const response = await sendPlanningMessage(sessionId, requestPayload)
-    console.log("📥 SEND PLANNING MESSAGE RESPONSE:", JSON.stringify(response, null, 2))
-    
-    // Update session activity
-    setPlanningSession({
-      last_activity: new Date()
-    })
-    
-    console.log("✅ Planning stream message sent successfully")
-    
-  } catch (error) {
-    console.error("❌ Failed to send planning stream message:", error)
-    throw error
+  console.log("📤 Sending user message via WebSocket:", userMessage)
+  
+  const sent = websocketManager.sendMessage(sessionId, userMessage)
+  if (!sent) {
+    throw new Error("Failed to send user message via WebSocket")
   }
 }
 
 /**
- * Handles planning stream events
- * @param streamEvent The stream event to process
+ * Sends an approval response via WebSocket
+ * @param sessionId Session ID to send response to
+ * @param approvalResponse Approval response data
+ */
+async function sendApprovalResponse(sessionId: string, approvalResponse: ApprovalResponse): Promise<void> {
+  const approvalMessage: WebSocketMessage = {
+    type: "approval_response",
+    data: {
+      approved: approvalResponse.approved,
+      feedback: approvalResponse.feedback || ""
+    },
+    session_id: sessionId
+  }
+  
+  console.log("📤 Sending approval response via WebSocket:", approvalMessage)
+  
+  const sent = websocketManager.sendMessage(sessionId, approvalMessage)
+  if (!sent) {
+    throw new Error("Failed to send approval response via WebSocket")
+  }
+}
+
+/**
+ * Handles WebSocket messages from the planning session
+ * @param message WebSocket message received
  * @param context Message handler context
  */
-export function handlePlanningStreamEvent(streamEvent: PlanningStreamEvent, context: MessageHandlerContext): void {
-  console.log("🎯 Processing planning stream event:", streamEvent)
+export function handlePlanningWebSocketMessage(message: WebSocketMessage, context: MessageHandlerContext): void {
+  console.log("🎯 Processing planning WebSocket message:", message)
   
-  try {
-    switch (streamEvent.event_type) {
-      case "update":
-        console.log("🔄 Handling planning update event")
-        handlePlanningUpdate(streamEvent.data, context)
-        break
-      case "approval_request":
-        console.log("⚠️ Handling approval request event")
-        handlePlanningApprovalRequest(streamEvent.data, context)
-        break
-      case "error":
-        console.log("❌ Handling error event")
-        handlePlanningStreamError(streamEvent.data, context)
-        break
-      case "heartbeat":
-        console.log("💓 Received heartbeat event")
-        break
-      default:
-        console.warn("⚠️ Unknown planning stream event type:", streamEvent.event_type)
-        
-        // Try to handle unknown events as updates if they have state data
-        if (streamEvent.data && streamEvent.data.state) {
-          console.log("🔄 Treating unknown event as update since it has state data")
-          handlePlanningUpdate(streamEvent.data, context)
-        }
+  switch (message.type) {
+    case "planning_update":
+      console.log("📊 Processing planning update from WebSocket")
+      handlePlanningUpdate(message.data, context)
+      break
+      
+    case "approval_request":
+      console.log("⚠️ Processing approval request from WebSocket")
+      handlePlanningApprovalRequest(message.data, context)
+      break
+      
+    case "error":
+      console.log("❌ Processing error event from WebSocket")
+      handlePlanningError(message.data, context)
+      break
+      
+    case "session_status":
+      console.log("📊 Processing session status from WebSocket")
+      handleSessionStatus(message.data, context)
+      break
+      
+    case "pong":
+      console.log("🏓 Received pong from server (ignoring)")
+      break
+      
+    default:
+      console.warn("⚠️ Unknown WebSocket message type:", message.type)
+  }
+}
+
+/**
+ * Parses approval responses from user input
+ * @param message User input message
+ * @returns Parsed approval response
+ */
+export function parseApprovalResponse(message: string): ApprovalResponse {
+  const lowerMessage = message.toLowerCase().trim()
+  
+  // Check for approval keywords
+  const approvalKeywords = ["approve", "approved", "yes", "ok", "proceed", "continue", "accept", "go ahead"]
+  const rejectionKeywords = ["reject", "rejected", "no", "stop", "cancel", "decline", "refuse", "deny"]
+  
+  const isApproval = approvalKeywords.some(keyword => lowerMessage.includes(keyword))
+  const isRejection = rejectionKeywords.some(keyword => lowerMessage.includes(keyword))
+  
+  if (isApproval && !isRejection) {
+    return {
+      isApprovalResponse: true,
+      approved: true,
+      feedback: message.length > 20 ? message : undefined
     }
-  } catch (error) {
-    console.error("❌ Error handling planning stream event:", error)
+  } else if (isRejection && !isApproval) {
+    return {
+      isApprovalResponse: true,
+      approved: false,
+      feedback: message
+    }
+  } else if (lowerMessage.length > 3) {
+    // If it's longer than 3 characters but not clearly approval/rejection,
+    // treat as feedback with implicit approval
+    return {
+      isApprovalResponse: true,
+      approved: true,
+      feedback: message
+    }
+  }
+  
+  return {
+    isApprovalResponse: false,
+    approved: false
   }
 }
 
 /**
- * Handles planning update events
- * @param data Update data from the stream
+ * Handles planning update events from WebSocket
+ * @param data Update data from the WebSocket message
  * @param context Message handler context
  */
 function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHandlerContext): void {
   const { setMessages, setPlanningSession, updatePlanFromPlanningState, updatePlanFromPlanningMessage } = context
   
-  console.log("📊 Planning update received:", data)
+  console.log("📊 Planning update received from WebSocket:", data)
   
   const state = (data.state as Record<string, unknown>) || {}
   const currentStage = (state.current_stage as string) || "unknown"
   const reasoning = (state.reasoning as string) || ""
   const chatHistory = (state.chat_history as Array<unknown>) || []
   
+  // The backend stores messages using `role: "assistant"`, whereas older
+  // frontend logic expected `sender: "ai"`. Support both shapes so we
+  // reliably surface agent updates regardless of schema.
   const latestAiMessage = chatHistory
-    .filter((msg: unknown) => (msg as Record<string, unknown>)?.sender === "ai")
+    .filter((msg: unknown) => {
+      const m = msg as Record<string, unknown>
+      return m?.sender === "ai" || m?.role === "assistant"
+    })
     .pop() as Record<string, unknown> | undefined
   
   if (latestAiMessage && latestAiMessage.content) {
     const messageContent = latestAiMessage.content as string
+    console.log("💬 Creating chat message from WebSocket update:", messageContent.substring(0, 100))
+    
     const updateMessage: Message = {
       id: (Date.now() + Math.random()).toString(),
-      content: `🤖 **Agent Reasoning** (${currentStage})\n\n${messageContent}\n\n${reasoning ? `**Reasoning Process:**\n${reasoning}\n\n` : ""}*This is a real-time update from the planning agent.*`,
+      content: `🤖 **Agent Response** (${currentStage})\n\n${messageContent}\n\n${reasoning ? `**Reasoning Process:**\n${reasoning}\n\n` : ""}*Data source: WebSocket real-time update*`,
       sender: "ai",
       timestamp: new Date(),
       mode: "plan",
       response_type: "text"
     }
     
+    console.log("➕ Adding message to chat from WebSocket")
     setMessages((prev) => [...prev, updateMessage])
     
     // Update planning state
@@ -283,111 +316,90 @@ function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHan
       })
   }
   
-  // Update session state
-  setPlanningSession({
-    is_active: true,
-    is_waiting_for_approval: Boolean(state.is_waiting_for_approval),
-    pending_approval: (state.pending_approval as Record<string, unknown>) || undefined,
+  // Update session state with current stage (preserve session continuity)
+  safeUpdateSession(setPlanningSession, {
+    current_stage: currentStage,
     last_activity: new Date()
-  })
+  }, "planning_update")
 }
 
 /**
- * Handles approval request events
+ * Handles approval request events from WebSocket
  * @param data Approval request data
  * @param context Message handler context
  */
 function handlePlanningApprovalRequest(data: Record<string, unknown>, context: MessageHandlerContext): void {
   const { setMessages, setPlanningSession } = context
   
-  console.log("⚠️ Planning approval request:", data)
+  console.log("⚠️ Planning approval request from WebSocket:", data)
   
   const approvalMessage: Message = {
     id: (Date.now() + Math.random()).toString(),
-    content: `⚠️ **Approval Required**\n\nStage: ${data.stage || "Unknown"}\n\nThe planning agent requires your approval to continue.\n\n**Please respond with:**\n• "approve" or "yes" to continue\n• "reject" or "no" to modify the approach\n• Provide specific feedback for adjustments\n\n*Status: ${data.status || "waiting"}*`,
+    content: `⚠️ **Approval Required**\n\nStage: ${data.stage || "Unknown"}\n\nThe planning agent requires your approval to continue.\n\n**Please respond with:**\n• "approve" or "yes" to continue\n• "reject" or "no" to modify the approach\n• Provide specific feedback for adjustments\n\n*Status: ${data.status || "waiting"}*\n\n*Data source: WebSocket real-time update*`,
     sender: "ai",
     timestamp: new Date(),
     mode: "plan",
     response_type: "approval"
   }
   
+  console.log("➕ Adding approval message to chat from WebSocket")
   setMessages((prev) => [...prev, approvalMessage])
   
-  // Update session state
-  setPlanningSession({
-    is_active: true,
+  // Update session state (preserve session continuity)
+  safeUpdateSession(setPlanningSession, {
     is_waiting_for_approval: true,
     pending_approval: data,
     last_activity: new Date()
-  })
+  }, "approval_request")
 }
 
 /**
- * Handles planning stream error events
- * @param data Error data from the stream
+ * Handles error events from WebSocket
+ * @param data Error data
  * @param context Message handler context
  */
-function handlePlanningStreamError(data: Record<string, unknown>, context: MessageHandlerContext): void {
+function handlePlanningError(data: Record<string, unknown>, context: MessageHandlerContext): void {
   const { setMessages } = context
   
-  console.error("❌ Planning stream error data:", data)
+  console.log("❌ Planning error from WebSocket:", data)
   
   const errorMessage: Message = {
     id: (Date.now() + Math.random()).toString(),
-    content: `❌ **Planning Stream Error**\n\nError: ${data.error || "Unknown error"}\n\n${data.details ? `Details: ${data.details}\n\n` : ""}The planning process encountered an issue. Please try again or contact support if the problem persists.`,
+    content: `❌ **Planning Error**\n\n${data.message || "Unknown error occurred"}\n\n*Data source: WebSocket real-time update*`,
     sender: "ai",
     timestamp: new Date(),
     mode: "plan",
     response_type: "error"
   }
   
+  console.log("➕ Adding error message to chat from WebSocket")
   setMessages((prev) => [...prev, errorMessage])
 }
 
 /**
- * Parses user approval responses
- * @param message User message to parse
- * @returns Approval response object
+ * Handles session status events from WebSocket
+ * @param data Session status data
+ * @param context Message handler context
  */
-function parseApprovalResponse(message: string): ApprovalResponse {
-  const lowerMessage = message.toLowerCase().trim()
+function handleSessionStatus(data: Record<string, unknown>, context: MessageHandlerContext): void {
+  const { setPlanningSession } = context
   
-  const approvalKeywords = [
-    "approve", "approved", "yes", "y", "ok", "okay", "proceed", "continue", 
-    "go ahead", "looks good", "good", "accept", "accepted", "confirm", "confirmed"
-  ]
+  console.log("📊 Session status update from WebSocket:", data)
   
-  const rejectionKeywords = [
-    "reject", "rejected", "no", "n", "not", "stop", "wait", "pause", "cancel",
-    "don't", "dont", "disagree", "wrong", "incorrect", "change", "modify"
-  ]
-  
-  const hasApprovalKeyword = approvalKeywords.some(keyword => 
-    lowerMessage.includes(keyword) || lowerMessage === keyword
-  )
-  
-  const hasRejectionKeyword = rejectionKeywords.some(keyword => 
-    lowerMessage.includes(keyword) || lowerMessage === keyword
-  )
-  
-  const isApprovalResponse = hasApprovalKeyword || hasRejectionKeyword
-  
-  let approved = false
-  if (hasApprovalKeyword && !hasRejectionKeyword) {
-    approved = true
-  } else if (hasRejectionKeyword && !hasApprovalKeyword) {
-    approved = false
-  } else if (hasApprovalKeyword && hasRejectionKeyword) {
-    approved = false // Default to rejection for safety
-  }
-  
-  const feedback = (lowerMessage.length > 10 && 
-    !approvalKeywords.includes(lowerMessage) && 
-    !rejectionKeywords.includes(lowerMessage)) ? message : undefined
-  
-  return {
-    isApprovalResponse,
-    approved,
-    feedback
+  // Update session state based on status (only update if session is ending)
+  if (!data.is_active) {
+    console.log("📊 Session marked as inactive by backend - preserving session until completion")
+    safeUpdateSession(setPlanningSession, {
+      is_waiting_for_approval: data.is_waiting_for_approval as boolean || false,
+      current_stage: data.current_stage as string || null,
+      last_activity: new Date()
+    }, "session_inactive")
+  } else {
+    // Only update non-critical fields when session is active
+    safeUpdateSession(setPlanningSession, {
+      is_waiting_for_approval: data.is_waiting_for_approval as boolean || false,
+      current_stage: data.current_stage as string || null,
+      last_activity: new Date()
+    }, "session_status_update")
   }
 } 

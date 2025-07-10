@@ -22,7 +22,8 @@ export interface SessionState {
   is_active: boolean
   is_waiting_for_approval: boolean
   pending_approval?: Record<string, unknown>
-  stream_connection?: EventSource | null
+  current_stage?: string | null
+  websocket_connection?: WebSocket | null
   last_activity: Date
 }
 
@@ -34,36 +35,57 @@ export interface AiChatProps {
   onVisualizationGenerated?: (html: string) => void
 }
 
-export interface StreamingConnectionHandlers {
-  onMessage: (event: MessageEvent) => void
-  onError: (error: Event) => void
-  onOpen: () => void
+
+
+// WebSocket types
+export interface WebSocketMessage {
+  type: string
+  data: Record<string, unknown>
+  timestamp?: string
+  session_id: string
 }
 
-export interface StreamingConnectionOptions {
+export interface WebSocketConnectionHandlers {
+  onMessage: (message: WebSocketMessage) => void
+  onError: (error: Event) => void
+  onOpen: () => void
+  onClose: (event: CloseEvent) => void
+}
+
+export interface WebSocketConnectionOptions {
   maxReconnectAttempts?: number
   reconnectDelay?: number
 }
 
-export interface StreamingConnectionInfo {
-  eventSource: EventSource | null
+export interface WebSocketConnectionInfo {
+  websocket: WebSocket | null
   reconnectAttempts: number
   maxReconnectAttempts: number
   reconnectDelay: number
-  onMessage: (event: MessageEvent) => void
+  onMessage: (message: WebSocketMessage) => void
   onError: (error: Event) => void
   onOpen: () => void
+  onClose: (event: CloseEvent) => void
   isReconnecting: boolean
   lastActivity: Date
+  lastPingSent: Date
+  lastPongReceived: Date
   statusCheckInterval?: NodeJS.Timeout
 }
 
-export interface ConnectionStatus {
+export interface WebSocketConnectionStatus {
   connected: boolean
   reconnectAttempts: number
   maxReconnectAttempts: number
   isReconnecting: boolean
   lastActivity: Date
+  lastPingSent: Date
+  lastPongReceived: Date
+  queuedMessages: number
+  timeSinceLastActivity: number
+  timeSinceLastPong: number
+  connectionHealth: string
+  canManualRetry: boolean
 }
 
 export interface ApprovalResponse {
@@ -81,9 +103,9 @@ export interface ChatMode {
 export interface MessageHandlerContext {
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>
-  planningSession: SessionState
+  getPlanningSession: () => SessionState
   setPlanningSession: (updates: Partial<SessionState>) => void
-  datacleanSession: SessionState
+  getDatacleanSession: () => SessionState
   setDatacleanSession: (updates: Partial<SessionState>) => void
   updatePlanFromPlanningState: (state: Record<string, unknown>) => Promise<void>
   updatePlanFromPlanningMessage: (message: string, stage: string) => Promise<void>
@@ -114,6 +136,7 @@ export interface DatacleanResponse {
 export interface PlanningStreamEvent {
   event_type: "update" | "approval_request" | "error" | "heartbeat"
   data: Record<string, unknown>
+  timestamp?: string
 }
 
 export interface ChatSuggestion {

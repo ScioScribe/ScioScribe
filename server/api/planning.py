@@ -1,21 +1,19 @@
 """
 FastAPI endpoints for experiment planning with human-in-the-loop support.
 
-This module provides REST API endpoints with streaming responses, user approval
-mechanisms, and state management for proper frontend integration.
+This module provides WebSocket-based bidirectional communication for real-time
+planning sessions with user approval mechanisms and state management.
 """
 
 import logging
 import uuid
 import json
 from datetime import datetime
-from typing import Dict, List, Any, Optional, AsyncGenerator
+from typing import Dict, List, Any, Optional
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
-from sse_starlette import EventSourceResponse
 from langgraph.checkpoint.memory import MemorySaver
 
 from agents.planning.graph.graph_builder import (
@@ -35,24 +33,71 @@ from config import validate_openai_config
 logger = logging.getLogger(__name__)
 
 # Create router
-router = APIRouter(prefix="/api/planning", tags=["planning-hitl"])
+router = APIRouter(prefix="/api/planning", tags=["planning-websocket"])
 
 # Global instances
 _global_debugger = get_global_debugger()
 _active_graphs: Dict[str, Dict[str, Any]] = {}
+_active_connections: Dict[str, WebSocket] = {}
 
 
-# Request/Response Models
+# WebSocket Message Models
+class WebSocketMessage(BaseModel):
+    """Base WebSocket message structure."""
+    type: str = Field(..., description="Message type")
+    data: Dict[str, Any] = Field(..., description="Message data")
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    session_id: str = Field(..., description="Session identifier")
+
+
+class UserMessage(BaseModel):
+    """User message from frontend."""
+    type: str = Field(default="user_message")
+    data: Dict[str, str] = Field(..., description="Contains 'content' field")
+    session_id: str
+
+
+class PlanningUpdate(BaseModel):
+    """Planning progress update to frontend."""
+    type: str = Field(default="planning_update")
+    data: Dict[str, Any] = Field(..., description="Planning state data")
+    session_id: str
+
+
+class ApprovalRequest(BaseModel):
+    """Approval request to frontend."""
+    type: str = Field(default="approval_request")
+    data: Dict[str, Any] = Field(..., description="Approval details")
+    session_id: str
+
+
+class ApprovalResponse(BaseModel):
+    """Approval response from frontend."""
+    type: str = Field(default="approval_response")
+    data: Dict[str, Any] = Field(..., description="Contains 'approved' and optional 'feedback'")
+    session_id: str
+
+
+class ErrorMessage(BaseModel):
+    """Error message to frontend."""
+    type: str = Field(default="error")
+    data: Dict[str, str] = Field(..., description="Contains 'message' field")
+    session_id: str
+
+
+class SessionStatusMessage(BaseModel):
+    """Session status message."""
+    type: str = Field(default="session_status")
+    data: Dict[str, Any] = Field(..., description="Session status data")
+    session_id: str
+
+
+# Request/Response Models (keeping existing ones for non-WebSocket endpoints)
 class StartHITLPlanningRequest(BaseModel):
     """Request model for starting a new HITL planning session."""
     research_query: str = Field(..., description="Initial research query or idea")
     experiment_id: Optional[str] = Field(None, description="Optional experiment ID")
     user_id: Optional[str] = Field("demo-user", description="User ID for session tracking")
-
-
-class StreamChatRequest(BaseModel):
-    """Request model for sending input to the streaming chat endpoint."""
-    user_input: str = Field(..., description="User's input, which could be a response, an approval, or a command.")
 
 
 class HITLSessionResponse(BaseModel):
@@ -64,13 +109,6 @@ class HITLSessionResponse(BaseModel):
     pending_approval: Optional[Dict[str, Any]] = Field(None, description="Pending approval details")
     streaming_enabled: bool = Field(..., description="Whether streaming is enabled")
     checkpoint_available: bool = Field(..., description="Whether checkpoint is available")
-
-
-class StreamEvent(BaseModel):
-    """Model for streaming events."""
-    event_type: str = Field(..., description="Type of event (update, approval_request, error)")
-    data: Dict[str, Any] = Field(..., description="Event data")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Event timestamp")
 
 
 # Utility Functions
@@ -147,16 +185,23 @@ async def start_hitl_planning_session(request: StartHITLPlanningRequest):
         # Run the graph until it hits an interrupt (approval node)
         current_state = initial_state
         async for event in graph.astream(initial_state, config, stream_mode="values"):
-            current_state = event
-            # Check if we've hit an approval node (interrupt)
-            if _is_waiting_for_approval(current_state):
-                break
+            # Only process non-None events
+            if event is not None:
+                current_state = event
+                # Check if we've hit an approval node (interrupt)
+                if _is_waiting_for_approval(current_state):
+                    break
+        
+        # Ensure current_state is not None
+        if current_state is None:
+            logger.warning("current_state is None, using initial_state as fallback")
+            current_state = initial_state
         
         # Check if we're interrupted before an approval node
         if not _is_waiting_for_approval(current_state):
             try:
                 state_snapshot = await graph.aget_state(config)
-                if state_snapshot.next and any("approval" in str(node) for node in state_snapshot.next):
+                if state_snapshot and state_snapshot.next and any("approval" in str(node) for node in state_snapshot.next):
                     # We're interrupted before an approval node, but check if it's already approved
                     next_node = str(state_snapshot.next[0]) if state_snapshot.next else ""
                     stage_name = next_node.replace("_approval", "") if "_approval" in next_node else "unknown"
@@ -196,182 +241,285 @@ async def start_hitl_planning_session(request: StartHITLPlanningRequest):
         raise HTTPException(status_code=500, detail=f"Failed to start planning session: {str(e)}")
 
 
-@router.post("/stream/chat/{session_id}")
-@router.get("/stream/chat/{session_id}")
-async def stream_chat(session_id: str, request: Request):
+# WebSocket endpoint for bidirectional communication
+@router.websocket("/ws/{session_id}")
+async def websocket_planning_session(websocket: WebSocket, session_id: str):
     """
-    Handles all user interactions for a session, streaming back the agent's response.
-    
-    GET: Establishes EventSource connection for receiving streaming updates
-    POST: Sends user input and streams back the agent's response
+    WebSocket endpoint for real-time bidirectional planning communication.
+    Handles user messages, planning updates, and approval workflows.
     """
-    import asyncio
+    await websocket.accept()
+    _active_connections[session_id] = websocket
     
-    async def event_generator():
-        try:
-            graph_components = _get_or_create_graph_components(session_id)
-            graph = graph_components["graph"]
-            config = graph_components["config"]
-
-            # Get the state before this interaction
-            current_state = await _get_current_state(session_id)
-            if not current_state:
-                error_event = StreamEvent(
-                    event_type="error",
-                    data={"error": f"Session {session_id} not found or no state available."}
-                )
-                yield f"data: {error_event.json()}\n\n"
-                return
-
-            # Check if this is a POST request with user input
-            stream_request = None
-            if request.method == "POST":
-                try:
-                    body = await request.json()
-                    stream_request = StreamChatRequest(**body)
-                except Exception as e:
-                    logger.error(f"Failed to parse request body: {e}")
-                    error_event = StreamEvent(
-                        event_type="error",
-                        data={"error": f"Failed to parse request body: {str(e)}"}
-                    )
-                    yield f"data: {error_event.json()}\n\n"
-                    return
-
-            if request.method == "POST" and stream_request and stream_request.user_input:
-                was_waiting_for_approval = _is_waiting_for_approval(current_state)
-
-                # Add user message to state and clear pending approval flag
-                updated_state = add_chat_message(current_state, "user", stream_request.user_input)
-                if "pending_approval" in updated_state and updated_state["pending_approval"]:
-                    updated_state["pending_approval"] = None
-
-                # Update the state in the checkpoint
-                await graph.aupdate_state(config, updated_state)
-
-                # If we were waiting for approval, resume from the approval node
-                # Otherwise, continue with the updated state
-                if was_waiting_for_approval:
-                    # Resume from approval node - don't re-inject state
-                    graph_input = None
-                    logger.info(f"Resuming from approval node for session {session_id}")
+    logger.info(f"WebSocket connection established for session {session_id}")
+    
+    try:
+        # Send initial session status
+        await _send_session_status(websocket, session_id)
+        
+        # Send initial state if session exists
+        current_state = await _get_current_state(session_id)
+        if current_state:
+            await _send_planning_update(websocket, session_id, current_state)
+            
+            # If waiting for approval, send approval request
+            if _is_waiting_for_approval(current_state):
+                await _send_approval_request(websocket, session_id, current_state.get("pending_approval", {}))
+        
+        # Listen for messages from frontend
+        while True:
+            try:
+                # Receive message from frontend
+                message_data = await websocket.receive_text()
+                message = json.loads(message_data)
+                
+                logger.info(f"Received WebSocket message: {message}")
+                
+                # Route message based on type
+                if message.get("type") == "user_message":
+                    await _handle_user_message(websocket, session_id, message)
+                elif message.get("type") == "approval_response":
+                    await _handle_approval_response(websocket, session_id, message)
+                elif message.get("type") == "ping":
+                    await _send_websocket_message(websocket, {
+                        "type": "pong",
+                        "data": {"timestamp": datetime.utcnow().isoformat()},
+                        "session_id": session_id
+                    })
                 else:
-                    # Continue with updated state
-                    graph_input = updated_state
-                    logger.info(f"Continuing with updated state for session {session_id}")
-
-                # Resume execution and stream updates until next approval or completion
-                async for event in graph.astream(graph_input, config, stream_mode="values"):
-                    # The event is the state after each node execution
-                    current_state = event
+                    logger.warning(f"Unknown message type: {message.get('type')}")
                     
-                    # Serialize and send the state update
-                    try:
-                        serialized_output = serialize_state_to_dict(current_state)
-                    except (SerializationError, TypeError) as e:
-                        logger.warning(f"Could not serialize state update: {e}")
-                        serialized_output = {"error": "Serialization failed", "details": str(e)}
+            except WebSocketDisconnect:
+                logger.info(f"WebSocket disconnected for session {session_id}")
+                break
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON received: {e}")
+                await _send_error_message(websocket, session_id, "Invalid JSON format")
+            except Exception as e:
+                logger.error(f"Error processing WebSocket message: {e}")
+                await _send_error_message(websocket, session_id, f"Error processing message: {str(e)}")
+                
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket connection closed for session {session_id}")
+    except Exception as e:
+        logger.error(f"WebSocket error for session {session_id}: {e}")
+    finally:
+        # Clean up connection
+        if session_id in _active_connections:
+            del _active_connections[session_id]
+        logger.info(f"Cleaned up WebSocket connection for session {session_id}")
 
-                    stream_event = StreamEvent(
-                        event_type="update",
-                        data={"state": serialized_output}
-                    )
-                    yield f"data: {stream_event.json()}\n\n"
+
+# WebSocket helper functions
+async def _send_websocket_message(websocket: WebSocket, message: Dict[str, Any]):
+    """Send a message via WebSocket."""
+    try:
+        await websocket.send_text(json.dumps(message))
+    except Exception as e:
+        logger.error(f"Failed to send WebSocket message: {e}")
+
+
+async def _send_session_status(websocket: WebSocket, session_id: str):
+    """Send session status to frontend."""
+    try:
+        current_state = await _get_current_state(session_id)
+        status_data = {
+            "session_id": session_id,
+            "is_active": current_state is not None,
+            "current_stage": current_state.get("current_stage") if current_state else None,
+            "is_waiting_for_approval": _is_waiting_for_approval(current_state) if current_state else False
+        }
+        
+        await _send_websocket_message(websocket, {
+            "type": "session_status",
+            "data": status_data,
+            "session_id": session_id
+        })
+    except Exception as e:
+        logger.error(f"Failed to send session status: {e}")
+
+
+async def _send_planning_update(websocket: WebSocket, session_id: str, state: ExperimentPlanState):
+    """Send planning state update to frontend."""
+    try:
+        serialized_state = serialize_state_to_dict(state)
+        await _send_websocket_message(websocket, {
+            "type": "planning_update",
+            "data": {"state": serialized_state},
+            "session_id": session_id
+        })
+    except Exception as e:
+        logger.error(f"Failed to send planning update: {e}")
+
+
+async def _send_approval_request(websocket: WebSocket, session_id: str, approval_data: Dict[str, Any]):
+    """Send approval request to frontend."""
+    try:
+        await _send_websocket_message(websocket, {
+            "type": "approval_request",
+            "data": approval_data,
+            "session_id": session_id
+        })
+    except Exception as e:
+        logger.error(f"Failed to send approval request: {e}")
+
+
+async def _send_error_message(websocket: WebSocket, session_id: str, error_message: str):
+    """Send error message to frontend."""
+    try:
+        await _send_websocket_message(websocket, {
+            "type": "error",
+            "data": {"message": error_message},
+            "session_id": session_id
+        })
+    except Exception as e:
+        logger.error(f"Failed to send error message: {e}")
+
+
+async def _handle_user_message(websocket: WebSocket, session_id: str, message: Dict[str, Any]):
+    """Handle user message from frontend."""
+    try:
+        user_input = message.get("data", {}).get("content", "")
+        if not user_input:
+            await _send_error_message(websocket, session_id, "Empty user message")
+            return
+            
+        logger.info(f"Processing user message for session {session_id}: {user_input}")
+        
+        graph_components = _get_or_create_graph_components(session_id)
+        graph = graph_components["graph"]
+        config = graph_components["config"]
+
+        # Get current state
+        current_state = await _get_current_state(session_id)
+        if not current_state:
+            await _send_error_message(websocket, session_id, "Session not found")
+            return
+
+        # Add user message to state
+        updated_state = add_chat_message(current_state, "user", user_input)
+        await graph.aupdate_state(config, updated_state)
+
+        # Process the message and stream updates
+        await _process_planning_execution(websocket, session_id, updated_state, graph, config)
+        
+    except Exception as e:
+        logger.error(f"Error handling user message: {e}")
+        await _send_error_message(websocket, session_id, f"Error processing message: {str(e)}")
+
+
+async def _handle_approval_response(websocket: WebSocket, session_id: str, message: Dict[str, Any]):
+    """Handle approval response from frontend."""
+    try:
+        approval_data = message.get("data", {})
+        approved = approval_data.get("approved", False)
+        feedback = approval_data.get("feedback", "")
+        
+        logger.info(f"Processing approval response for session {session_id}: approved={approved}")
+        
+        graph_components = _get_or_create_graph_components(session_id)
+        graph = graph_components["graph"]
+        config = graph_components["config"]
+
+        # Get current state
+        current_state = await _get_current_state(session_id)
+        if not current_state:
+            await _send_error_message(websocket, session_id, "Session not found")
+            return
+
+        # Handle approval
+        if _is_waiting_for_approval(current_state):
+            # Clear pending approval and mark stage as approved/rejected
+            pending_approval = current_state.get("pending_approval", {})
+            stage = pending_approval.get("stage")
+            
+            updated_state = current_state.copy()
+            updated_state["pending_approval"] = None
+            
+            if stage:
+                approvals = updated_state.get("approvals", {})
+                approvals[stage] = approved
+                updated_state["approvals"] = approvals
+                logger.info(f"Marked stage {stage} as {'approved' if approved else 'rejected'}")
+            
+            # Add approval response to chat history
+            approval_message = f"{'Approved' if approved else 'Rejected'}"
+            if feedback:
+                approval_message += f": {feedback}"
+            updated_state = add_chat_message(updated_state, "user", approval_message)
+            
+            await graph.aupdate_state(config, updated_state)
+            
+            # Continue processing if approved
+            if approved:
+                await _process_planning_execution(websocket, session_id, updated_state, graph, config, resume_from_approval=True)
+            else:
+                # Send rejection confirmation
+                await _send_planning_update(websocket, session_id, updated_state)
+        else:
+            await _send_error_message(websocket, session_id, "No pending approval to respond to")
+            
+    except Exception as e:
+        logger.error(f"Error handling approval response: {e}")
+        await _send_error_message(websocket, session_id, f"Error processing approval: {str(e)}")
+
+
+async def _process_planning_execution(websocket: WebSocket, session_id: str, state: ExperimentPlanState, 
+                                    graph, config, resume_from_approval: bool = False):
+    """Execute planning graph and stream updates via WebSocket."""
+    try:
+        final_state = state
+        
+        # Execute graph and stream updates
+        if resume_from_approval:
+            # Resume from approval node
+            logger.info("Resuming planning execution from approval node")
+            async for event in graph.astream(None, config, stream_mode="values"):
+                if event is not None:
+                    final_state = event
+                    await _send_planning_update(websocket, session_id, final_state)
                     
-                    # Check if we've reached another approval node
-                    if _is_waiting_for_approval(current_state):
-                        logger.info(f"Reached approval node for session {session_id}")
+                    # Check if we've reached another approval point
+                    if _is_waiting_for_approval(final_state):
+                        await _send_approval_request(websocket, session_id, final_state.get("pending_approval", {}))
+                        break
+        else:
+            # Continue with normal processing
+            logger.info("Starting new planning execution")
+            async for event in graph.astream(state, config, stream_mode="values"):
+                if event is not None:
+                    final_state = event
+                    await _send_planning_update(websocket, session_id, final_state)
+                    
+                    if _is_waiting_for_approval(final_state):
+                        await _send_approval_request(websocket, session_id, final_state.get("pending_approval", {}))
                         break
 
-                # After the stream is done, check if we are waiting for another approval
-                final_state = await _get_current_state(session_id)
-                
-                # Check if we're interrupted before an approval node
-                if not _is_waiting_for_approval(final_state):
-                    try:
-                        state_snapshot = await graph.aget_state(config)
-                        if state_snapshot.next and any("approval" in str(node) for node in state_snapshot.next):
-                            # We're interrupted before an approval node, but check if it's already approved
-                            next_node = str(state_snapshot.next[0]) if state_snapshot.next else ""
-                            stage_name = next_node.replace("_approval", "") if "_approval" in next_node else "unknown"
-                            
-                            # Only set pending_approval if the stage hasn't been approved yet
-                            approvals = final_state.get('approvals', {})
-                            if not approvals.get(stage_name, False):
-                                final_state["pending_approval"] = {
-                                    "stage": stage_name,
-                                    "timestamp": datetime.utcnow().isoformat(),
-                                    "status": "waiting"
-                                }
-                                
-                                # Update the state in the checkpoint
-                                await graph.aupdate_state(config, final_state)
-                                
-                                logger.info(f"Set pending_approval for stage: {stage_name}")
-                            else:
-                                logger.info(f"Stage {stage_name} already approved, not setting pending_approval")
-                    except Exception as e:
-                        logger.warning(f"Failed to check/set pending_approval: {e}")
-                
-                # Send approval request if we're waiting for approval
-                if _is_waiting_for_approval(final_state):
-                    approval_event = StreamEvent(
-                        event_type="approval_request",
-                        data=final_state.get("pending_approval", {})
-                    )
-                    yield f"data: {approval_event.json()}\n\n"
-            else:
-                # This is a GET request (EventSource connection)
-                # Send current state as initial event
-                try:
-                    serialized_output = serialize_state_to_dict(current_state)
-                    initial_event = StreamEvent(
-                        event_type="update",
-                        data={"state": serialized_output}
-                    )
-                    yield f"data: {initial_event.json()}\n\n"
+        # Check if we need to set pending approval for the next stage
+        if not _is_waiting_for_approval(final_state):
+            try:
+                state_snapshot = await graph.aget_state(config)
+                if state_snapshot and state_snapshot.next and any("approval" in str(node) for node in state_snapshot.next):
+                    next_node = str(state_snapshot.next[0]) if state_snapshot.next else ""
+                    stage_name = next_node.replace("_approval", "") if "_approval" in next_node else "unknown"
                     
-                    # If waiting for approval, send approval request
-                    if _is_waiting_for_approval(current_state):
-                        approval_event = StreamEvent(
-                            event_type="approval_request",
-                            data=current_state.get("pending_approval", {})
-                        )
-                        yield f"data: {approval_event.json()}\n\n"
-                        
-                except (SerializationError, TypeError) as e:
-                    logger.warning(f"Could not serialize current state: {e}")
-                    error_event = StreamEvent(
-                        event_type="error",
-                        data={"error": "Failed to serialize current state", "details": str(e)}
-                    )
-                    yield f"data: {error_event.json()}\n\n"
+                    # Only set pending_approval if the stage hasn't been approved yet
+                    approvals = final_state.get('approvals', {})
+                    if not approvals.get(stage_name, False):
+                        final_state["pending_approval"] = {
+                            "stage": stage_name,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "status": "waiting"
+                        }
+                        await graph.aupdate_state(config, final_state)
+                        await _send_approval_request(websocket, session_id, final_state["pending_approval"])
+                        logger.info(f"Set pending approval for stage: {stage_name}")
+            except Exception as e:
+                logger.warning(f"Failed to check/set pending approval: {e}")
                 
-                # Keep the connection alive for EventSource
-                # The connection should stay open until the client disconnects
-                # We'll use a simple approach: wait indefinitely but allow for graceful shutdown
-                try:
-                    # Create a future that will never complete unless cancelled
-                    wait_forever = asyncio.Future()
-                    await wait_forever
-                except asyncio.CancelledError:
-                    # Connection was closed by client
-                    logger.info(f"EventSource connection closed for session {session_id}")
-                    return
-                except Exception as e:
-                    # Any other error should close the connection
-                    logger.warning(f"EventSource connection error for session {session_id}: {e}")
-                    return
-
-        except Exception as e:
-            logger.error(f"Streaming chat error for session {session_id}: {e}", exc_info=True)
-            error_event = StreamEvent(
-                event_type="error",
-                data={"error": f"An unexpected error occurred: {str(e)}"}
-            )
-            yield f"data: {error_event.json()}\n\n"
-
-    return EventSourceResponse(event_generator())
+    except Exception as e:
+        logger.error(f"Error in planning execution: {e}")
+        await _send_error_message(websocket, session_id, f"Planning execution error: {str(e)}")
 
 
 @router.get("/session/{session_id}", response_model=HITLSessionResponse)
@@ -423,9 +571,9 @@ async def delete_hitl_session(session_id: str):
 
 
 @router.get("/health")
-async def hitl_health_check():
+async def websocket_health_check():
     """
-    Health check endpoint for the HITL planning system.
+    Health check endpoint for the WebSocket planning system.
     """
     try:
         # Check OpenAI configuration
@@ -439,16 +587,19 @@ async def hitl_health_check():
             "openai_status": openai_status,
             "checkpoint_status": checkpoint_status,
             "active_sessions": len(_active_graphs),
+            "active_connections": len(_active_connections),
             "features": [
                 "Human-in-the-loop approval",
-                "Real-time streaming via single endpoint",
+                "Real-time bidirectional WebSocket communication",
                 "State checkpointing",
-                "Session persistence"
+                "Session persistence",
+                "Streaming planning updates",
+                "Interactive approval workflows"
             ]
         }
         
     except Exception as e:
-        logger.error(f"HITL health check failed: {str(e)}")
+        logger.error(f"WebSocket health check failed: {str(e)}")
         return {
             "status": "unhealthy",
             "error": str(e)
