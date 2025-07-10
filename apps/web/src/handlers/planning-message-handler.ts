@@ -269,9 +269,18 @@ function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHan
   
   const state = (data.state as Record<string, unknown>) || {}
   const currentStage = (state.current_stage as string) || "unknown"
-  const reasoning = (state.reasoning as string) || ""
   const chatHistory = (state.chat_history as Array<unknown>) || []
   
+  // Update planning state for text editor (this handles the state variable)
+  updatePlanFromPlanningState(state)
+    .then(() => {
+      console.log("📥 UPDATE PLAN FROM PLANNING STATE: Success")
+    })
+    .catch(error => {
+      console.error("❌ Failed to update plan from planning state:", error)
+    })
+  
+  // Extract and render ONLY the clean agent response message for chat
   // The backend stores messages using `role: "assistant"`, whereas older
   // frontend logic expected `sender: "ai"`. Support both shapes so we
   // reliably surface agent updates regardless of schema.
@@ -284,35 +293,36 @@ function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHan
   
   if (latestAiMessage && latestAiMessage.content) {
     const messageContent = latestAiMessage.content as string
-    console.log("💬 Creating chat message from WebSocket update:", messageContent.substring(0, 100))
+    console.log("💬 Checking if message should be added to chat:", messageContent.substring(0, 100))
     
-    const updateMessage: Message = {
-      id: (Date.now() + Math.random()).toString(),
-      content: `🤖 **Agent Response** (${currentStage})\n\n${messageContent}\n\n${reasoning ? `**Reasoning Process:**\n${reasoning}\n\n` : ""}*Data source: WebSocket real-time update*`,
-      sender: "ai",
-      timestamp: new Date(),
-      mode: "plan",
-      response_type: "text"
-    }
-    
-    console.log("➕ Adding message to chat from WebSocket")
-    setMessages((prev) => [...prev, updateMessage])
-    
-    // Update planning state
-    updatePlanFromPlanningState(state)
-      .then(() => {
-        console.log("📥 UPDATE PLAN FROM PLANNING STATE: Success")
-      })
-      .catch(error => {
-        console.error("❌ Failed to update plan from planning state:", error)
-      })
-    
-    // We no longer append unstructured agent messages to the plan text.
-    // The plan editor now mirrors the latest planning state as JSON to
-    // maintain a valid, machine-readable representation that can be
-    // consumed programmatically or copied by users. If you need to
-    // surface conversational context, consider storing it separately
-    // from the canonical planning document.
+    // Check if this message has already been displayed to prevent duplicates
+    setMessages((prev) => {
+      // Check if a message with similar content already exists in recent messages
+      const recentMessages = prev.slice(-5) // Check last 5 messages
+      const isDuplicate = recentMessages.some(msg => 
+        msg.sender === "ai" && 
+        msg.content === messageContent &&
+        msg.mode === "plan"
+      )
+      
+      if (isDuplicate) {
+        console.log("⏭️ Skipping duplicate message - already displayed")
+        return prev
+      }
+      
+      // Create clean chat message with ONLY the agent response (no state/reasoning)
+      const updateMessage: Message = {
+        id: (Date.now() + Math.random()).toString(),
+        content: messageContent, // Clean agent response only
+        sender: "ai",
+        timestamp: new Date(),
+        mode: "plan",
+        response_type: "text"
+      }
+      
+      console.log("➕ Adding clean agent message to chat")
+      return [...prev, updateMessage]
+    })
   }
   
   // Update session state with current stage (preserve session continuity)

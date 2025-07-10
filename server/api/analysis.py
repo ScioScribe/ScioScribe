@@ -13,10 +13,11 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, FileResponse, Response
 from pydantic import BaseModel, Field
 import aiofiles
+import json
 
 from agents.analysis.agent import AnalysisAgent, create_analysis_agent
 from config import validate_openai_config
@@ -31,6 +32,9 @@ _analysis_agent: Optional[AnalysisAgent] = None
 
 # In-memory storage for analysis sessions (replace with database in production)
 _analysis_sessions: Dict[str, Dict[str, Any]] = {}
+
+# Active WebSocket connections for streaming
+_active_connections: Dict[str, WebSocket] = {}
 
 # Request/Response Models
 class GenerateVisualizationRequest(BaseModel):
@@ -56,6 +60,36 @@ class AnalysisSessionResponse(BaseModel):
     created_at: datetime = Field(..., description="Session creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
     memory: Dict[str, Any] = Field(..., description="Session memory and context")
+
+
+class WebSocketMessage(BaseModel):
+    """Base WebSocket message structure."""
+    type: str = Field(..., description="Message type")
+    data: Dict[str, Any] = Field(..., description="Message data")
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    session_id: str = Field(..., description="Session identifier")
+
+
+class NodeUpdateMessage(BaseModel):
+    """Node update message for streaming."""
+    type: str = Field(default="node_update")
+    data: Dict[str, Any] = Field(..., description="Node execution data")
+    session_id: str
+
+
+class AnalysisCompleteMessage(BaseModel):
+    """Analysis completion message."""
+    type: str = Field(default="analysis_complete")
+    data: Dict[str, Any] = Field(..., description="Final results")
+    session_id: str
+
+
+class StreamingAnalysisRequest(BaseModel):
+    """Request model for streaming analysis."""
+    prompt: str = Field(..., description="Natural language analytical question or visualization request")
+    plan: str = Field(..., description="Experiment plan content as text")
+    csv: str = Field(..., description="CSV data content as text")
+    memory: Optional[Dict[str, Any]] = Field(None, description="Optional memory for iterative refinement")
 
 
 # Utility Functions
@@ -107,7 +141,9 @@ def _create_session(session_id: Optional[str] = None) -> str:
         "created_at": datetime.now(),
         "updated_at": datetime.now(),
         "memory": {},
-        "generated_visualizations": []
+        "generated_visualizations": [],
+        "current_node": None,
+        "node_history": []
     }
     
     _save_session(session_id, session_data)
@@ -501,4 +537,345 @@ async def analysis_health_check():
         return {
             "status": "unhealthy",
             "error": str(e)
-        } 
+        }
+
+
+# WebSocket utility functions
+async def _send_websocket_message(websocket: WebSocket, message: Dict[str, Any]):
+    """Send a message via WebSocket."""
+    try:
+        message_json = json.dumps(message)
+        logger.info(f"📤 Sending WebSocket message: {message.get('type', 'unknown')} - {message_json[:200]}...")
+        await websocket.send_text(message_json)
+        logger.info(f"✅ WebSocket message sent successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to send WebSocket message: {e}")
+        logger.error(f"📊 WebSocket state: {websocket.client_state if hasattr(websocket, 'client_state') else 'unknown'}")
+        raise
+
+
+async def _send_node_update(websocket: WebSocket, session_id: str, node_name: str, node_data: Dict[str, Any]):
+    """Send node execution update to frontend."""
+    try:
+        message = {
+            "type": "node_update",
+            "data": {
+                "node_name": node_name,
+                "node_data": node_data,
+                "timestamp": datetime.utcnow().isoformat()
+            },
+            "session_id": session_id
+        }
+        logger.info(f"🔄 Sending node update for {node_name} ({node_data.get('status', 'unknown')}) to session {session_id}")
+        await _send_websocket_message(websocket, message)
+        logger.info(f"✅ Node update sent successfully for {node_name}")
+    except Exception as e:
+        logger.error(f"❌ Failed to send node update for {node_name}: {e}")
+        raise
+
+
+async def _send_analysis_complete(websocket: WebSocket, session_id: str, result: Dict[str, Any]):
+    """Send analysis completion message to frontend."""
+    try:
+        message = {
+            "type": "analysis_complete",
+            "data": {
+                "result": result,
+                "timestamp": datetime.utcnow().isoformat()
+            },
+            "session_id": session_id
+        }
+        await _send_websocket_message(websocket, message)
+    except Exception as e:
+        logger.error(f"Failed to send analysis complete: {e}")
+
+
+async def _send_error_message(websocket: WebSocket, session_id: str, error_message: str):
+    """Send error message to frontend."""
+    try:
+        message = {
+            "type": "error",
+            "data": {
+                "message": error_message,
+                "timestamp": datetime.utcnow().isoformat()
+            },
+            "session_id": session_id
+        }
+        await _send_websocket_message(websocket, message)
+    except Exception as e:
+        logger.error(f"Failed to send error message: {e}")
+
+
+class StreamingAnalysisAgent:
+    """Wrapper around AnalysisAgent to provide streaming capabilities."""
+    
+    def __init__(self, agent: 'AnalysisAgent'):
+        self.agent = agent
+    
+    async def generate_visualization_streaming(self, 
+                                             user_prompt: str,
+                                             experiment_plan_content: str,
+                                             csv_data_content: str,
+                                             websocket: WebSocket,
+                                             session_id: str,
+                                             memory: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Generate visualization with streaming node updates."""
+        
+        # Initialize state
+        initial_state = {
+            "messages": [],
+            "user_prompt": user_prompt,
+            "experiment_plan_content": experiment_plan_content,
+            "csv_data_content": csv_data_content,
+            "memory": memory or {},
+            "plan_text": "",
+            "structured_plan": {},
+            "data_schema": {},
+            "data_sample": [],
+            "chart_specification": {},
+            "plot_image_path": "",
+            "plot_html_path": "",
+            "plot_png_path": "",
+            "html_content": "",
+            "llm_code_used": "",
+            "warnings": [],
+            "explanation": "",
+            "error_message": ""
+        }
+        
+        # Stream through the LangGraph execution with node updates
+        import asyncio
+        
+        try:
+            # Execute the LangGraph with streaming and capture node transitions
+            logger.info(f"🚀 Starting LangGraph streaming execution for session {session_id}")
+            
+            # Node names mapping for better frontend display
+            node_descriptions = {
+                "input_loader": "Validating input data and experiment plan",
+                "plan_parser": "Analyzing experiment plan and extracting context", 
+                "data_profiler": "Profiling dataset structure and statistical properties",
+                "chart_chooser": "Selecting optimal visualization strategy",
+                "renderer": "Generating interactive visualization code",
+                "response_composer": "Composing insights and explanations"
+            }
+            
+            final_state = initial_state
+            current_node = None
+            
+            # Use LangGraph's streaming capability to get real-time updates
+            async for event in self.agent.graph.astream(initial_state, stream_mode="updates"):
+                if event:
+                    # Each event contains node name and updated state
+                    for node_name, node_output in event.items():
+                        if node_name != current_node:
+                            # New node started
+                            if current_node:
+                                # Mark previous node as completed
+                                await _send_node_update(websocket, session_id, current_node, {
+                                    "status": "completed", 
+                                    "description": f"{node_descriptions.get(current_node, current_node)} completed successfully"
+                                })
+                                await asyncio.sleep(0.2)
+                            
+                            # Mark new node as starting
+                            current_node = node_name
+                            logger.info(f"🔄 Starting node: {node_name} for session {session_id}")
+                            await _send_node_update(websocket, session_id, node_name, {
+                                "status": "starting", 
+                                "description": node_descriptions.get(node_name, f"Processing {node_name}")
+                            })
+                            await asyncio.sleep(0.3)
+                        
+                        # Update the state with the latest output
+                        if isinstance(node_output, dict):
+                            final_state.update(node_output)
+            
+            # Mark the final node as completed
+            if current_node:
+                await _send_node_update(websocket, session_id, current_node, {
+                    "status": "completed", 
+                    "description": f"{node_descriptions.get(current_node, current_node)} completed successfully"
+                })
+                await asyncio.sleep(0.2)
+                logger.info(f"✅ Completed final node: {current_node} for session {session_id}")
+            
+            # Build final response
+            html_content = final_state.get("html_content", "")
+            chart_spec = final_state.get("chart_specification", {})
+            structured_plan = final_state.get("structured_plan", {})
+            data_schema = final_state.get("data_schema", {})
+            warnings = final_state.get("warnings", [])
+            
+            response_message = self.agent._build_specific_response_message(
+                user_prompt=user_prompt,
+                chart_spec=chart_spec,
+                structured_plan=structured_plan,
+                data_schema=data_schema,
+                html_content=html_content,
+                warnings=warnings
+            )
+            
+            final_result = {
+                "html_content": html_content,
+                "explanation": response_message,
+                "memory": final_state.get("memory", {}),
+                "llm_code_used": final_state.get("llm_code_used", ""),
+                "warnings": warnings
+            }
+            
+            # Send completion message
+            await _send_analysis_complete(websocket, session_id, final_result)
+            
+            return final_result
+            
+        except Exception as e:
+            error_msg = f"Analysis failed: {str(e)}"
+            logger.error(f"Streaming analysis error: {error_msg}")
+            await _send_error_message(websocket, session_id, error_msg)
+            raise
+
+
+# Global streaming agent instance
+_streaming_agent: Optional[StreamingAnalysisAgent] = None
+
+
+def _get_streaming_analysis_agent() -> StreamingAnalysisAgent:
+    """Get or create the global streaming analysis agent instance."""
+    global _streaming_agent
+    
+    if _streaming_agent is None:
+        base_agent = _get_analysis_agent()
+        _streaming_agent = StreamingAnalysisAgent(base_agent)
+        logger.info("✅ Streaming analysis agent initialized successfully")
+    
+    return _streaming_agent
+
+
+# WebSocket endpoint for streaming analysis
+@router.websocket("/ws/{session_id}")
+async def websocket_analysis_session(websocket: WebSocket, session_id: str):
+    """
+    WebSocket endpoint for real-time analysis with node streaming.
+    Provides live updates on analysis progress through each node.
+    """
+    await websocket.accept()
+    _active_connections[session_id] = websocket
+    
+    logger.info(f"WebSocket connection established for analysis session {session_id}")
+    
+    try:
+        # Send initial session status
+        await _send_websocket_message(websocket, {
+            "type": "session_status",
+            "data": {
+                "session_id": session_id,
+                "status": "connected",
+                "message": "WebSocket connection established for analysis streaming"
+            },
+            "session_id": session_id
+        })
+        
+        logger.info(f"📊 Analysis WebSocket session {session_id} initialized and ready")
+        
+        # Listen for messages from frontend
+        while True:
+            try:
+                # Receive message from frontend
+                message_data = await websocket.receive_text()
+                message = json.loads(message_data)
+                
+                logger.info(f"Received WebSocket message: {message}")
+                
+                # Route message based on type
+                if message.get("type") == "analysis_request":
+                    await _handle_streaming_analysis_request(websocket, session_id, message)
+                elif message.get("type") == "ping":
+                    await _send_websocket_message(websocket, {
+                        "type": "pong",
+                        "data": {"timestamp": datetime.utcnow().isoformat()},
+                        "session_id": session_id
+                    })
+                else:
+                    logger.warning(f"Unknown message type: {message.get('type')}")
+                    
+            except WebSocketDisconnect:
+                logger.info(f"WebSocket disconnected for session {session_id}")
+                break
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON received: {e}")
+                await _send_error_message(websocket, session_id, "Invalid JSON format")
+            except Exception as e:
+                logger.error(f"Error processing WebSocket message: {e}")
+                await _send_error_message(websocket, session_id, f"Error processing message: {str(e)}")
+                
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket connection closed for session {session_id}")
+    except Exception as e:
+        logger.error(f"WebSocket error for session {session_id}: {e}")
+    finally:
+        # Clean up connection
+        if session_id in _active_connections:
+            del _active_connections[session_id]
+        logger.info(f"Cleaned up WebSocket connection for session {session_id}")
+
+
+async def _handle_streaming_analysis_request(websocket: WebSocket, session_id: str, message: Dict[str, Any]):
+    """Handle streaming analysis request from frontend."""
+    try:
+        request_data = message.get("data", {})
+        user_prompt = request_data.get("prompt", "")
+        plan = request_data.get("plan", "")
+        csv = request_data.get("csv", "")
+        memory = request_data.get("memory", {})
+        
+        if not user_prompt:
+            await _send_error_message(websocket, session_id, "Empty analysis prompt")
+            return
+            
+        logger.info(f"Processing streaming analysis request for session {session_id}: {user_prompt}")
+        
+        # Validate OpenAI configuration
+        if not validate_openai_config():
+            await _send_error_message(websocket, session_id, "OpenAI configuration is invalid. Please check your API key.")
+            return
+        
+        # Get or create session
+        if session_id not in _analysis_sessions:
+            _create_session(session_id)
+        
+        # Get streaming analysis agent
+        agent = _get_streaming_analysis_agent()
+        
+        # Small delay to ensure frontend is ready for streaming updates
+        import asyncio
+        await asyncio.sleep(0.5)
+        logger.info(f"🚀 Starting streaming analysis for session {session_id}")
+        
+        # Process with streaming updates
+        result = await agent.generate_visualization_streaming(
+            user_prompt=user_prompt,
+            experiment_plan_content=plan,
+            csv_data_content=csv,
+            websocket=websocket,
+            session_id=session_id,
+            memory=memory
+        )
+        
+        # Update session data
+        session_data = _analysis_sessions[session_id]
+        session_data["visualizations_generated"] += 1
+        session_data["updated_at"] = datetime.now()
+        session_data["memory"] = result.get("memory", {})
+        session_data["generated_visualizations"].append({
+            "prompt": user_prompt,
+            "generated_at": datetime.now(),
+            "html_content": result.get("html_content", "")
+        })
+        _save_session(session_id, session_data)
+        
+        logger.info(f"✅ Streaming analysis completed for session {session_id}")
+        
+    except Exception as e:
+        logger.error(f"Error handling streaming analysis request: {e}")
+        await _send_error_message(websocket, session_id, f"Analysis error: {str(e)}") 

@@ -368,8 +368,10 @@ export async function uploadCsvFile(csvText: string, experimentId: string = "dem
       }
     }
     console.groupEnd()
-  } catch (logErr) {
-    // silently ignore logging errors (e.g., non-browser env)
+  }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  catch (_err) {
+    /* silently ignore logging errors (e.g., non-browser env) */
   }
 
   const response = await fetch(`${BASE_URL}/process-file-complete`, {

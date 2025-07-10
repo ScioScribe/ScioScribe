@@ -92,3 +92,14 @@ body {
     @apply bg-background text-foreground;
   }
 }
+
+/* Cursor blink animation for typewriter effect */
+@keyframes cursor-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* Ensure smooth scrolling behavior */
+.smooth-scroll {
+  scroll-behavior: smooth;
+}

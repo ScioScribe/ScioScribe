@@ -22,7 +22,6 @@ import {
   connectPlanningSession, 
   sendPlanningMessage, 
   createPlanningHandlers,
-  closePlanningSession,
   retryPlanningConnection
 } from "@/api/planning"
 import { websocketManager } from "@/utils/streaming-connection-manager"
@@ -53,8 +52,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState("disconnected")
-  const [isTyping, setIsTyping] = useState(false)
-  const [typingText, setTypingText] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Get experiment store actions
@@ -115,13 +112,10 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
   const handlePlanningWebSocketMessageWrapper = useCallback((message: WebSocketMessage) => {
     console.log("🎯 Planning WebSocket message received in AiChat:", message)
     
-    // Handle typing indicators and real-time updates
+    // Handle real-time updates
     if (message.type === "planning_update") {
-      setIsTyping(false)
-      setTypingText("")
-    } else if (message.type === "typing") {
-      setIsTyping(true)
-      setTypingText(message.data.text as string || "")
+      // Planning update received, no additional processing needed
+      console.log("📊 Planning update received")
     }
     
     handlePlanningWebSocketMessage(message, messageHandlerContext)
@@ -134,7 +128,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     (error) => {
       console.error("❌ Planning WebSocket error:", error)
       setIsConnected(false)
-      setIsTyping(false)
       
       // Handle different error types
       const errorWithDetails = error as Event & {
@@ -173,7 +166,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       console.log("✅ Planning WebSocket connection opened")
       setIsConnected(true)
       setConnectionStatus("connected")
-      setIsTyping(false)
       
       // Use getter to access current session id
       const currentSession = messageHandlerContext.getPlanningSession()
@@ -191,7 +183,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       console.log("🔒 Planning WebSocket connection closed:", event)
       setIsConnected(false)
       setConnectionStatus(event.wasClean ? "disconnected" : "reconnecting")
-      setIsTyping(false)
       
       if (!event.wasClean) {
         const disconnectMessage: Message = {
@@ -269,8 +260,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         // Wait for connection to open before sending message
         if (connection.readyState === WebSocket.OPEN) {
           // Send initial message
-          setIsTyping(true)
-          setTypingText("Processing your research query...")
           sendPlanningMessage(sessionResponse.session_id, message)
         } else {
           // Queue message for when connection opens
@@ -297,15 +286,10 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         // message type instead of being mis-classified as a standard
         // user message, preventing the backend from restarting the
         // planning graph at the objective stage.
-        setIsTyping(true)
-        setTypingText("Processing your message…")
-
         await handlePlanningMessage(message, messageHandlerContext)
 
         // The handler will queue the message via the WebSocket manager.
         // If it fails we throw to surface the error.
-        setIsTyping(false)
-        setTypingText("")
       }
     } catch (error) {
       console.error("❌ Planning message error:", error)
@@ -545,8 +529,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         selectedMode={selectedMode}
         isConnected={isConnected}
         connectionStatus={connectionStatus}
-        isTyping={isTyping}
-        typingText={typingText}
         lastActivity={planningSession.last_activity}
         onRetryConnection={handleRetryConnection}
       />
