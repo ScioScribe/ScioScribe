@@ -20,6 +20,7 @@ export interface StartConversationRequest {
   artifact_id?: string
   file_path?: string
   csv_data?: string // optional raw CSV string to bootstrap the conversation
+  user_message?: string // optional user message to start the conversation
 }
 
 export interface StartConversationResponse {
@@ -97,7 +98,7 @@ export async function startConversation(request: StartConversationRequest): Prom
     // Use CSV-specific endpoint instead of general conversation endpoint
     const csvRequest = {
       csv_data: request.csv_data || "", // Include CSV if provided
-      user_message: "Hi", // Default greeting message
+      user_message: request.user_message || "Hi", // Use provided message or default greeting
       session_id: request.session_id || `csv-session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       user_id: request.user_id || "demo-user"
     }

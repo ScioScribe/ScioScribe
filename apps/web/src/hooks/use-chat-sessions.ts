@@ -14,7 +14,7 @@ import type { SessionState } from "@/types/chat-types"
 export interface ChatSessionsHookReturn {
   planningSession: SessionState
   datacleanSession: SessionState
-  initializeDatacleanSession: (userId?: string) => Promise<{ session_id: string; response: StartConversationResponse }>
+  initializeDatacleanSession: (userId?: string, initialCsv?: string, userMessage?: string) => Promise<{ session_id: string; response: StartConversationResponse }>
   cleanupPlanningSession: () => void
   cleanupDatacleanSession: () => void
   updatePlanningSession: (updates: Partial<SessionState>) => void
@@ -55,13 +55,14 @@ export function useChatSessions(): ChatSessionsHookReturn {
    * @param userId User ID for the session (defaults to "demo-user")
    * @returns Session ID and response data
    */
-  const initializeDatacleanSession = useCallback(async (userId: string = "demo-user", initialCsv?: string) => {
+  const initializeDatacleanSession = useCallback(async (userId: string = "demo-user", initialCsv?: string, userMessage?: string) => {
     try {
       console.log("🧹 Initializing dataclean session for user:", userId)
       
       const requestBody: StartConversationRequest = {
         user_id: userId,
         csv_data: initialCsv,
+        user_message: userMessage,
       }
       console.log("📤 START CONVERSATION REQUEST:", requestBody)
       

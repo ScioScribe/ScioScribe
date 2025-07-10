@@ -312,7 +312,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       if (!datacleanSession.is_active) {
         console.log("🧹 Initializing dataclean session with CSV integration")
         
-        const sessionResponse = await initializeDatacleanSession("demo-user", csv)
+        const sessionResponse = await initializeDatacleanSession("demo-user", csv, message)
         
         // Create a temporary context with the new session information
         const tempContext = {
@@ -331,45 +331,30 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         if (csv && csv.trim()) {
           const csvWelcomeMessage: Message = {
             id: (Date.now() + 1).toString(),
-            content: `**Data Cleaning Session Started**\n\\n**CSV Data Detected:** I can see you have dataset loaded!\n\nI'm ready to help you with:\n• Data quality analysis\n• Cleaning and fixing issues\n• Removing duplicates\n• Handling missing values\n• Data transformation`,
+            content: `**Data Cleaning Session Started**\n\n**CSV Data Detected:** I can see you have dataset loaded!\n\nI'm ready to help you with:\n• Data quality analysis\n• Cleaning and fixing issues\n• Removing duplicates\n• Handling missing values\n• Data transformation`,
             sender: "ai",
             timestamp: new Date(),
             mode: "execute",
             response_type: "text"
           }
           setMessages((prev) => [...prev, csvWelcomeMessage])
-          
-          // Session initialization already sent the message, so we only need to process the response
-          // The startConversation API call already handles the user message
-          const response = sessionResponse.response as any
-          if (response && response.response_message) {
-            const responseMessage: Message = {
-              id: (Date.now() + 2).toString(),
-              content: `🧹 **Data Cleaning Response**\n\n${response.response_message}`,
-              sender: "ai",
-              timestamp: new Date(),
-              mode: "execute",
-              response_type: "text"
-            }
-            setMessages((prev) => [...prev, responseMessage])
-          }
         } else {
           // Standard welcome without CSV
           createDatacleanWelcomeMessage(sessionResponse.session_id, sessionResponse.response as unknown as Record<string, unknown>, tempContext)
-          
-          // Session initialization already sent the message, so we only need to process the response
-          const response = sessionResponse.response as any
-          if (response && response.response_message) {
-            const responseMessage: Message = {
-              id: (Date.now() + 2).toString(),
-              content: `🧹 **Data Cleaning Response**\n\n${response.response_message}`,
-              sender: "ai",
-              timestamp: new Date(),
-              mode: "execute",
-              response_type: "text"
-            }
-            setMessages((prev) => [...prev, responseMessage])
+        }
+        
+        // Session initialization already sent the user's message, so process the response
+        const response = sessionResponse.response as any
+        if (response && response.response_message) {
+          const responseMessage: Message = {
+            id: (Date.now() + 2).toString(),
+            content: `🧹 **Data Cleaning Response**\n\n${response.response_message}`,
+            sender: "ai",
+            timestamp: new Date(),
+            mode: "execute",
+            response_type: "text"
           }
+          setMessages((prev) => [...prev, responseMessage])
         }
         
         // Update session activity
