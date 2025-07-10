@@ -53,6 +53,7 @@ import logging
 import json
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
+from starlette.websockets import WebSocketState
 
 # Set up module logger
 logger = logging.getLogger(__name__)
@@ -136,9 +137,17 @@ class ConversationMessageResponseModel(BaseModel):
 
 # === Helper functions for WebSocket communication ===
 async def _send_ws_message(websocket: WebSocket, payload: Dict[str, Any]):
-    """Serialize and send a dictionary payload via WebSocket."""
+    """Safely serialize and send a payload via WebSocket, skipping if closed."""
     try:
-        await websocket.send_text(json.dumps(payload))
+        if (
+            websocket.application_state == WebSocketState.CONNECTED
+            and websocket.client_state == WebSocketState.CONNECTED
+        ):
+            await websocket.send_text(json.dumps(payload))
+        else:
+            logger.debug("WebSocket not connected; skipping send of %s", payload.get("type"))
+    except RuntimeError as exc:
+        logger.warning("WebSocket send after close: %s", exc)
     except Exception as exc:
         logger.error(f"Failed to send WebSocket message: {exc}")
 
@@ -273,6 +282,13 @@ async def websocket_conversation_session(websocket: WebSocket, session_id: str):
                 logger.error(f"JSON decode error: {exc}")
             except Exception as exc:
                 logger.error(f"Unhandled WebSocket error: {exc}")
+                if (
+                    websocket.application_state != WebSocketState.CONNECTED
+                    or websocket.client_state != WebSocketState.CONNECTED
+                ):
+                    logger.info("WebSocket closed; ending dataclean loop for session %s", session_id)
+                    break
+
                 await _send_error_message(websocket, session_id, f"Server error: {str(exc)}")
     finally:
         # Clean up stored connection
@@ -326,6 +342,13 @@ async def websocket_csv_conversation(websocket: WebSocket, session_id: str):
                 logger.error(f"JSON decode error: {exc}")
             except Exception as exc:
                 logger.error(f"Unhandled CSV WebSocket error: {exc}")
+                if (
+                    websocket.application_state != WebSocketState.CONNECTED
+                    or websocket.client_state != WebSocketState.CONNECTED
+                ):
+                    logger.info("WebSocket closed; ending CSV loop for session %s", session_id)
+                    break
+
                 await _send_error_message(websocket, session_id, f"Server error: {str(exc)}")
                 
     finally:

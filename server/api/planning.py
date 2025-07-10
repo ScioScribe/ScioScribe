@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from langgraph.checkpoint.memory import MemorySaver
+from starlette.websockets import WebSocketState
 
 from agents.planning.graph.graph_builder import (
     create_planning_graph,
@@ -413,7 +414,24 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
                 await _send_error_message(websocket, session_id, "Invalid JSON format")
             except Exception as e:
                 logger.error(f"Error processing WebSocket message: {e}")
-                await _send_error_message(websocket, session_id, f"Error processing message: {str(e)}")
+
+                # If the connection has already been closed on either side
+                # we should exit the loop and clean-up instead of logging
+                # the same error repeatedly.
+                if (
+                    websocket.application_state != WebSocketState.CONNECTED
+                    or websocket.client_state != WebSocketState.CONNECTED
+                ):
+                    logger.info(
+                        "WebSocket no longer connected; ending session loop to avoid log spam."
+                    )
+                    break
+
+                # Attempt to relay the error to the client (will be silently
+                # skipped if the socket is indeed closed).
+                await _send_error_message(
+                    websocket, session_id, f"Error processing message: {str(e)}"
+                )
                 
     except WebSocketDisconnect:
         logger.info(f"WebSocket connection closed for session {session_id}")
@@ -428,11 +446,38 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
 
 # WebSocket helper functions
 async def _send_websocket_message(websocket: WebSocket, message: Dict[str, Any]):
-    """Send a message via WebSocket."""
+    """Safely send a message via WebSocket.
+
+    This helper now checks the application/client connection state before
+    attempting to send.  If the socket is already closed (for instance, when
+    the user refreshes the page or the session ends) we silently skip the
+    send to avoid noisy runtime errors like:
+
+        RuntimeError: WebSocket is not connected. Need to call "accept" first.
+
+    or
+
+        RuntimeError: Cannot call "send" once a close message has been sent.
+
+    Any failure to send is therefore downgraded to a warning so the planning
+    graph can continue/terminate gracefully without spamming the logs.
+    """
+
     try:
-        await websocket.send_text(json.dumps(message))
-    except Exception as e:
-        logger.error(f"Failed to send WebSocket message: {e}")
+        # Only attempt to send if the socket is still connected on both sides.
+        if (
+            websocket.application_state == WebSocketState.CONNECTED
+            and websocket.client_state == WebSocketState.CONNECTED
+        ):
+            await websocket.send_text(json.dumps(message))
+        else:
+            # Socket has already been closed – skip sending to prevent errors.
+            logger.debug("WebSocket not connected, skipping send.")
+    except RuntimeError as exc:
+        # Typical Starlette error once a close frame has been sent.
+        logger.warning(f"WebSocket send failed – connection already closed: {exc}")
+    except Exception as exc:
+        logger.error(f"Failed to send WebSocket message: {exc}")
 
 
 async def _send_session_status(websocket: WebSocket, session_id: str):
