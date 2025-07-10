@@ -141,12 +141,12 @@ class LLMManager:
             },
             "methodology": {
                 "temperature": 0.4,
-                "max_tokens": 2500,
+                "max_tokens": 4000,
                 "model": self.settings.openai_model
             },
             "data": {
                 "temperature": 0.5,
-                "max_tokens": 2000,
+                "max_tokens": 3000,
                 "model": self.settings.openai_model
             },
             "review": {

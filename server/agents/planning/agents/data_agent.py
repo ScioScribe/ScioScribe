@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
+from langchain_core.exceptions import OutputParserException
 
 from .base_agent import BaseAgent
 from ..state import ExperimentPlanState
@@ -47,7 +48,8 @@ class DataAgent(BaseAgent):
             log_level=log_level
         )
         from ..llm_config import get_llm
-        self.llm = llm or get_llm()
+        # Use higher token limit for data agent to handle comprehensive plans
+        self.llm = llm or get_llm(agent_type="data", max_tokens=3000)
         self.logger.info("DataAgent initialized for data planning stage")
 
     def _create_context_for_llm(self, state: ExperimentPlanState) -> Dict[str, Any]:
@@ -72,26 +74,28 @@ class DataAgent(BaseAgent):
             "chat_history": self._format_chat_history(state.get('chat_history', [])),
         }
 
-    def process_state(self, state: ExperimentPlanState) -> ExperimentPlanState:
+    def _retry_with_fallback(self, state: ExperimentPlanState, max_retries: int = 2) -> ExperimentPlanState:
         """
-        Process the current state to generate a complete data collection and analysis plan.
-        
-        This method invokes an LLM with a structured output model (`DataOutput`)
-        to generate the entire data plan in a single, validated step.
+        Retry data plan generation with progressively simpler approaches.
         
         Args:
-            state: Current experiment plan state.
+            state: Current experiment plan state
+            max_retries: Maximum number of retry attempts
             
         Returns:
-            Updated ExperimentPlanState with the generated data plan.
+            Updated state with data plan or error messages
         """
-        self.logger.info(f"Processing data plan for experiment: {state.get('experiment_id')}")
-
         context = self._create_context_for_llm(state)
         
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", DATA_SYSTEM_PROMPT),
-            ("human", """
+        for attempt in range(max_retries + 1):
+            try:
+                self.logger.info(f"Data plan generation attempt {attempt + 1}/{max_retries + 1}")
+                
+                if attempt == 0:
+                    # First attempt: Full detailed prompt
+                    prompt = ChatPromptTemplate.from_messages([
+                        ("system", DATA_SYSTEM_PROMPT),
+                        ("human", """
 Based on the provided context, please generate a comprehensive data collection plan, data analysis plan, a list of potential pitfalls, and the expected outcomes.
 
 **Experiment Context:**
@@ -107,38 +111,160 @@ Based on the provided context, please generate a comprehensive data collection p
 
 Please generate a detailed, logical, and complete data plan.
 Adhere strictly to the required output format.
-            """),
-        ])
-        
-        runnable = prompt | self.llm.with_structured_output(DataOutput)
-        
-        try:
-            self.logger.info("Invoking LLM with structured output for data planning.")
-            data_output = runnable.invoke(context)
-            
-            # Update state with the structured output
-            state['data_collection_plan'] = data_output.data_collection_plan.dict()
-            state['data_analysis_plan'] = data_output.data_analysis_plan.dict()
-            state['expected_outcomes'] = data_output.expected_outcomes
-            state['potential_pitfalls'] = [pitfall.dict() for pitfall in data_output.potential_pitfalls]
-            
-            summary_message = self._create_data_plan_summary(state)
-            state = add_chat_message(state, "assistant", summary_message)
-            self.logger.info("Successfully updated state with new data plan.")
+                        """),
+                    ])
+                    
+                elif attempt == 1:
+                    # Second attempt: Simplified prompt
+                    prompt = ChatPromptTemplate.from_messages([
+                        ("system", DATA_SYSTEM_PROMPT),
+                        ("human", """
+Generate a concise data collection and analysis plan for: {objective}
 
-        except ValidationError as e:
-            error_message = f"LLM output failed validation for DataOutput: {e}"
-            self.logger.error(error_message)
-            state['errors'].append(error_message)
-            state = add_chat_message(state, "assistant", "I had trouble structuring the data plan. The output was not in the correct format. Let's try to regenerate it.")
-        
-        except Exception as e:
-            error_message = f"An unexpected error occurred during data plan generation: {e}"
-            self.logger.error(error_message, exc_info=True)
-            state['errors'].append(error_message)
-            state = add_chat_message(state, "assistant", "An unexpected error occurred while I was creating the data plan. Please review the error, and we can try again.")
+**Key Requirements:**
+- Data collection methods and timing
+- Statistical analysis approach
+- Expected outcomes
+- 3 potential pitfalls with mitigation
 
+Keep descriptions concise but complete.
+                        """),
+                    ])
+                    # Use more conservative token limit
+                    self.llm = self.llm.__class__(
+                        **{**self.llm.__dict__, 'max_tokens': 2000}
+                    )
+                    
+                else:
+                    # Final attempt: Minimal prompt
+                    prompt = ChatPromptTemplate.from_messages([
+                        ("system", "You are a data analysis expert. Generate a concise data plan."),
+                        ("human", "Create a data collection and analysis plan for: {objective}. Include methods, analysis, and 3 potential issues."),
+                    ])
+                    self.llm = self.llm.__class__(
+                        **{**self.llm.__dict__, 'max_tokens': 1500}
+                    )
+                
+                runnable = prompt | self.llm.with_structured_output(DataOutput)
+                data_output = runnable.invoke(context)
+                
+                # Success! Update state and return
+                state['data_collection_plan'] = data_output.data_collection_plan.dict()
+                state['data_analysis_plan'] = data_output.data_analysis_plan.dict()
+                state['expected_outcomes'] = data_output.expected_outcomes
+                state['potential_pitfalls'] = [pitfall.dict() for pitfall in data_output.potential_pitfalls]
+                
+                summary_message = self._create_data_plan_summary(state)
+                state = add_chat_message(state, "assistant", summary_message)
+                self.logger.info(f"Successfully generated data plan on attempt {attempt + 1}")
+                return state
+                
+            except OutputParserException as e:
+                self.logger.warning(f"JSON parsing error on attempt {attempt + 1}: {str(e)[:200]}...")
+                if attempt == max_retries:
+                    return self._create_fallback_data_plan(state, str(e))
+                continue
+                
+            except ValidationError as e:
+                self.logger.warning(f"Validation error on attempt {attempt + 1}: {e}")
+                if attempt == max_retries:
+                    return self._create_fallback_data_plan(state, str(e))
+                continue
+                
+            except Exception as e:
+                self.logger.error(f"Unexpected error on attempt {attempt + 1}: {e}")
+                if attempt == max_retries:
+                    return self._create_fallback_data_plan(state, str(e))
+                continue
+        
+        # This should not be reached, but just in case
+        return self._create_fallback_data_plan(state, "All retry attempts failed")
+
+    def _create_fallback_data_plan(self, state: ExperimentPlanState, error_details: str) -> ExperimentPlanState:
+        """
+        Create a basic data plan structure when LLM generation fails.
+        
+        Args:
+            state: Current experiment plan state
+            error_details: Details about the error that occurred
+            
+        Returns:
+            Updated state with fallback data plan
+        """
+        self.logger.info("Creating fallback data plan due to LLM generation failure")
+        
+        # Create basic data plan based on experimental design
+        objective = state.get('experiment_objective', 'experiment')
+        methodology_steps = state.get('methodology_steps', [])
+        
+        fallback_collection_plan = {
+            "methods": "Data will be collected using appropriate measurement techniques as defined in the methodology",
+            "timing": "Data collection will occur at specified timepoints during the experiment",
+            "formats": "Data will be stored in structured formats suitable for analysis",
+            "quality_control": "Standard quality control measures will be implemented"
+        }
+        
+        fallback_analysis_plan = {
+            "statistical_tests": "Appropriate statistical tests will be selected based on data distribution and experimental design",
+            "visualizations": "Results will be visualized using standard scientific plots and graphs",
+            "software": "Statistical analysis will be performed using appropriate software packages"
+        }
+        
+        fallback_pitfalls = [
+            {
+                "issue": "Data quality issues or measurement errors",
+                "likelihood": "Medium",
+                "mitigation": "Implement proper calibration and quality control procedures"
+            },
+            {
+                "issue": "Insufficient sample size or statistical power",
+                "likelihood": "Low",
+                "mitigation": "Verify sample size calculations and consider power analysis"
+            },
+            {
+                "issue": "Unexpected experimental conditions or confounding variables",
+                "likelihood": "Medium",
+                "mitigation": "Monitor experimental conditions and document any deviations"
+            }
+        ]
+        
+        state['data_collection_plan'] = fallback_collection_plan
+        state['data_analysis_plan'] = fallback_analysis_plan
+        state['expected_outcomes'] = f"The experiment is expected to provide data that addresses the research objective: {objective}"
+        state['potential_pitfalls'] = fallback_pitfalls
+        
+        # Add error message and guidance
+        error_message = (
+            f"I encountered an issue generating the detailed data plan ({error_details[:100]}...). "
+            "I've created a basic data plan structure for you to review and expand upon. "
+            "Please provide more specific details about your data collection and analysis needs, "
+            "and I'll help you develop a more comprehensive plan."
+        )
+        
+        state = add_chat_message(state, "assistant", error_message)
+        self.logger.info("Fallback data plan created successfully")
         return state
+
+    def process_state(self, state: ExperimentPlanState) -> ExperimentPlanState:
+        """
+        Process the current state to generate a complete data collection and analysis plan.
+        
+        This method uses retry logic with progressively simpler approaches to handle
+        token limits and JSON parsing errors.
+        
+        Args:
+            state: Current experiment plan state.
+            
+        Returns:
+            Updated ExperimentPlanState with the generated data plan.
+        """
+        self.logger.info(f"Processing data plan for experiment: {state.get('experiment_id')}")
+
+        try:
+            return self._retry_with_fallback(state)
+        except Exception as e:
+            self.logger.error(f"Critical error in data plan processing: {e}", exc_info=True)
+            return self._create_fallback_data_plan(state, str(e))
     
     def validate_stage_requirements(self, state: ExperimentPlanState) -> Tuple[bool, List[str]]:
         """
