@@ -219,7 +219,8 @@ def review_completion_check(state: ExperimentPlanState) -> Literal["complete", "
     Check if final review is complete and user approves with error handling.
     
     This function determines whether the user has approved the final plan
-    for completion or wants to edit a specific section.
+    for completion or wants to edit a specific section. Uses enhanced NLP
+    to better understand user intent.
     
     Args:
         state: Current experiment plan state
@@ -230,19 +231,37 @@ def review_completion_check(state: ExperimentPlanState) -> Literal["complete", "
     def _check_review_completion(state: ExperimentPlanState) -> Literal["complete", "edit_section"]:
         user_input = get_latest_user_input(state)
         
-        # Use the helper function to extract user intent
+        # Use the enhanced helper function to extract user intent
         user_intent = extract_user_intent(user_input)
         
+        # Log the decision process for debugging
+        logger.info(f"Review completion check - User input: '{user_input}' -> Intent: {user_intent}")
+        
         if user_intent == "approval":
-            logger.info("Review completion check: COMPLETE")
+            logger.info("Review completion check: COMPLETE - User approved the plan")
             return "complete"
         elif user_intent == "edit":
-            logger.info("Review completion check: EDIT_SECTION")
+            logger.info("Review completion check: EDIT_SECTION - User wants to make changes")
             return "edit_section"
         else:
-            # Default to edit_section if unclear
-            logger.info("Review completion check: EDIT_SECTION (default)")
-            return "edit_section"
+            # For unclear intent, check if this is the first time in review
+            chat_history = state.get('chat_history', [])
+            review_messages = [msg for msg in chat_history if 'review' in msg.get('content', '').lower()]
+            
+            if len(review_messages) <= 1:
+                # First time in review, likely needs user input
+                logger.info("Review completion check: EDIT_SECTION - First time in review, waiting for user decision")
+                return "edit_section"
+            else:
+                # Multiple review interactions, be more permissive for completion
+                # Check for any positive indicators
+                positive_indicators = ["good", "ok", "fine", "ready", "done", "thanks"]
+                if any(indicator in user_input.lower() for indicator in positive_indicators):
+                    logger.info("Review completion check: COMPLETE - Positive indicators detected")
+                    return "complete"
+                else:
+                    logger.info("Review completion check: EDIT_SECTION - Unclear intent, defaulting to edit")
+                    return "edit_section"
     
     return safe_conditional_check(
         _check_review_completion, 

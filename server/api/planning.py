@@ -91,6 +91,13 @@ class SessionStatusMessage(BaseModel):
     session_id: str
 
 
+class SessionCompleteMessage(BaseModel):
+    """Session completion message."""
+    type: str = Field(default="session_complete")
+    data: Dict[str, Any] = Field(..., description="Completion details and summary")
+    session_id: str
+
+
 # Request/Response Models (keeping existing ones for non-WebSocket endpoints)
 class StartHITLPlanningRequest(BaseModel):
     """Request model for starting a new HITL planning session."""
@@ -211,6 +218,70 @@ async def _get_current_stage_from_graph(session_id: str) -> Optional[str]:
         return None
 
 
+async def _is_graph_complete(session_id: str) -> bool:
+    """Check if the graph has reached completion (END state)."""
+    try:
+        graph_components = _get_or_create_graph_components(session_id)
+        graph = graph_components["graph"]
+        config = graph_components["config"]
+        
+        state_snapshot = await graph.aget_state(config)
+        
+        # Import the helper function
+        from agents.planning.graph.helpers import is_graph_complete
+        
+        return is_graph_complete(state_snapshot)
+        
+    except Exception as e:
+        logger.error(f"Failed to check graph completion status: {e}")
+        return False
+
+
+async def _send_completion_message(websocket: WebSocket, session_id: str, final_state: ExperimentPlanState):
+    """Send completion message and close the session gracefully."""
+    try:
+        # Create a comprehensive completion message
+        completion_data = {
+            "session_id": session_id,
+            "experiment_id": final_state.get("experiment_id"),
+            "status": "completed",
+            "message": "🎉 Experiment planning completed successfully! Your comprehensive plan is ready.",
+            "summary": {
+                "stages_completed": len(PLANNING_STAGES),
+                "total_messages": len(final_state.get("chat_history", [])),
+                "experiment_objective": final_state.get("experiment_objective"),
+                "completion_time": datetime.utcnow().isoformat()
+            }
+        }
+        
+        await _send_websocket_message(websocket, {
+            "type": "session_complete",
+            "data": completion_data,
+            "session_id": session_id
+        })
+        
+        # Send final state update
+        await _send_planning_update(websocket, session_id, final_state)
+        
+        logger.info(f"✅ Session {session_id} completed successfully")
+        
+        # Clean up session resources after a brief delay
+        import asyncio
+        await asyncio.sleep(1)  # Give frontend time to process the completion message
+        
+        # Remove from active graphs and connections
+        if session_id in _active_graphs:
+            del _active_graphs[session_id]
+        if session_id in _active_connections:
+            del _active_connections[session_id]
+            
+        # Close the WebSocket connection gracefully
+        await websocket.close(code=1000, reason="Session completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Failed to send completion message: {e}")
+
+
 # API Endpoints
 @router.post("/start", response_model=HITLSessionResponse)
 async def start_hitl_planning_session(request: StartHITLPlanningRequest):
@@ -289,6 +360,13 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
         if current_state:
             await _send_planning_update(websocket, session_id, current_state)
             
+            # Check if session is already complete
+            is_complete = await _is_graph_complete(session_id)
+            if is_complete:
+                logger.info(f"Session {session_id} is already complete")
+                await _send_completion_message(websocket, session_id, current_state)
+                return
+            
             # If graph is interrupted, send approval request
             is_interrupted = await _is_graph_interrupted(session_id)
             if is_interrupted:
@@ -315,6 +393,15 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
                         "data": {"timestamp": datetime.utcnow().isoformat()},
                         "session_id": session_id
                     })
+                elif message.get("type") == "close_session":
+                    # Handle explicit session closure request from frontend
+                    logger.info(f"Received close_session request for {session_id}")
+                    await _send_websocket_message(websocket, {
+                        "type": "session_closed",
+                        "data": {"message": "Session closed by user request"},
+                        "session_id": session_id
+                    })
+                    break
                 else:
                     logger.warning(f"Unknown message type: {message.get('type')}")
                     
@@ -506,6 +593,13 @@ async def _process_planning_execution(websocket: WebSocket, session_id: str, sta
                     final_state = event
                     await _send_planning_update(websocket, session_id, final_state)
 
+        # Check if graph has completed (reached END state)
+        is_complete = await _is_graph_complete(session_id)
+        if is_complete:
+            logger.info(f"🎯 Graph completed for session {session_id}")
+            await _send_completion_message(websocket, session_id, final_state)
+            return  # Exit the function as session is complete
+
         # Check if we're now interrupted at the next stage
         is_interrupted = await _is_graph_interrupted(session_id)
         if is_interrupted:
@@ -546,23 +640,57 @@ async def get_hitl_session_status(session_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to get session status: {str(e)}")
 
 
+@router.post("/session/{session_id}/close")
+async def close_planning_session(session_id: str):
+    """
+    Explicitly close a planning session and clean up all resources.
+    """
+    try:
+        # Check if session exists
+        if session_id not in _active_graphs:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Get final state before cleanup
+        current_state = await _get_current_state(session_id)
+        
+        # Close WebSocket connection if active
+        if session_id in _active_connections:
+            websocket = _active_connections[session_id]
+            try:
+                await websocket.close(code=1000, reason="Session closed by request")
+            except Exception as e:
+                logger.warning(f"Error closing WebSocket: {e}")
+        
+        # Clean up resources
+        if session_id in _active_graphs:
+            del _active_graphs[session_id]
+        if session_id in _active_connections:
+            del _active_connections[session_id]
+        
+        logger.info(f"Manually closed planning session {session_id}")
+        
+        return {
+            "session_id": session_id,
+            "status": "closed",
+            "message": "Planning session closed successfully",
+            "experiment_id": current_state.get("experiment_id") if current_state else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to close session: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to close session: {str(e)}")
+
+
 @router.delete("/session/{session_id}")
 async def delete_hitl_session(session_id: str):
     """
     Delete a HITL planning session and clean up resources.
     """
     try:
-        # Remove from active graphs
-        if session_id in _active_graphs:
-            del _active_graphs[session_id]
-        
-        logger.info(f"Deleted HITL planning session {session_id}")
-        
-        return {
-            "session_id": session_id,
-            "status": "deleted",
-            "message": "HITL planning session deleted successfully"
-        }
+        # Use the close session logic for consistency
+        return await close_planning_session(session_id)
         
     except Exception as e:
         logger.error(f"Failed to delete session: {str(e)}")
