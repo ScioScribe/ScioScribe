@@ -314,6 +314,19 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         
         const sessionResponse = await initializeDatacleanSession("demo-user", csv)
         
+        // Create a temporary context with the new session information
+        const tempContext = {
+          ...messageHandlerContext,
+          getDatacleanSession: () => ({
+            session_id: sessionResponse.session_id,
+            experiment_id: null,
+            is_active: true,
+            is_waiting_for_approval: false,
+            websocket_connection: null,
+            last_activity: new Date()
+          })
+        }
+        
         // Enhanced welcome message that mentions CSV data if available
         if (csv && csv.trim()) {
           const csvWelcomeMessage: Message = {
@@ -326,12 +339,12 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
           }
           setMessages((prev) => [...prev, csvWelcomeMessage])
           
-          // Send message with CSV context
-          await handleExecuteMessage(`CSV Data Available. User request: ${message}`, messageHandlerContext)
+          // Send message with CSV context using the temp context with new session
+          await handleExecuteMessage(`CSV Data Available. User request: ${message}`, tempContext)
         } else {
           // Standard welcome without CSV
-          createDatacleanWelcomeMessage(sessionResponse.session_id, sessionResponse.response as unknown as Record<string, unknown>, messageHandlerContext)
-          await handleExecuteMessage(message, messageHandlerContext)
+          createDatacleanWelcomeMessage(sessionResponse.session_id, sessionResponse.response as unknown as Record<string, unknown>, tempContext)
+          await handleExecuteMessage(message, tempContext)
         }
         
         // Update session activity
