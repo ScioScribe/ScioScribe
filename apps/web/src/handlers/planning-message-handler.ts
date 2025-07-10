@@ -263,7 +263,7 @@ export function parseApprovalResponse(message: string): ApprovalResponse {
  * @param context Message handler context
  */
 function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHandlerContext): void {
-  const { setMessages, setPlanningSession, updatePlanFromPlanningState, updatePlanFromPlanningMessage } = context
+  const { setMessages, setPlanningSession, updatePlanFromPlanningState } = context
   
   console.log("📊 Planning update received from WebSocket:", data)
   
@@ -307,13 +307,12 @@ function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHan
         console.error("❌ Failed to update plan from planning state:", error)
       })
     
-    updatePlanFromPlanningMessage(messageContent, currentStage)
-      .then(() => {
-        console.log("📥 UPDATE PLAN FROM PLANNING MESSAGE: Success")
-      })
-      .catch(error => {
-        console.error("❌ Failed to update plan from planning message:", error)
-      })
+    // We no longer append unstructured agent messages to the plan text.
+    // The plan editor now mirrors the latest planning state as JSON to
+    // maintain a valid, machine-readable representation that can be
+    // consumed programmatically or copied by users. If you need to
+    // surface conversational context, consider storing it separately
+    // from the canonical planning document.
   }
   
   // Update session state with current stage (preserve session continuity)

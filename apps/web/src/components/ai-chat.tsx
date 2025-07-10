@@ -14,6 +14,7 @@ import { Card } from "@/components/ui/card"
 import { useExperimentStore } from "@/stores"
 import { useChatSessions } from "@/hooks/use-chat-sessions"
 import { handlePlanningWebSocketMessage } from "@/handlers/planning-message-handler"
+import { handlePlanningMessage } from "@/handlers/planning-message-handler"
 import { handleExecuteMessage, createDatacleanWelcomeMessage } from "@/handlers/execute-message-handler"
 import { handleAnalysisMessage } from "@/handlers/analysis-message-handler"
 import { 
@@ -68,14 +69,28 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     updateDatacleanSession
   } = useChatSessions()
 
+  // Mutable refs that always hold the latest session objects. This prevents
+  // stale closures inside message handlers (e.g. during approval flows).
+  const planningSessionRef = useRef(planningSession)
+  const datacleanSessionRef = useRef(datacleanSession)
+
+  // Keep refs in sync with state on every render
+  useEffect(() => {
+    planningSessionRef.current = planningSession
+  }, [planningSession])
+
+  useEffect(() => {
+    datacleanSessionRef.current = datacleanSession
+  }, [datacleanSession])
+
   // Create message handler context (memoized to prevent infinite re-renders)
    
   const messageHandlerContext: MessageHandlerContext = useMemo(() => ({
     setMessages,
     setIsLoading,
-    getPlanningSession: () => planningSession,
+    getPlanningSession: () => planningSessionRef.current,
     setPlanningSession: updatePlanningSession,
-    getDatacleanSession: () => datacleanSession,
+    getDatacleanSession: () => datacleanSessionRef.current,
     setDatacleanSession: updateDatacleanSession,
     updatePlanFromPlanningState,
     updatePlanFromPlanningMessage,
@@ -85,7 +100,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     csv
   }), [
     // Remove session objects from dependencies to prevent constant re-creation
-    // The getter functions will access current session state via closure
     updatePlanningSession,
     updateDatacleanSession,
     updatePlanFromPlanningState,
@@ -277,14 +291,21 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         }
         
         // Send message to existing session
+        // Use unified planning message handler to properly process
+        // user messages and approval responses. This ensures that
+        // approval responses are sent with the correct "approval_response"
+        // message type instead of being mis-classified as a standard
+        // user message, preventing the backend from restarting the
+        // planning graph at the objective stage.
         setIsTyping(true)
-        setTypingText("Processing your message...")
-        const sent = sendPlanningMessage(currentSession.session_id, message)
-        if (!sent) {
-          setIsTyping(false)
-          setTypingText("")
-          throw new Error("Failed to send message via WebSocket")
-        }
+        setTypingText("Processing your message…")
+
+        await handlePlanningMessage(message, messageHandlerContext)
+
+        // The handler will queue the message via the WebSocket manager.
+        // If it fails we throw to surface the error.
+        setIsTyping(false)
+        setTypingText("")
       }
     } catch (error) {
       console.error("❌ Planning message error:", error)
@@ -299,9 +320,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       }
       setMessages((prev) => [...prev, errorMessage])
     }
-  }, [updatePlanningSession, planningHandlers, setMessages
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  ])
+  }, [updatePlanningSession, planningHandlers, setMessages, handlePlanningMessage, messageHandlerContext])
 
   const handleExecuteMessageWithSession = useCallback(async (message: string) => {
     try {
@@ -441,16 +460,15 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     }
   }, [messageHandlerContext, setMessages])
 
-  // Cleanup WebSocket connections on unmount
+  // We no longer forcibly close the planning WebSocket when the component
+  // unmounts. The backend is responsible for terminating the session when
+  // the agent has completed its workflow. This avoids premature session
+  // termination triggered by client-side navigation or tab switches.
   useEffect(() => {
     return () => {
-      const currentSession = messageHandlerContext.getPlanningSession()
-      if (currentSession.session_id) {
-        console.log("🔒 Closing planning WebSocket connection on unmount")
-        closePlanningSession(currentSession.session_id)
-      }
+      // Intentionally left blank – let the backend handle session lifecycle.
     }
-  }, [messageHandlerContext])
+  }, [])
 
   // Debug function setup (run once on mount)
   useEffect(() => {

@@ -200,13 +200,8 @@ export function useChatSessions(): ChatSessionsHookReturn {
       const timeoutMs = 30 * 60 * 1000 // 30 minutes
 
       // Use functional setState to avoid dependencies on session objects
-      setPlanningSession(prev => {
-        if (prev.is_active && now.getTime() - prev.last_activity.getTime() > timeoutMs) {
-          console.log("⏰ Planning session timed out")
-          cleanupPlanningSession()
-        }
-        return prev
-      })
+      // Do not auto-cleanup planning sessions; backend controls lifecycle.
+      setPlanningSession(prev => prev)
 
       setDatacleanSession(prev => {
         if (prev.is_active && now.getTime() - prev.last_activity.getTime() > timeoutMs) {
@@ -277,16 +272,17 @@ export function useChatSessions(): ChatSessionsHookReturn {
     return () => clearInterval(connectionMonitorInterval)
   }, [])
 
-  // Cleanup sessions on unmount
+  // Do not automatically clean up planning sessions on unmount –
+  // the backend decides when the session ends. We still clean up
+  // dataclean sessions and close outstanding websockets for safety.
   useEffect(() => {
     return () => {
-      console.log("🔒 Cleaning up all sessions on unmount")
-      cleanupPlanningSession()
+      console.log("🔒 Component unmounted – closing non-planning connections")
       cleanupDatacleanSession()
       websocketManager.closeAllConnections()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // Remove cleanup functions from dependencies to prevent effect recreation
+  }, []) // Intentional empty dependency list
 
   // Debug logging for session state changes
   useEffect(() => {
