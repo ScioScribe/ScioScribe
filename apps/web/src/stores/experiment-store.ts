@@ -12,7 +12,8 @@ import {
   createExperiment as createExperimentAPI, 
   updateExperimentPlan, 
   updateExperimentHtml, 
-  updateExperimentTitle as updateExperimentTitleAPI 
+  updateExperimentTitle as updateExperimentTitleAPI,
+  deleteExperiment as deleteExperimentAPI 
 } from '@/api/database'
 import { IRIS_CSV_DATA, IRIS_EXPERIMENT_PLAN } from '@/data/placeholder'
 import { convertPlanningStateToText } from '@/handlers/planning-state-handler'
@@ -134,6 +135,9 @@ interface ExperimentActions {
   updateVisualizationHtmlWithSave: (html: string) => Promise<void>
   updateExperimentTitleWithSave: (title: string) => Promise<void>
   refreshVisualization: () => void
+  
+  // Experiment management
+  removeExperiment: (experimentId: string) => Promise<void>
   
   // Planning integration functions
   updatePlanFromPlanningState: (planningState: PlanningState) => Promise<void>
@@ -386,6 +390,40 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
   
   refreshVisualization: () => {
     set({ visualizationHtml: "" })
+  },
+  
+  removeExperiment: async (experimentId: string) => {
+    try {
+      // Delete from database
+      await deleteExperimentAPI(experimentId)
+      
+      // Remove from local state
+      const { experiments, currentExperiment } = get()
+      const updatedExperiments = experiments.filter(exp => exp.id !== experimentId)
+      set({ experiments: updatedExperiments })
+      
+      // Handle current experiment switching if deleted experiment was active
+      if (currentExperiment?.id === experimentId) {
+        if (updatedExperiments.length > 0) {
+          // Select the first experiment (most recently created)
+          get().selectExperiment(updatedExperiments[0])
+        } else {
+          // No experiments left, clear current experiment
+          set({ 
+            currentExperiment: null,
+            experimentTitle: "New Experiment",
+            editorText: IRIS_EXPERIMENT_PLAN,
+            csvData: IRIS_CSV_DATA,
+            visualizationHtml: "",
+          })
+        }
+      }
+      
+      console.log("✅ Experiment removed successfully")
+    } catch (error) {
+      console.error("❌ Failed to remove experiment:", error)
+      throw error
+    }
   },
   
   resetState: () => {
