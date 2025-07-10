@@ -493,4 +493,213 @@ class DataQualityAgent:
             risk_multiplier = {'low': 1.0, 'medium': 0.8, 'high': 0.6}
             return suggestion.confidence * risk_multiplier.get(suggestion.risk_level, 0.5)
         
-        return sorted(suggestions, key=priority_score, reverse=True) 
+        return sorted(suggestions, key=priority_score, reverse=True)
+    
+    async def understand_data_semantics(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Understand the semantic meaning and context of the data, especially for biomedical research.
+        
+        Args:
+            df: DataFrame to analyze semantically
+            
+        Returns:
+            Dictionary containing semantic understanding of the data
+        """
+        try:
+            logger.info(f"Performing semantic analysis of DataFrame with shape: {df.shape}")
+            
+            # Generate enhanced data summary for semantic analysis
+            semantic_summary = self._generate_semantic_data_summary(df)
+            
+            # Analyze the data semantically using AI
+            semantic_analysis = await self._analyze_data_semantically(semantic_summary)
+            
+            return {
+                "success": True,
+                "data_understanding": semantic_analysis.get("data_understanding", "Unable to determine data context"),
+                "research_context": semantic_analysis.get("research_context", "Context unclear"),
+                "experimental_design": semantic_analysis.get("experimental_design", "Design not apparent"),
+                "key_variables": semantic_analysis.get("key_variables", []),
+                "data_type_classification": semantic_analysis.get("data_type_classification", "Unknown"),
+                "research_domain": semantic_analysis.get("research_domain", "General"),
+                "analysis_confidence": semantic_analysis.get("confidence", 0.0)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in semantic data understanding: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "data_understanding": "Unable to analyze data semantically",
+                "research_context": "Analysis failed",
+                "experimental_design": "Could not determine",
+                "key_variables": [],
+                "data_type_classification": "Unknown",
+                "research_domain": "Unknown",
+                "analysis_confidence": 0.0
+            }
+    
+    def _generate_semantic_data_summary(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Generate an enhanced summary focused on semantic understanding.
+        
+        Args:
+            df: DataFrame to summarize
+            
+        Returns:
+            Dictionary containing semantic-focused data summary
+        """
+        summary = {
+            'shape': df.shape,
+            'columns': list(df.columns),
+            'column_analysis': {},
+            'potential_measurements': [],
+            'potential_conditions': [],
+            'potential_subjects': []
+        }
+        
+        # Analyze each column for semantic clues
+        for col in df.columns:
+            col_lower = col.lower()
+            sample_values = df[col].dropna().unique()[:10]
+            
+            # Convert to native Python types for JSON serialization
+            sample_values_clean = []
+            for val in sample_values:
+                if hasattr(val, 'item'):
+                    sample_values_clean.append(val.item())
+                else:
+                    sample_values_clean.append(str(val))
+            
+            column_info = {
+                'name': col,
+                'sample_values': sample_values_clean,
+                'data_type': str(df[col].dtype),
+                'unique_count': int(df[col].nunique()),
+                'null_count': int(df[col].isnull().sum()),
+                'potential_role': self._infer_column_role(col, df[col])
+            }
+            
+            summary['column_analysis'][col] = column_info
+            
+            # Categorize potential research elements
+            if any(keyword in col_lower for keyword in ['concentration', 'dose', 'level', 'amount', 'intensity', 'expression', 'activity']):
+                summary['potential_measurements'].append(col)
+            elif any(keyword in col_lower for keyword in ['treatment', 'condition', 'group', 'strain', 'genotype', 'drug']):
+                summary['potential_conditions'].append(col)
+            elif any(keyword in col_lower for keyword in ['subject', 'animal', 'patient', 'sample', 'id', 'specimen']):
+                summary['potential_subjects'].append(col)
+        
+        return summary
+    
+    def _infer_column_role(self, col_name: str, series: pd.Series) -> str:
+        """
+        Infer the likely role of a column in a research context.
+        
+        Args:
+            col_name: Name of the column
+            series: Pandas Series for the column
+            
+        Returns:
+            Inferred role of the column
+        """
+        col_lower = col_name.lower()
+        
+        # Check for common biomedical patterns
+        if any(keyword in col_lower for keyword in ['id', 'subject', 'sample', 'specimen']):
+            return "identifier"
+        elif any(keyword in col_lower for keyword in ['treatment', 'condition', 'group', 'strain', 'genotype']):
+            return "experimental_condition"
+        elif any(keyword in col_lower for keyword in ['concentration', 'dose', 'level', 'amount']):
+            return "measurement_value"
+        elif any(keyword in col_lower for keyword in ['time', 'day', 'hour', 'date']):
+            return "temporal"
+        elif any(keyword in col_lower for keyword in ['response', 'outcome', 'result', 'score']):
+            return "dependent_variable"
+        elif series.dtype in ['int64', 'float64'] and series.nunique() > 10:
+            return "continuous_measurement"
+        elif series.dtype == 'object' and series.nunique() < 10:
+            return "categorical_factor"
+        else:
+            return "unknown"
+    
+    async def _analyze_data_semantically(self, semantic_summary: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Use AI to analyze the semantic meaning of the data.
+        
+        Args:
+            semantic_summary: Enhanced data summary
+            
+        Returns:
+            Semantic analysis results
+        """
+        prompt = f"""
+        You are a biomedical research expert. Analyze this dataset to understand what research it represents.
+        
+        Dataset Information:
+        - Shape: {semantic_summary['shape']} (rows: subjects/observations, columns: variables)
+        - Columns: {semantic_summary['columns']}
+        - Potential Measurements: {semantic_summary['potential_measurements']}
+        - Potential Conditions: {semantic_summary['potential_conditions']}
+        - Potential Subjects: {semantic_summary['potential_subjects']}
+        
+        Column Analysis:
+        {json.dumps(semantic_summary['column_analysis'], indent=2)}
+        
+        Based on column names, data types, and sample values, provide insight into:
+        1. What type of research/experiment this data represents
+        2. What the main research question or hypothesis might be
+        3. What experimental design was likely used
+        4. What are the key variables (independent, dependent, control)
+        5. What research domain this belongs to (e.g., neuroscience, molecular biology, pharmacology)
+        
+        Respond with JSON:
+        {{
+            "data_understanding": "A clear, concise description of what this data represents (e.g., 'This appears to be data from a C. elegans study examining the effects of CO2 concentration on behavioral responses')",
+            "research_context": "The broader research context and potential research question",
+            "experimental_design": "The likely experimental design and methodology",
+            "key_variables": [
+                {{
+                    "name": "variable_name",
+                    "role": "independent|dependent|control|confounding",
+                    "description": "what this variable measures"
+                }}
+            ],
+            "data_type_classification": "Type of study (e.g., dose-response, time-series, comparative, screening)",
+            "research_domain": "Primary research domain",
+            "confidence": 0.85
+        }}
+        """
+        
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a biomedical research expert who can intelligently interpret research data. Respond only with valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=1500
+            )
+            
+            content = response.choices[0].message.content.strip()
+            # Clean up the response to extract JSON
+            if content.startswith('```json'):
+                content = content[7:-3]
+            elif content.startswith('```'):
+                content = content[3:-3]
+            
+            semantic_analysis = json.loads(content)
+            return semantic_analysis
+            
+        except Exception as e:
+            logger.error(f"Error in semantic analysis: {str(e)}")
+            return {
+                "data_understanding": "Unable to determine data context due to analysis error",
+                "research_context": "Analysis failed",
+                "experimental_design": "Could not determine",
+                "key_variables": [],
+                "data_type_classification": "Unknown",
+                "research_domain": "Unknown",
+                "confidence": 0.0
+            } 

@@ -331,7 +331,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         if (csv && csv.trim()) {
           const csvWelcomeMessage: Message = {
             id: (Date.now() + 1).toString(),
-            content: `**Data Cleaning Session Started**\n\n**CSV Data Detected:** I can see you have dataset loaded!\n\nI'm ready to help you with:\n• Data quality analysis\n• Cleaning and fixing issues\n• Removing duplicates\n• Handling missing values\n• Data transformation`,
+            content: `I can see you have dataset loaded!\n\nI'm ready to help you with:\n• Data quality analysis\n• Cleaning and fixing issues\n• Removing duplicates\n• Handling missing values\n• Data transformation`,
             sender: "ai",
             timestamp: new Date(),
             mode: "execute",
@@ -348,7 +348,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         if (response && response.response_message) {
           const responseMessage: Message = {
             id: (Date.now() + 2).toString(),
-            content: `🧹 **Data Cleaning Response**\n\n${response.response_message}`,
+            content: response.response_message,
             sender: "ai",
             timestamp: new Date(),
             mode: "execute",

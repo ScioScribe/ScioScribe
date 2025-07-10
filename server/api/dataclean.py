@@ -51,8 +51,11 @@ from config import get_openai_client, validate_openai_config
 
 import logging
 import json
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket, WebSocketDisconnect, HTTPException, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+from database import get_db
+from datetime import datetime
 
 # Set up module logger
 logger = logging.getLogger(__name__)
@@ -1895,3 +1898,143 @@ async def process_image_background(artifact_id: str, image_path: str):
         if os.path.exists(image_path):
             os.remove(image_path)
             print(f"Cleaned up temporary image file: {image_path}") 
+
+
+@router.post("/csv-conversation/save-cleaned-data")
+async def save_cleaned_data(
+    session_id: str,
+    cleaned_csv: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Save cleaned CSV data to the database for persistent storage.
+    
+    This endpoint stores the cleaned CSV data so it can be retrieved later
+    for validation, download, or further analysis.
+    """
+    try:
+        from database import Experiment
+        
+        # Create or update experiment with cleaned CSV data
+        experiment = db.query(Experiment).filter(Experiment.id == session_id).first()
+        
+        if not experiment:
+            # Create new experiment record for this session
+            experiment = Experiment(
+                id=session_id,
+                title=f"Cleaned Data Session {session_id}",
+                description="Data cleaning session with applied transformations",
+                csv_data=cleaned_csv
+            )
+            db.add(experiment)
+        else:
+            # Update existing experiment with cleaned data
+            experiment.csv_data = cleaned_csv
+            experiment.updated_at = datetime.now()
+        
+        db.commit()
+        db.refresh(experiment)
+        
+        logger.info(f"Saved cleaned CSV data for session {session_id}")
+        
+        return {
+            "success": True,
+            "session_id": session_id,
+            "message": "Cleaned data saved successfully",
+            "experiment_id": experiment.id
+        }
+        
+    except Exception as e:
+        logger.error(f"Error saving cleaned data for session {session_id}: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save cleaned data: {str(e)}"
+        )
+
+
+@router.get("/csv-conversation/get-cleaned-data/{session_id}")
+async def get_cleaned_data(
+    session_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Retrieve cleaned CSV data from the database.
+    
+    Returns the cleaned CSV data for the specified session if it exists.
+    """
+    try:
+        from database import Experiment
+        
+        # Query experiment by session ID
+        experiment = db.query(Experiment).filter(Experiment.id == session_id).first()
+        
+        if not experiment or not experiment.csv_data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No cleaned data found for session {session_id}"
+            )
+        
+        logger.info(f"Retrieved cleaned CSV data for session {session_id}")
+        
+        return {
+            "success": True,
+            "session_id": session_id,
+            "cleaned_csv": experiment.csv_data,
+            "last_updated": experiment.updated_at.isoformat() if experiment.updated_at else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving cleaned data for session {session_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve cleaned data: {str(e)}"
+        )
+
+
+@router.get("/csv-conversation/download-cleaned-data/{session_id}")
+async def download_cleaned_data(
+    session_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Download cleaned CSV data as a file.
+    
+    Returns the cleaned CSV data as a downloadable file attachment.
+    """
+    try:
+        from database import Experiment
+        from fastapi.responses import Response
+        
+        # Query experiment by session ID
+        experiment = db.query(Experiment).filter(Experiment.id == session_id).first()
+        
+        if not experiment or not experiment.csv_data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No cleaned data found for session {session_id}"
+            )
+        
+        logger.info(f"Downloading cleaned CSV data for session {session_id}")
+        
+        # Return CSV as downloadable file
+        headers = {
+            "Content-Disposition": f"attachment; filename=cleaned_data_{session_id}.csv"
+        }
+        
+        return Response(
+            content=experiment.csv_data,
+            media_type="text/csv",
+            headers=headers
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading cleaned data for session {session_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to download cleaned data: {str(e)}"
+        ) 

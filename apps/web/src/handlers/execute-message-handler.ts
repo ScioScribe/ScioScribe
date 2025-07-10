@@ -147,7 +147,7 @@ async function processDatacleanResponse(response: DatacleanResponse, context: Me
       case "text": {
         const textMessage: Message = {
           ...baseMessage,
-          content: `🧹 **Data Cleaning Response**\n\n${response.message}`,
+          content: response.message,
           response_type: "text"
         }
         setMessages((prev) => [...prev, textMessage])

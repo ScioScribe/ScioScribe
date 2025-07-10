@@ -21,6 +21,7 @@ from ..models import (
 )
 from ..csv_processor import CSVDirectProcessor
 from ..quality_agent import DataQualityAgent
+from ..memory_store import get_data_store
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ class CSVConversationGraph:
         self.openai_client = openai_client
         self.csv_processor = CSVDirectProcessor(openai_client)
         self.quality_agent = DataQualityAgent(openai_client) if openai_client else None
+        self.data_store = get_data_store()
         self.sessions: Dict[str, Union[CSVConversationState, Dict[str, Any]]] = {}
         
         # Build and compile the graph
@@ -181,6 +183,13 @@ class CSVConversationGraph:
                         state["current_csv"] = await self.csv_processor.apply_csv_transformations(
                             state["current_csv"], pending_transformations
                         )
+                        
+                        # Save cleaned data to data store for persistence
+                        cleaned_df = self.csv_processor._parse_csv_string(state["current_csv"])
+                        if cleaned_df is not None:
+                            await self.data_store.save_dataframe(state["session_id"], cleaned_df)
+                            logger.info(f"Saved cleaned data to data store for session {state['session_id']}")
+                        
                         applied = state.get("applied_transformations", [])
                         applied.extend(pending_transformations)
                         state["applied_transformations"] = applied
@@ -221,6 +230,13 @@ class CSVConversationGraph:
                         state.current_csv = await self.csv_processor.apply_csv_transformations(
                             state.current_csv, state.pending_transformations
                         )
+                        
+                        # Save cleaned data to data store for persistence
+                        cleaned_df = self.csv_processor._parse_csv_string(state.current_csv)
+                        if cleaned_df is not None:
+                            await self.data_store.save_dataframe(state.session_id, cleaned_df)
+                            logger.info(f"Saved cleaned data to data store for session {state.session_id}")
+                        
                         state.applied_transformations.extend(state.pending_transformations)
                         state.pending_transformations = []
                         
@@ -310,7 +326,24 @@ class CSVConversationGraph:
     async def _analyze_csv(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze CSV data quality."""
         try:
-            analysis = await self.csv_processor.analyze_csv_quality(state["current_csv"])
+            # Check if there's cleaned data in the data store
+            cleaned_df = await self.data_store.get_dataframe(state["session_id"])
+            if cleaned_df is not None:
+                # Use cleaned data for analysis
+                csv_data = self.csv_processor._dataframe_to_csv_string(cleaned_df)
+                logger.info(f"Using cleaned data from data store for analysis (session {state['session_id']})")
+            else:
+                # Try loading from database
+                cleaned_csv_from_db = await self._load_cleaned_data_from_database(state["session_id"])
+                if cleaned_csv_from_db:
+                    csv_data = cleaned_csv_from_db
+                    logger.info(f"Using cleaned data from database for analysis (session {state['session_id']})")
+                else:
+                    # Fall back to current CSV
+                    csv_data = state["current_csv"]
+                    logger.info(f"Using current CSV for analysis (session {state['session_id']})")
+            
+            analysis = await self.csv_processor.analyze_csv_quality(csv_data)
             
             # Update state with analysis results
             state["quality_issues"] = analysis.quality_issues
@@ -402,6 +435,20 @@ class CSVConversationGraph:
                 state["current_csv"] = await self.csv_processor.apply_csv_transformations(
                     state["current_csv"], pending_transformations
                 )
+                
+                # Save cleaned data to both data store and database for persistence
+                cleaned_df = self.csv_processor._parse_csv_string(state["current_csv"])
+                if cleaned_df is not None:
+                    # Save to in-memory data store
+                    await self.data_store.save_dataframe(state["session_id"], cleaned_df)
+                    logger.info(f"Saved cleaned data to data store for session {state['session_id']}")
+                    
+                    # Save to database for persistent storage
+                    try:
+                        await self._save_cleaned_data_to_database(state["session_id"], state["current_csv"])
+                        logger.info(f"Saved cleaned data to database for session {state['session_id']}")
+                    except Exception as e:
+                        logger.warning(f"Failed to save to database for session {state['session_id']}: {str(e)}")
                 
                 # Move to applied transformations
                 applied = state.get("applied_transformations", [])
@@ -547,10 +594,17 @@ class CSVConversationGraph:
         # Store state as dictionary for consistency
         self.sessions[state["session_id"]] = state.copy()
         
+        # Use cleaned data from data store if available
+        cleaned_csv = state["current_csv"]
+        if state.get("applied_transformations"):
+            # If transformations were applied, the cleaned data should be in the data store
+            # For now, we'll use the current_csv which should contain the cleaned data
+            cleaned_csv = state["current_csv"]
+        
         return CSVProcessingResponse(
             success=True,
             original_csv=state["original_csv"],
-            cleaned_csv=state["current_csv"],
+            cleaned_csv=cleaned_csv,
             changes_made=state.get("applied_transformations", []),
             suggestions=state.get("pending_transformations", []),
             requires_approval=state.get("awaiting_approval", False),
@@ -565,11 +619,21 @@ class CSVConversationGraph:
     async def _generate_greeting_response(self, state: Dict[str, Any]) -> str:
         """Generate greeting response with basic data overview."""
         try:
-            # Parse CSV for basic info only (no quality analysis)
-            df = self.csv_processor._parse_csv_string(state["current_csv"])
+            # Check if there's cleaned data in the data store
+            cleaned_df = await self.data_store.get_dataframe(state["session_id"])
+            if cleaned_df is not None:
+                df = cleaned_df
+                data_status = "cleaned"
+            else:
+                df = self.csv_processor._parse_csv_string(state["current_csv"])
+                data_status = "original"
+                
             if df is not None:
                 rows, cols = len(df), len(df.columns)
                 response = f"Hello! I can see you have a dataset with {rows} rows and {cols} columns."
+                
+                if data_status == "cleaned":
+                    response += " (This is your cleaned data.)"
                 
                 response += "\n\nI'm ready to help you with:"
                 response += "\n• Data quality analysis"
@@ -610,14 +674,53 @@ class CSVConversationGraph:
             return f"I encountered an error during analysis: {str(e)}"
     
     async def _generate_description_response(self, state: Dict[str, Any]) -> str:
-        """Generate data overview description (rows, columns, sample issues)."""
+        """Generate data overview description with semantic understanding."""
         try:
-            df = self.csv_processor._parse_csv_string(state["current_csv"])
+            # Check if there's cleaned data in the data store
+            cleaned_df = await self.data_store.get_dataframe(state["session_id"])
+            if cleaned_df is not None:
+                df = cleaned_df
+                data_status = "cleaned"
+            else:
+                df = self.csv_processor._parse_csv_string(state["current_csv"])
+                data_status = "original"
+                
             if df is None:
                 return "I couldn't parse your CSV data. Please ensure it's properly formatted."
 
             rows, cols = len(df), len(df.columns)
             response = f"Your dataset has {rows} rows and {cols} columns."
+            
+            if data_status == "cleaned":
+                response += " (This is your cleaned data.)"
+
+            # Add semantic understanding if quality agent is available
+            if self.quality_agent:
+                try:
+                    semantic_analysis = await self.quality_agent.understand_data_semantics(df)
+                    
+                    if semantic_analysis and semantic_analysis.get("success"):
+                        data_understanding = semantic_analysis.get("data_understanding", "")
+                        research_domain = semantic_analysis.get("research_domain", "")
+                        
+                        if data_understanding:
+                            response += f"\n\n🔬 **Data Understanding**: {data_understanding}"
+                        
+                        if research_domain and research_domain != "General":
+                            response += f"\n📊 **Research Domain**: {research_domain}"
+                        
+                        experimental_design = semantic_analysis.get("experimental_design", "")
+                        if experimental_design and experimental_design != "Could not determine":
+                            response += f"\n🧪 **Experimental Design**: {experimental_design}"
+                        
+                        key_variables = semantic_analysis.get("key_variables", [])
+                        if key_variables:
+                            response += f"\n🔑 **Key Variables**: {len(key_variables)} variables identified"
+                            for var in key_variables[:3]:  # Show first 3 variables
+                                response += f"\n   • {var.get('name', 'Unknown')}: {var.get('description', 'No description')}"
+                
+                except Exception as e:
+                    logger.warning(f"Semantic analysis failed: {str(e)}")
 
             quality_issues = state.get("quality_issues", [])
             if quality_issues:
@@ -626,6 +729,51 @@ class CSVConversationGraph:
             return response
         except Exception as e:
             return f"I encountered an error describing your data: {str(e)}"
+    
+    async def _save_cleaned_data_to_database(self, session_id: str, cleaned_csv: str) -> bool:
+        """Save cleaned CSV data to database via HTTP API."""
+        try:
+            import httpx
+            
+            # Use httpx to call our own API endpoint
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "http://localhost:8000/api/dataclean/csv-conversation/save-cleaned-data",
+                    params={"session_id": session_id},
+                    json={"cleaned_csv": cleaned_csv}
+                )
+                
+                if response.status_code == 200:
+                    return True
+                else:
+                    logger.error(f"Database save failed: {response.status_code} - {response.text}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"Error saving to database: {str(e)}")
+            return False
+    
+    async def _load_cleaned_data_from_database(self, session_id: str) -> Optional[str]:
+        """Load cleaned CSV data from database via HTTP API."""
+        try:
+            import httpx
+            
+            # Use httpx to call our own API endpoint
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"http://localhost:8000/api/dataclean/csv-conversation/get-cleaned-data/{session_id}"
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    return data.get("cleaned_csv")
+                else:
+                    logger.info(f"No cleaned data in database for session {session_id}")
+                    return None
+                    
+        except Exception as e:
+            logger.info(f"Could not load from database for session {session_id}: {str(e)}")
+            return None
     
     def get_session_summary(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get session summary."""
