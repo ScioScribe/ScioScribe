@@ -63,13 +63,13 @@ export async function handlePlanningMessage(message: string, context: MessageHan
     // Ensure we have a WebSocket connection
     if (!planningSession.session_id) {
       console.error("❌ Session ID is null/undefined when trying to send message")
-      throw new Error("Session ID is null - session may have been reset unexpectedly")
+      throw new Error("Session not initialized. Please refresh the page.")
     }
     
     // Check if WebSocket is connected
     if (!websocketManager.isConnected(planningSession.session_id)) {
       console.error("❌ WebSocket not connected for session:", planningSession.session_id)
-      throw new Error("WebSocket connection not established")
+      throw new Error("Connection lost. Please wait for reconnection.")
     }
     
     // Check if we're waiting for approval and parse user response
@@ -121,7 +121,7 @@ export async function handlePlanningMessage(message: string, context: MessageHan
     
     const errorMessage: Message = {
       id: (Date.now() + 1).toString(),
-      content: `❌ Planning failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      content: `❌ ${error instanceof Error ? error.message : 'Something went wrong. Please try again.'}`,
       sender: "ai",
       timestamp: new Date(),
       mode: "plan",
@@ -528,10 +528,12 @@ function handlePlanningError(data: Record<string, unknown>, context: MessageHand
     .replace(/WebSocket/gi, 'connection')
     .replace(/session_id/gi, 'session')
     .replace(/null|undefined/gi, 'missing')
+    .replace(/connection not established/gi, 'Unable to connect')
+    .replace(/failed to/gi, 'Could not')
   
   const errorMessage: Message = {
     id: (Date.now() + Math.random()).toString(),
-    content: `Something went wrong: ${simplifiedError}`,
+    content: `⚠️ ${simplifiedError}`,
     sender: "ai",
     timestamp: new Date(),
     mode: "plan",
