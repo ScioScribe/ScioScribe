@@ -63,13 +63,13 @@ export async function handlePlanningMessage(message: string, context: MessageHan
     // Ensure we have a WebSocket connection
     if (!planningSession.session_id) {
       console.error("❌ Session ID is null/undefined when trying to send message")
-      throw new Error("Session ID is null - session may have been reset unexpectedly")
+      throw new Error("Session not initialized. Please refresh the page.")
     }
     
     // Check if WebSocket is connected
     if (!websocketManager.isConnected(planningSession.session_id)) {
       console.error("❌ WebSocket not connected for session:", planningSession.session_id)
-      throw new Error("WebSocket connection not established")
+      throw new Error("Connection lost. Please wait for reconnection.")
     }
     
     // Check if we're waiting for approval and parse user response
@@ -84,7 +84,7 @@ export async function handlePlanningMessage(message: string, context: MessageHan
         // Add approval response indicator
         const approvalResponseMessage: Message = {
           id: (Date.now() + 1).toString(),
-          content: `✅ **Approval Response Detected**\n\nAction: ${approvalResponse.approved ? "APPROVED" : "REJECTED"}\n\nStage: ${planningSession.pending_approval.stage || "Unknown"}\n\nYour response: "${message}"\n\n${approvalResponse.feedback ? `Additional feedback: ${approvalResponse.feedback}\n\n` : ""}Processing your ${approvalResponse.approved ? "approval" : "rejection"}...\n\n⏳ *Waiting for agent to continue...*`,
+          content: approvalResponse.approved ? "✅ Moving forward..." : "❌ Let's revise this section.",
           sender: "ai",
           timestamp: new Date(),
           mode: "plan",
@@ -121,7 +121,7 @@ export async function handlePlanningMessage(message: string, context: MessageHan
     
     const errorMessage: Message = {
       id: (Date.now() + 1).toString(),
-      content: `❌ **Planning Session Error**\n\nFailed to continue planning session.\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}\n\n**Troubleshooting:**\n• Check that the backend server is running on localhost:8000\n• Verify the WebSocket connection is established\n• Try refreshing the page and starting a new session\n\nPlease try again or contact support if the problem persists.`,
+      content: `❌ ${error instanceof Error ? error.message : 'Something went wrong. Please try again.'}`,
       sender: "ai",
       timestamp: new Date(),
       mode: "plan",
@@ -295,13 +295,16 @@ function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHan
     const messageContent = latestAiMessage.content as string
     console.log("💬 Checking if message should be added to chat:", messageContent.substring(0, 100))
     
+    // Extract only the most relevant part of the message for better readability
+    const cleanedContent = extractRelevantContent(messageContent, currentStage)
+    
     // Check if this message has already been displayed to prevent duplicates
     setMessages((prev) => {
       // Check if a message with similar content already exists in recent messages
       const recentMessages = prev.slice(-5) // Check last 5 messages
       const isDuplicate = recentMessages.some(msg => 
         msg.sender === "ai" && 
-        msg.content === messageContent &&
+        msg.content === cleanedContent &&
         msg.mode === "plan"
       )
       
@@ -310,10 +313,10 @@ function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHan
         return prev
       }
       
-      // Create clean chat message with ONLY the agent response (no state/reasoning)
+      // Create clean chat message with ONLY the relevant agent response
       const updateMessage: Message = {
         id: (Date.now() + Math.random()).toString(),
-        content: messageContent, // Clean agent response only
+        content: cleanedContent,
         sender: "ai",
         timestamp: new Date(),
         mode: "plan",
@@ -333,6 +336,141 @@ function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHan
 }
 
 /**
+ * Extracts the most relevant content from agent messages for better readability
+ * @param content Original message content
+ * @param stage Current planning stage
+ * @returns Cleaned and condensed message content
+ */
+function extractRelevantContent(content: string, stage: string): string {
+  // Remove excessive formatting and focus on key information
+  let cleaned = content
+    .replace(/\*\*([^*]+)\*\*/g, '$1') // Remove bold formatting
+    .replace(/\n{3,}/g, '\n\n') // Reduce multiple newlines
+    .trim()
+  
+  // Stage-specific content extraction
+  switch (stage) {
+    case 'objective_setting':
+      return extractObjectiveContent(cleaned)
+    case 'variable_identification':
+      return extractVariableContent(cleaned)
+    case 'experimental_design':
+      return extractDesignContent(cleaned)
+    case 'methodology_protocol':
+      return extractMethodologyContent(cleaned)
+    case 'data_planning':
+      return extractDataPlanningContent(cleaned)
+    case 'final_review':
+      return extractFinalReviewContent(cleaned)
+    default:
+      return getStageUpdateSummary(stage, cleaned.substring(0, 150))
+  }
+}
+
+/**
+ * Stage-specific content extraction functions
+ */
+function extractObjectiveContent(content: string): string {
+  const lines = content.split('\n').filter(line => line.trim())
+  const objective = lines.find(line => line.toLowerCase().includes('objective:') || line.toLowerCase().includes('research question:'))
+  const hypothesis = lines.find(line => line.toLowerCase().includes('hypothesis:'))
+  
+  const parts = []
+  if (objective) parts.push(objective.trim())
+  if (hypothesis) parts.push(hypothesis.trim())
+  
+  return parts.length > 0 ? parts.join('\n') : '🎯 Setting research objectives...'
+}
+
+function extractVariableContent(content: string): string {
+  const lines = content.split('\n').filter(line => line.trim())
+  const variables = lines.filter(line => 
+    line.includes('Independent:') || 
+    line.includes('Dependent:') || 
+    line.includes('Control:') ||
+    line.includes('variable')
+  ).slice(0, 3)
+  
+  return variables.length > 0 ? variables.join('\n') : '🔍 Identifying experimental variables...'
+}
+
+function extractDesignContent(content: string): string {
+  const lines = content.split('\n').filter(line => line.trim())
+  const design = lines.filter(line => 
+    line.includes('group') || 
+    line.includes('sample size') || 
+    line.includes('replicate') ||
+    line.includes('control')
+  ).slice(0, 3)
+  
+  return design.length > 0 ? design.join('\n') : '⚗️ Designing experimental groups...'
+}
+
+function extractMethodologyContent(content: string): string {
+  const lines = content.split('\n').filter(line => line.trim())
+  const methodology = lines.filter(line => 
+    line.includes('Step') || 
+    line.includes('protocol') || 
+    line.includes('procedure') ||
+    line.includes('equipment')
+  ).slice(0, 3)
+  
+  return methodology.length > 0 ? methodology.join('\n') : '📋 Developing methodology...'
+}
+
+function extractDataPlanningContent(content: string): string {
+  const lines = content.split('\n').filter(line => line.trim())
+  const dataPlan = lines.filter(line => 
+    line.includes('data collection') || 
+    line.includes('analysis') || 
+    line.includes('statistical') ||
+    line.includes('visualization')
+  ).slice(0, 3)
+  
+  return dataPlan.length > 0 ? dataPlan.join('\n') : '📊 Planning data collection and analysis...'
+}
+
+function extractFinalReviewContent(content: string): string {
+  const lines = content.split('\n').filter(line => line.trim())
+  const review = lines.filter(line => 
+    line.includes('complete') || 
+    line.includes('review') || 
+    line.includes('ready') ||
+    line.includes('final')
+  ).slice(0, 2)
+  
+  return review.length > 0 ? review.join('\n') : '✅ Finalizing experiment plan...'
+}
+
+/**
+ * Generates a concise stage-based summary for planning updates
+ * @param stage Current planning stage
+ * @param originalContent Original message snippet
+ * @returns Concise stage summary
+ */
+function getStageUpdateSummary(stage: string, originalContent: string): string {
+  const stageNames: Record<string, string> = {
+    'objective_setting': '🎯 Defining research objectives',
+    'variable_identification': '🔍 Identifying variables',
+    'experimental_design': '⚗️ Designing experiment structure',
+    'methodology_protocol': '📋 Creating methodology',
+    'data_planning': '📊 Planning data collection',
+    'final_review': '✅ Final review'
+  }
+  
+  const stageName = stageNames[stage] || `📝 ${stage.replace('_', ' ')}`
+  
+  // Extract first meaningful sentence
+  const firstSentence = originalContent.split('.')[0]?.trim()
+  
+  if (firstSentence && firstSentence.length > 10) {
+    return `${stageName}: ${firstSentence}.`
+  }
+  
+  return stageName
+}
+
+/**
  * Handles approval request events from WebSocket
  * @param data Approval request data
  * @param context Message handler context
@@ -342,9 +480,21 @@ function handlePlanningApprovalRequest(data: Record<string, unknown>, context: M
   
   console.log("⚠️ Planning approval request from WebSocket:", data)
   
+  const stageNames: Record<string, string> = {
+    'objective_setting': 'Research Objectives',
+    'variable_identification': 'Variables',
+    'experimental_design': 'Experimental Design',
+    'methodology_protocol': 'Methodology',
+    'data_planning': 'Data Collection Plan',
+    'final_review': 'Final Plan'
+  }
+  
+  const stage = data.stage as string || "Unknown"
+  const stageName = stageNames[stage] || stage.replace('_', ' ')
+  
   const approvalMessage: Message = {
     id: (Date.now() + Math.random()).toString(),
-    content: `⚠️ **Approval Required**\n\nStage: ${data.stage || "Unknown"}\n\nThe planning agent requires your approval to continue.\n\n**Please respond with:**\n• "approve" or "yes" to continue\n• "reject" or "no" to modify the approach\n• Provide specific feedback for adjustments\n\n*Status: ${data.status || "waiting"}*\n\n*Data source: WebSocket real-time update*`,
+    content: `Ready to proceed with ${stageName}?\n\nType "approve" to continue or provide feedback.`,
     sender: "ai",
     timestamp: new Date(),
     mode: "plan",
@@ -372,9 +522,18 @@ function handlePlanningError(data: Record<string, unknown>, context: MessageHand
   
   console.log("❌ Planning error from WebSocket:", data)
   
+  const errorMsg = data.message as string || "Unknown error occurred"
+  // Simplify technical error messages
+  const simplifiedError = errorMsg
+    .replace(/WebSocket/gi, 'connection')
+    .replace(/session_id/gi, 'session')
+    .replace(/null|undefined/gi, 'missing')
+    .replace(/connection not established/gi, 'Unable to connect')
+    .replace(/failed to/gi, 'Could not')
+  
   const errorMessage: Message = {
     id: (Date.now() + Math.random()).toString(),
-    content: `❌ **Planning Error**\n\n${data.message || "Unknown error occurred"}\n\n*Data source: WebSocket real-time update*`,
+    content: `⚠️ ${simplifiedError}`,
     sender: "ai",
     timestamp: new Date(),
     mode: "plan",

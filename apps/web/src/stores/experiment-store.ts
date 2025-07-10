@@ -15,6 +15,7 @@ import {
   updateExperimentTitle as updateExperimentTitleAPI 
 } from '@/api/database'
 import { IRIS_CSV_DATA, IRIS_EXPERIMENT_PLAN } from '@/data/placeholder'
+import { convertPlanningStateToText } from '@/handlers/planning-state-handler'
 
 // Type definitions for planning state
 interface PlanningVariables {
@@ -56,16 +57,16 @@ interface DatacleanResponse {
   data?: DatacleanData[] | string | DatacleanData
 }
 
-// Planning state conversion utility
+// Planning state conversion utility (now using the structured handler)
 const convertPlanningStateToString = (planningState: PlanningState): string => {
   try {
     if (!planningState) return "";
 
-    // Pretty-printed JSON wrapped in a Markdown code block for readability
-    return `\`\`\`json\n${JSON.stringify(planningState, null, 2)}\n\`\`\``;
+    // Use the new structured text formatter instead of raw JSON
+    return convertPlanningStateToText(planningState);
   } catch (error) {
     console.error("❌ Error converting planning state to string:", error);
-    return `Error serializing planning state: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    return `# Experiment Plan\n\n*Error formatting planning data: ${error instanceof Error ? error.message : 'Unknown error'}*`;
   }
 }
 
