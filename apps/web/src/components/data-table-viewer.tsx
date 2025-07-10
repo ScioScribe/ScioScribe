@@ -1,16 +1,17 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Upload, Download, Search } from "lucide-react"
-import { uploadCsvFile } from "@/api/dataclean"
-import { useChatSessions } from "@/hooks/use-chat-sessions"
-import { useToast } from "@/components/ui/use-toast"
-import { useExperimentStore } from "@/stores/experiment-store"
-import { parseCSVData, getCSVHeaders } from "@/data/placeholder"
+import React, { useState, useEffect, useCallback, useRef } from "react"
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table"
+import { Button } from "../components/ui/button"
+import { Input } from "../components/ui/input"
+import { Upload, Download, Search, MessageSquare, Wifi, WifiOff, Loader2 } from "lucide-react"
+import { useChatSessions } from "../hooks/use-chat-sessions"
+import { useToast } from "../components/ui/use-toast"
+import { useExperimentStore } from "../stores/experiment-store"
+import { parseCSVData, getCSVHeaders } from "../data/placeholder"
+import { websocketManager } from "../utils/streaming-connection-manager"
+import type { WebSocketMessage, WebSocketConnectionHandlers } from "../types/chat-types"
 
 interface DataTableViewerProps {
   csvData?: string
@@ -21,7 +22,25 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
   const [headers, setHeaders] = useState<string[]>([])
   const [searchTerm, setSearchTerm] = useState("")
   const [filteredData, setFilteredData] = useState<Array<Record<string, string>>>([])
+  
+  // WebSocket connection state
+  const [isConnected, setIsConnected] = useState(false)
+  const [isConnecting, setIsConnecting] = useState(false)
+  const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected" | "error">("disconnected")
+  const [conversationActive, setConversationActive] = useState(false)
+  const [processingMessage, setProcessingMessage] = useState("")
+  const [awaitingApproval, setAwaitingApproval] = useState(false)
+  const [pendingTransformations, setPendingTransformations] = useState<string[]>([])
 
+  // Keep track of current session for WebSocket handlers
+  const sessionRef = useRef<string | null>(null)
+
+  // Existing hooks
+  const { datacleanSession, updateDatacleanSession } = useChatSessions()
+  const { currentExperiment, csvData: storeCsv } = useExperimentStore()
+  const { toast } = useToast()
+
+  // Existing useEffect hooks
   useEffect(() => {
     if (csvData) {
       const parsedData = parseCSVData(csvData)
@@ -51,62 +70,428 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
     ))
   }
 
-  const { datacleanSession, updateDatacleanSession } = useChatSessions()
-  const { currentExperiment, csvData: storeCsv } = useExperimentStore()
-  const { toast } = useToast()
+  const convertTableToCSV = (data: Array<Record<string, string>>, headers: string[]): string => {
+    if (!headers.length || !data.length) return ""
+    
+    const csvHeaders = headers.join(',')
+    const csvRows = data.map(row => 
+      headers.map(header => `"${(row[header] || '').replace(/"/g, '""')}"`).join(',')
+    )
+    
+    return [csvHeaders, ...csvRows].join('\n')
+  }
 
-  const handleUpload = async () => {
+  const generateSessionId = (): string => {
+    return `csv-session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+  }
+
+  // WebSocket message handlers
+  const handleWebSocketMessage = useCallback((message: WebSocketMessage) => {
+    console.log("📥 CSV WebSocket message received:", message)
+    
     try {
-      // 1) Build CSV text from the *current* table state so any inline edits are preserved
-      let csvToUpload = ""
-      if (headers.length && tableData.length) {
-        // Compose CSV: first row = headers, subsequent rows = values in header order
-        csvToUpload = [
-          headers.join(','),
-          ...tableData.map(row => headers.map(h => row[h] || '').join(','))
-        ].join('\n')
+      switch (message.type) {
+        case "csv_response":
+          handleCSVResponse(message)
+          break
+          
+        case "csv_approval_response":
+          handleCSVApprovalResponse(message)
+          break
+          
+        case "processing_status":
+          setProcessingMessage(message.data.status as string || "")
+          break
+          
+        case "error":
+          console.error("WebSocket error:", message.data.message)
+          toast({
+            title: "WebSocket Error",
+            description: message.data.message as string,
+            variant: "destructive"
+          })
+          setProcessingMessage("")
+          break
+          
+        case "pong":
+          // Handle pong messages silently
+          break
+          
+        default:
+          console.log("Unknown message type:", message.type)
+      }
+    } catch (error) {
+      console.error("Error handling WebSocket message:", error)
+    }
+  }, [])
+
+  const handleWebSocketOpen = useCallback(() => {
+    console.log("✅ CSV WebSocket connection opened")
+    setIsConnected(true)
+    setIsConnecting(false)
+    setConnectionStatus("connected")
+    
+    toast({
+      title: "Connected",
+      description: "Real-time CSV processing connected",
+      duration: 3000
+    })
+  }, [])
+
+  const handleWebSocketError = useCallback((error: Event) => {
+    console.error("❌ CSV WebSocket error:", error)
+    setIsConnected(false)
+    setIsConnecting(false)
+    setConnectionStatus("error")
+    
+    toast({
+      title: "Connection Error",
+      description: "WebSocket connection failed",
+      variant: "destructive"
+    })
+  }, [])
+
+  const handleWebSocketClose = useCallback((event: CloseEvent) => {
+    console.log("🔒 CSV WebSocket connection closed:", event)
+    setIsConnected(false)
+    setIsConnecting(false)
+    setConnectionStatus("disconnected")
+    
+    if (!event.wasClean) {
+      toast({
+        title: "Connection Lost",
+        description: "WebSocket connection was interrupted",
+        variant: "destructive"
+      })
+    }
+  }, [])
+
+  // WebSocket connection management
+  const connectWebSocket = useCallback((sessionId: string) => {
+    console.log("🔗 Connecting to CSV WebSocket:", sessionId)
+    setIsConnecting(true)
+    setConnectionStatus("connecting")
+
+    const wsUrl = `ws://localhost:8000/api/dataclean/csv-conversation/ws/${sessionId}`
+    
+    const handlers: WebSocketConnectionHandlers = {
+      onMessage: handleWebSocketMessage,
+      onOpen: handleWebSocketOpen,
+      onError: handleWebSocketError,
+      onClose: handleWebSocketClose
+    }
+
+    const connection = websocketManager.createConnection(sessionId, wsUrl, handlers, {
+      maxReconnectAttempts: 3,
+      reconnectDelay: 2000
+    })
+
+    if (connection) {
+      sessionRef.current = sessionId
+      updateDatacleanSession({ session_id: sessionId })
+      return true
+    } else {
+      setIsConnecting(false)
+      setConnectionStatus("error")
+      return false
+    }
+  }, [handleWebSocketMessage, handleWebSocketOpen, handleWebSocketError, handleWebSocketClose, updateDatacleanSession])
+
+  // Send WebSocket message
+  const sendWebSocketMessage = useCallback((message: any) => {
+    if (!sessionRef.current) {
+      console.error("No active session for WebSocket message")
+      return false
+    }
+
+    const websocketMessage: WebSocketMessage = {
+      type: "csv_message",
+      data: message,
+      session_id: sessionRef.current,
+      timestamp: new Date().toISOString()
+    }
+
+    return websocketManager.sendMessage(sessionRef.current, websocketMessage)
+  }, [])
+
+  // Enhanced conversation starter with WebSocket
+  const handleStartConversation = async () => {
+    const csvString = convertTableToCSV(tableData, headers)
+    
+    if (!csvString) {
+      toast({ title: "No data", description: "Please add some data first" })
+      return
+    }
+
+    const sessionId = datacleanSession?.session_id || generateSessionId()
+    
+    try {
+      // First establish WebSocket connection
+      const connected = connectWebSocket(sessionId)
+      
+      if (!connected) {
+        throw new Error("Failed to establish WebSocket connection")
       }
 
-      // Fallback to prop / store values if we have no rows (e.g. not yet rendered)
-      if (!csvToUpload) {
-        csvToUpload = csvData || storeCsv || ""
-      }
+      // Wait for connection to be established
+      const waitForConnection = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error("Connection timeout"))
+        }, 10000)
 
-      if (!csvToUpload) {
-        toast({ title: "No CSV data", description: "There is no CSV content to upload." })
-        return
-      }
-
-      // Ensure we have an active execute-mode session so the artifact id can be referenced later
-      if (!datacleanSession?.session_id) {
-        toast({ title: "No active session", description: "Start an execute-mode chat session first." })
-        return
-      }
-
-      const experimentId = currentExperiment?.id?.toString() || "demo-experiment"
-
-      console.log("📤 Upload request: ", {
-        experimentId,
-        csvPreview: csvToUpload.slice(0, 120) + (csvToUpload.length > 120 ? '...' : '')
+        const checkConnection = () => {
+          if (isConnected) {
+            clearTimeout(timeout)
+            resolve()
+          } else if (connectionStatus === "error") {
+            clearTimeout(timeout)
+            reject(new Error("Connection failed"))
+          } else {
+            setTimeout(checkConnection, 100)
+          }
+        }
+        
+        checkConnection()
       })
 
-      toast({ title: "Uploading…", description: "Sending CSV to the server", duration: 1500 })
-      const res = await uploadCsvFile(csvToUpload, experimentId)
+      await waitForConnection
 
-      toast({ title: "Upload complete", description: "File processed", duration: 2000 })
+      // Send initial CSV message via WebSocket
+      const initialMessage = {
+        csv_data: csvString,
+        user_message: "Hi! I'd like to start cleaning this CSV data. Please analyze it and suggest improvements.",
+        user_id: "demo-user"
+      }
 
-      // Log the artifact id for debugging purposes (requirement)
-      console.log("📦 CSV uploaded – artifact_id:", res.artifact_id)
+      const sent = sendWebSocketMessage(initialMessage)
+      
+      if (sent) {
+        setConversationActive(true)
+        setProcessingMessage("Starting conversation...")
+        
+        toast({ 
+          title: "Conversation Started", 
+          description: "Connected to CSV cleaning assistant via WebSocket" 
+        })
+      } else {
+        throw new Error("Failed to send initial message")
+      }
 
-      // Persist the artifact id into the current dataclean chat session so subsequent prompts can reference it
-      updateDatacleanSession({ experiment_id: res.artifact_id })
-    } catch (error: unknown) {
-      console.error("CSV upload failed", error)
-      const message = error instanceof Error ? error.message : "Unexpected error"
-      toast({ title: "Upload failed", description: message, variant: "destructive" })
+    } catch (error: any) {
+      console.error("Failed to start CSV conversation via WebSocket", error)
+      // Fallback to HTTP if WebSocket fails
+      await handleStartConversationHTTP(csvString, sessionId)
     }
   }
 
+  // HTTP fallback (existing implementation)
+  const handleStartConversationHTTP = async (csvString: string, sessionId: string) => {
+    try {
+      const response = await fetch('http://localhost:8000/api/dataclean/csv-conversation/process', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          csv_data: csvString,
+          user_message: "Hi! I'd like to start cleaning this CSV data.",
+          session_id: sessionId,
+          user_id: "demo-user"
+        })
+      })
+
+      const result = await response.json()
+
+      if (result.success) {
+        updateDatacleanSession({ session_id: sessionId })
+        handleCSVResponse({ data: result })
+        setConversationActive(true)
+        
+        toast({ 
+          title: "Conversation Started", 
+          description: "Connected to CSV cleaning assistant (HTTP fallback)" 
+        })
+      } else {
+        throw new Error(result.error_message || "Failed to start conversation")
+      }
+    } catch (error: any) {
+      console.error("HTTP fallback failed", error)
+      toast({ 
+        title: "Connection failed", 
+        description: error?.message || "Could not connect to CSV assistant", 
+        variant: "destructive" 
+      })
+    }
+  }
+
+  // Enhanced CSV response handler
+  const handleCSVResponse = (response: any) => {
+    console.log("📊 Processing CSV response:", response)
+    
+    const data = response.data || response
+    const { 
+      original_csv, 
+      cleaned_csv, 
+      changes_made, 
+      suggestions, 
+      response_message,
+      requires_approval,
+      pending_transformations
+    } = data
+    
+    // Handle approval requests
+    if (requires_approval && pending_transformations) {
+      setAwaitingApproval(true)
+      setPendingTransformations(pending_transformations)
+      
+      toast({
+        title: "Approval Required",
+        description: `${pending_transformations.length} changes suggested. Please review and approve.`,
+        duration: 6000
+      })
+    }
+    
+    // Update table data if CSV was cleaned
+    if (cleaned_csv && cleaned_csv !== original_csv) {
+      try {
+        const lines = cleaned_csv.trim().split('\n')
+        if (lines.length > 1) {
+          const newHeaders = lines[0].split(',').map((h: string) => h.trim())
+          const newData = lines.slice(1).map((line: string, index: number) => {
+            const values = line.split(',').map((v: string) => v.trim().replace(/^"|"$/g, ''))
+            const row: Record<string, string> = { id: (index + 1).toString() }
+            newHeaders.forEach((header, i) => {
+              row[header] = values[i] || ''
+            })
+            return row
+          })
+          
+          setHeaders(newHeaders)
+          setTableData(newData)
+          setFilteredData(newData)
+          
+          // Update experiment store with new CSV
+          const { updateCsvFromDatacleanResponse } = useExperimentStore()
+          updateCsvFromDatacleanResponse(cleaned_csv)
+        }
+      } catch (error) {
+        console.error("Failed to parse cleaned CSV", error)
+      }
+    }
+    
+    // Show response message
+    if (response_message) {
+      toast({ 
+        title: "Assistant Response", 
+        description: response_message,
+        duration: 5000
+      })
+    }
+    
+    // Show changes made
+    if (changes_made && changes_made.length > 0) {
+      toast({ 
+        title: "Data Updated", 
+        description: `Applied ${changes_made.length} changes: ${changes_made.join(', ')}`,
+        duration: 4000
+      })
+    }
+    
+    // Log suggestions for future use
+    if (suggestions && suggestions.length > 0) {
+      console.log("💡 Suggestions received:", suggestions)
+    }
+    
+    setProcessingMessage("")
+  }
+
+  // Handle approval responses
+  const handleCSVApprovalResponse = (message: WebSocketMessage) => {
+    console.log("✅ CSV approval response received:", message)
+    setAwaitingApproval(false)
+    setPendingTransformations([])
+    handleCSVResponse(message)
+  }
+
+  // Send approval response
+  const sendApprovalResponse = useCallback((approved: boolean, feedback?: string) => {
+    if (!sessionRef.current) {
+      toast({
+        title: "No active session",
+        description: "Please start a conversation first",
+        variant: "destructive"
+      })
+      return
+    }
+
+    const approvalMessage: WebSocketMessage = {
+      type: "csv_approval",
+      data: {
+        approved,
+        user_feedback: feedback,
+        transformation_id: "pending", // Simple ID for now
+        user_id: "demo-user"
+      },
+      session_id: sessionRef.current,
+      timestamp: new Date().toISOString()
+    }
+
+    const sent = websocketManager.sendMessage(sessionRef.current, approvalMessage)
+    
+    if (sent) {
+      setProcessingMessage("Processing your response...")
+      toast({
+        title: approved ? "Changes Approved" : "Changes Rejected",
+        description: "Processing your response...",
+        duration: 2000
+      })
+    } else {
+      toast({
+        title: "Failed to send response",
+        description: "Please check your connection",
+        variant: "destructive"
+      })
+    }
+  }, [])
+
+  // Send follow-up message
+  const sendFollowUpMessage = useCallback((userMessage: string) => {
+    if (!conversationActive) {
+      toast({
+        title: "No active conversation",
+        description: "Please start a conversation first",
+        variant: "destructive"
+      })
+      return
+    }
+
+    const csvString = convertTableToCSV(tableData, headers)
+    
+    const followUpMessage = {
+      csv_data: csvString,
+      user_message: userMessage,
+      user_id: "demo-user"
+    }
+
+    const sent = sendWebSocketMessage(followUpMessage)
+    
+    if (sent) {
+      setProcessingMessage("Processing your request...")
+      toast({
+        title: "Message Sent",
+        description: "Processing your request...",
+        duration: 2000
+      })
+    } else {
+      toast({
+        title: "Failed to send message",
+        description: "Please check your connection",
+        variant: "destructive"
+      })
+    }
+  }, [conversationActive, tableData, headers, sendWebSocketMessage])
+
+  // Handle download
   const handleDownload = () => {
     const csvContent = [headers.join(','), ...filteredData.map(row => 
       headers.map(header => row[header] || '').join(',')
@@ -116,7 +501,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'iris_dataset.csv'
+    a.download = 'cleaned_data.csv'
     document.body.appendChild(a)
     a.click()
     window.URL.revokeObjectURL(url)
@@ -135,7 +520,24 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                 ({filteredData.length} of {tableData.length} rows)
               </span>
             )}
+            
+            {/* Connection Status Indicator */}
+            {conversationActive && (
+              <div className="flex items-center gap-1 ml-2">
+                {isConnecting ? (
+                  <Loader2 className="h-3 w-3 animate-spin text-yellow-500" />
+                ) : isConnected ? (
+                  <Wifi className="h-3 w-3 text-green-500" />
+                ) : (
+                  <WifiOff className="h-3 w-3 text-red-500" />
+                )}
+                <span className="text-xs text-muted-foreground">
+                  {connectionStatus}
+                </span>
+              </div>
+            )}
           </CardTitle>
+          
           <div className="flex items-center gap-2">
             <div className="relative">
               <Search className="h-3 w-3 absolute left-2 top-1/2 transform -translate-y-1/2 text-muted-foreground" />
@@ -146,14 +548,24 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                 className="w-32 h-6 text-xs pl-6 bg-transparent border-gray-300 dark:border-gray-600"
               />
             </div>
+            
             <Button 
               variant="ghost" 
               size="sm" 
               className="h-6 px-2 text-xs"
-              onClick={handleUpload}
+              onClick={handleStartConversation}
+              disabled={isConnecting || conversationActive}
+              title={conversationActive ? "Conversation active" : "Start CSV conversation"}
             >
-              <Upload className="h-3 w-3" />
+              {isConnecting ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : conversationActive ? (
+                <MessageSquare className="h-3 w-3 text-green-500" />
+              ) : (
+                <Upload className="h-3 w-3" />
+              )}
             </Button>
+            
             <Button 
               variant="ghost" 
               size="sm" 
@@ -165,6 +577,49 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
             </Button>
           </div>
         </div>
+        
+        {/* Processing Status */}
+        {processingMessage && (
+          <div className="flex items-center gap-2 mt-2 text-xs text-blue-600 dark:text-blue-400">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {processingMessage}
+          </div>
+        )}
+        
+        {/* Approval Request */}
+        {awaitingApproval && pendingTransformations.length > 0 && (
+          <div className="mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-md border border-yellow-200 dark:border-yellow-700">
+            <div className="text-xs font-medium text-yellow-800 dark:text-yellow-200 mb-2">
+              Approval Required
+            </div>
+            <div className="text-xs text-yellow-700 dark:text-yellow-300 mb-2">
+              Suggested changes:
+            </div>
+            <ul className="text-xs text-yellow-600 dark:text-yellow-400 mb-3 list-disc list-inside">
+              {pendingTransformations.map((transformation, index) => (
+                <li key={index}>{transformation}</li>
+              ))}
+            </ul>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="default"
+                className="h-6 px-3 text-xs"
+                onClick={() => sendApprovalResponse(true)}
+              >
+                Approve
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 px-3 text-xs"
+                onClick={() => sendApprovalResponse(false)}
+              >
+                Reject
+              </Button>
+            </div>
+          </div>
+        )}
       </CardHeader>
 
       <CardContent className="flex-1 flex flex-col min-h-0 p-0">

@@ -55,11 +55,15 @@ async function sendDatacleanMessage(sessionId: string, message: string, context:
     console.log("📤 Sending dataclean message:", message)
     
     const datacleanSession = context.getDatacleanSession()
+    
+    // Get CSV data from experiment store for the CSV conversation endpoint
+    const csvData = await getCsvDataFromExperimentStore(context)
+    
     const requestPayload = {
       user_message: message,
       session_id: sessionId,
       user_id: "demo-user",
-      artifact_id: datacleanSession.experiment_id || undefined
+      csv_data: csvData || ""  // Required field for CSV endpoint
     } as const
     console.log("📤 SEND CONVERSATION MESSAGE REQUEST:", requestPayload)
     
@@ -80,6 +84,42 @@ async function sendDatacleanMessage(sessionId: string, message: string, context:
   } catch (error) {
     console.error("❌ Failed to send dataclean message:", error)
     throw error
+  }
+}
+
+/**
+ * Gets CSV data using the same source as DataTableViewer
+ * @param context Message handler context
+ * @returns CSV data as string or empty string if not available
+ */
+async function getCsvDataFromExperimentStore(context: MessageHandlerContext): Promise<string> {
+  try {
+    // Use the new CSV utility function for consistent data access
+    const { getCsvDataWithFallbacks } = await import('../utils/csv-utils')
+    
+    console.log("🔍 DEBUG: Looking for CSV data...")
+    console.log("🔍 Context CSV length:", context.csv?.length || 0)
+    console.log("🔍 Context CSV preview:", context.csv?.substring(0, 100) || "empty")
+    
+    // Get CSV data with fallbacks (context -> experiment store)
+    const csvData = getCsvDataWithFallbacks(context.csv)
+    
+    if (csvData && csvData.trim()) {
+      console.log("✅ Retrieved CSV data successfully, length:", csvData.length)
+      return csvData
+    }
+    
+    // Log detailed debug info
+    console.warn("⚠️ No CSV data available from any source")
+    console.warn("🔍 Available context keys:", Object.keys(context))
+    console.warn("🔍 Context csv field exists:", 'csv' in context)
+    console.warn("🔍 Context csv value type:", typeof context.csv)
+    
+    return ""
+    
+  } catch (error) {
+    console.error("❌ Error getting CSV data:", error)
+    return ""
   }
 }
 

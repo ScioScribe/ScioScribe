@@ -7,128 +7,10 @@
 
 const BASE_URL = 'http://localhost:8000/api/dataclean'
 
-export interface DataCleanRequest {
-  data: unknown[]
-  options?: {
-    removeNulls?: boolean
-    removeDuplicates?: boolean
-    standardizeFormats?: boolean
-    fillMissingValues?: boolean
-  }
-}
-
-export interface DataCleanResponse {
-  success: boolean
-  data: unknown[]
-  message?: string
-  stats?: {
-    originalRows: number
-    cleanedRows: number
-    removedRows: number
-    modifications: string[]
-  }
-}
-
 export interface DataCleanError {
   error: string
   message: string
   details?: string
-}
-
-/**
- * Cleans the provided dataset using the data cleaning service
- * 
- * @param request - The data cleaning request containing data and options
- * @returns Promise resolving to cleaned data response
- * @throws Error if the request fails or returns an error
- */
-export async function cleanData(request: DataCleanRequest): Promise<DataCleanResponse> {
-  try {
-    const response = await fetch(BASE_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(request),
-    })
-
-    if (!response.ok) {
-      const errorData: DataCleanError = await response.json()
-      throw new Error(`Data cleaning failed: ${errorData.message}`)
-    }
-
-    const result: DataCleanResponse = await response.json()
-    return result
-  } catch (error) {
-    if (error instanceof Error) {
-      throw error
-    }
-    throw new Error('Unknown error occurred during data cleaning')
-  }
-}
-
-/**
- * Validates data format before cleaning
- * 
- * @param data - The data to validate
- * @returns Promise resolving to validation result
- */
-export async function validateDataFormat(data: unknown[]): Promise<{
-  valid: boolean
-  issues: string[]
-  suggestions: string[]
-}> {
-  try {
-    const response = await fetch(`${BASE_URL}/validate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ data }),
-    })
-
-    if (!response.ok) {
-      const errorData: DataCleanError = await response.json()
-      throw new Error(`Data validation failed: ${errorData.message}`)
-    }
-
-    return await response.json()
-  } catch (error) {
-    if (error instanceof Error) {
-      throw error
-    }
-    throw new Error('Unknown error occurred during data validation')
-  }
-}
-
-/**
- * Gets available data cleaning options and their descriptions
- * 
- * @returns Promise resolving to available cleaning options
- */
-export async function getCleaningOptions(): Promise<{
-  options: Array<{
-    key: string
-    name: string
-    description: string
-    default: boolean
-  }>
-}> {
-  try {
-    const response = await fetch(`${BASE_URL}/options`)
-
-    if (!response.ok) {
-      const errorData: DataCleanError = await response.json()
-      throw new Error(`Failed to fetch cleaning options: ${errorData.message}`)
-    }
-
-    return await response.json()
-  } catch (error) {
-    if (error instanceof Error) {
-      throw error
-    }
-    throw new Error('Unknown error occurred while fetching cleaning options')
-  }
 }
 
 // Conversation API interfaces and functions
@@ -137,6 +19,7 @@ export interface StartConversationRequest {
   session_id?: string
   artifact_id?: string
   file_path?: string
+  csv_data?: string // optional raw CSV string to bootstrap the conversation
 }
 
 export interface StartConversationResponse {
@@ -202,59 +85,110 @@ export interface ConversationCapabilitiesResponse {
 }
 
 /**
- * Start a new conversation session for data cleaning
+ * Start a new CSV conversation session for data cleaning
  * 
  * @param request - The conversation start request
  * @returns Promise resolving to session information
  */
 export async function startConversation(request: StartConversationRequest): Promise<StartConversationResponse> {
   try {
-    const response = await fetch(`${BASE_URL}/conversation/start`, {
+    console.log("🧹 Starting CSV conversation with new endpoint")
+    
+    // Use CSV-specific endpoint instead of general conversation endpoint
+    const csvRequest = {
+      csv_data: request.csv_data || "", // Include CSV if provided
+      user_message: "Hi", // Default greeting message
+      session_id: request.session_id || `csv-session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      user_id: request.user_id || "demo-user"
+    }
+    
+    const response = await fetch(`${BASE_URL}/csv-conversation/process`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify(csvRequest),
     })
 
     if (!response.ok) {
       const errorData: DataCleanError = await response.json()
-      throw new Error(`Failed to start conversation: ${errorData.message}`)
+      throw new Error(`Failed to start CSV conversation: ${errorData.message}`)
     }
 
     const result = await response.json()
-    return result
+    
+    // Convert CSV response to conversation response format
+    const conversationResponse: StartConversationResponse = {
+      session_id: result.session_id,
+      user_id: csvRequest.user_id,
+      status: result.success ? "active" : "error",
+      message: result.response_message || "CSV conversation started",
+      capabilities: ["csv_analysis", "data_cleaning", "quality_assessment"],
+      session_info: {
+        created_at: new Date().toISOString(),
+        session_type: "csv_conversation",
+        state: result.success ? "active" : "error"
+      }
+    }
+    
+    return conversationResponse
   } catch (error) {
-    console.error("❌ Error starting conversation:", error)
+    console.error("❌ Error starting CSV conversation:", error)
     throw error
   }
 }
 
 /**
- * Send a message in an active conversation session
+ * Send a message in an active CSV conversation session
  * 
  * @param request - The conversation message request
  * @returns Promise resolving to conversation response
  */
 export async function sendConversationMessage(request: ConversationMessageRequest): Promise<ConversationMessageResponse> {
   try {
-    const response = await fetch(`${BASE_URL}/conversation/message`, {
+    console.log("🧹 Sending CSV conversation message with new endpoint")
+    
+    // Use CSV-specific endpoint instead of general conversation endpoint
+    const csvRequest = {
+      csv_data: "", // Empty CSV data for text-only messages
+      user_message: request.user_message,
+      session_id: request.session_id,
+      user_id: request.user_id || "demo-user"
+    }
+    
+    const response = await fetch(`${BASE_URL}/csv-conversation/process`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify(csvRequest),
     })
 
     if (!response.ok) {
       const errorData: DataCleanError = await response.json()
-      throw new Error(`Failed to send message: ${errorData.message}`)
+      throw new Error(`Failed to send CSV message: ${errorData.message}`)
     }
 
     const result = await response.json()
-    return result
+    
+    // Convert CSV response to conversation response format
+    const conversationResponse: ConversationMessageResponse = {
+      session_id: result.session_id,
+      response_type: result.success ? "text" : "error",
+      message: result.response_message || "Message processed",
+      // Always pass back both the original and cleaned CSV (if present)
+      data: {
+        original_csv: result.original_csv,
+        cleaned_csv: result.cleaned_csv ?? null
+      },
+      suggestions: result.suggestions || [],
+      requires_confirmation: result.requires_approval || false,
+      next_steps: result.changes_made || []
+    }
+    
+    return conversationResponse
   } catch (error) {
-    console.error("❌ Error sending conversation message:", error)
+    console.error("❌ Error sending CSV conversation message:", error)
     throw error
   }
 }
