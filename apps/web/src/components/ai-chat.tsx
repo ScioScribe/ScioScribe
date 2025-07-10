@@ -324,12 +324,31 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
 
   const handleExecuteMessageWithSession = useCallback(async (message: string) => {
     try {
-      // Initialize session if not active
+      // Initialize session if not active, with automatic CSV integration
       if (!datacleanSession.is_active) {
-        const sessionResponse = await initializeDatacleanSession()
+        console.log("🧹 Initializing dataclean session with CSV integration")
         
-        // Add welcome message
-        createDatacleanWelcomeMessage(sessionResponse.session_id, sessionResponse.response as unknown as Record<string, unknown>, messageHandlerContext)
+        const sessionResponse = await initializeDatacleanSession("demo-user", csv)
+        
+        // Enhanced welcome message that mentions CSV data if available
+        if (csv && csv.trim()) {
+          const csvWelcomeMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            content: `🧹 **Data Cleaning Session Started**\n\nSession ID: ${sessionResponse.session_id}\n\n**CSV Data Detected:** I can see you have dataset loaded!\n\nI'm ready to help you with:\n• Data quality analysis\n• Cleaning and fixing issues\n• Removing duplicates\n• Handling missing values\n• Data transformation\n\nProcessing your message: "${message}"\n\nLet me analyze your data...`,
+            sender: "ai",
+            timestamp: new Date(),
+            mode: "execute",
+            response_type: "text"
+          }
+          setMessages((prev) => [...prev, csvWelcomeMessage])
+          
+          // Send message with CSV context
+          await handleExecuteMessage(`CSV Data Available. User request: ${message}`, messageHandlerContext)
+        } else {
+          // Standard welcome without CSV
+          createDatacleanWelcomeMessage(sessionResponse.session_id, sessionResponse.response as unknown as Record<string, unknown>, messageHandlerContext)
+          await handleExecuteMessage(message, messageHandlerContext)
+        }
         
         // Update session activity
         updateDatacleanSession({ last_activity: new Date() })
@@ -340,10 +359,56 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     } catch (error) {
       console.error("❌ Execute message error:", error)
     }
-  }, [datacleanSession.is_active, initializeDatacleanSession, updateDatacleanSession, messageHandlerContext])
+  }, [datacleanSession.is_active, initializeDatacleanSession, updateDatacleanSession, messageHandlerContext, csv, setMessages, handleExecuteMessage])
+
+  // Auto-initialize CSV conversation when CSV data is available
+  const autoInitializeCsvConversation = useCallback(async () => {
+    try {
+      console.log("🧹 Auto-initializing CSV conversation with available data")
+      
+      // Initialize dataclean session with CSV data
+      const sessionResponse = await initializeDatacleanSession("demo-user", csv)
+      
+      // Create CSV analysis message 
+      const csvAnalysisMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        content: `🧹 **CSV Data Detected**\n\nI've detected CSV data in your experiment and automatically initialized a data cleaning session.\n\n**Session ID:** ${sessionResponse.session_id}\n\n**Dataset Preview:**\n- Processing your CSV data...\n- Analyzing data quality...\n- Preparing suggestions...\n\nI'm now analyzing your dataset. Feel free to ask me to:\n• Clean and fix data issues\n• Remove duplicates or missing values\n• Transform data formats\n• Generate quality reports\n\nWhat would you like me to help you with?`,
+        sender: "ai",
+        timestamp: new Date(),
+        mode: "execute",
+        response_type: "text"
+      }
+      
+      setMessages((prev) => [...prev, csvAnalysisMessage])
+      
+      // Process CSV data through the conversation system
+      if (csv && csv.trim()) {
+        console.log("📊 Sending CSV data for analysis")
+        
+        // Simulate sending CSV for analysis
+        await handleExecuteMessage(`I have CSV data ready for analysis. Please analyze this dataset: ${csv.substring(0, 200)}...`, messageHandlerContext)
+      }
+      
+      // Update session activity
+      updateDatacleanSession({ last_activity: new Date() })
+      
+    } catch (error) {
+      console.error("❌ Auto CSV initialization error:", error)
+      
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        content: `❌ **Auto-Initialization Failed**\n\nFailed to automatically initialize CSV conversation.\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}\n\nYou can still manually send messages to start the conversation.`,
+        sender: "ai",
+        timestamp: new Date(),
+        mode: "execute",
+        response_type: "error"
+      }
+      setMessages((prev) => [...prev, errorMessage])
+    }
+  }, [csv, initializeDatacleanSession, updateDatacleanSession, messageHandlerContext, setMessages, handleExecuteMessage])
 
   // Mode switching handler
-  const handleModeSwitch = useCallback((newMode: string) => {
+  const handleModeSwitch = useCallback(async (newMode: string) => {
     const previousMode = selectedMode
     setSelectedMode(newMode)
     
@@ -360,8 +425,11 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       
       setMessages((prev) => [...prev, modeSwitchMessage])
       console.log(`🔄 Mode switched from ${previousMode} to ${newMode}`)
+      
+      // (Disabled) Auto-initialization of CSV conversation on mode switch.
+      // Dataclean session will be created lazily when the user sends the first message.
     }
-  }, [selectedMode, setMessages])
+  }, [selectedMode, setMessages, csv, datacleanSession.is_active, autoInitializeCsvConversation])
 
   // Send message handler
   const handleSendMessage = useCallback(async () => {
@@ -469,6 +537,8 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       // Intentionally left blank – let the backend handle session lifecycle.
     }
   }, [])
+
+  // Removed auto-initialization when CSV data becomes available. Session will start on first user message.
 
   // Debug function setup (run once on mount)
   useEffect(() => {

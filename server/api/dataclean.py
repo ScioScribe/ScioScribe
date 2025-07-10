@@ -351,11 +351,15 @@ async def _handle_csv_message(websocket: WebSocket, session_id: str, payload: Di
         response = await csv_conversation_graph.process_csv_conversation(request)
         
         # Send response back to client
-        await _send_ws_message(websocket, {
+        response_message = {
             "type": "csv_response",
             "data": response.dict(),
             "session_id": session_id
-        })
+        }
+        
+        logger.info(f"📤 Sending CSV WebSocket response for session {session_id}: {response.success}")
+        await _send_ws_message(websocket, response_message)
+        logger.info(f"✅ CSV WebSocket response sent successfully for session {session_id}")
         
     except Exception as exc:
         logger.error(f"Error handling CSV message: {exc}")

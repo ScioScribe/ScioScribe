@@ -7,7 +7,7 @@ CSV data strings with natural language interaction and HITL approval.
 
 import json
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
 from langgraph.graph import StateGraph, END
 from langgraph.graph.state import CompiledStateGraph
@@ -42,7 +42,7 @@ class CSVConversationGraph:
         self.openai_client = openai_client
         self.csv_processor = CSVDirectProcessor(openai_client)
         self.quality_agent = DataQualityAgent(openai_client) if openai_client else None
-        self.sessions: Dict[str, CSVConversationState] = {}
+        self.sessions: Dict[str, Union[CSVConversationState, Dict[str, Any]]] = {}
         
         # Build and compile the graph
         self.graph = self._build_csv_graph()
@@ -103,6 +103,7 @@ class CSVConversationGraph:
             self._route_after_suggestions,
             {
                 "approval_needed": "request_approval",
+                "apply_directly": "apply_changes",
                 "direct_response": "compose_response"
             }
         )
@@ -168,44 +169,87 @@ class CSVConversationGraph:
             
             state = self.sessions[request.session_id]
             
-            # Update state with approval
-            state.awaiting_approval = False
-            
-            if request.approved:
-                # Apply pending transformations
-                if state.pending_transformations:
-                    state.current_csv = await self.csv_processor.apply_csv_transformations(
-                        state.current_csv, state.pending_transformations
-                    )
-                    state.applied_transformations.extend(state.pending_transformations)
-                    state.pending_transformations = []
-                    
-                    response_message = "Great! I've applied the changes to your data."
-                else:
-                    response_message = "No changes were applied."
-            else:
-                # Clear pending transformations
-                state.pending_transformations = []
-                response_message = "Understood. I won't make those changes."
+            # Handle both dictionary and Pydantic model states
+            if isinstance(state, dict):
+                # Update dictionary state with approval
+                state["awaiting_approval"] = False
                 
-                if request.user_feedback:
-                    response_message += f" {request.user_feedback}"
-            
-            state.response = response_message
-            state.updated_at = datetime.now()
-            
-            # Store updated state
-            self.sessions[request.session_id] = state
-            
-            return CSVProcessingResponse(
-                success=True,
-                original_csv=state.original_csv,
-                cleaned_csv=state.current_csv if state.current_csv != state.original_csv else None,
-                changes_made=state.applied_transformations,
-                session_id=request.session_id,
-                conversation_active=True,
-                response_message=response_message
-            )
+                if request.approved:
+                    # Apply pending transformations
+                    pending_transformations = state.get("pending_transformations", [])
+                    if pending_transformations:
+                        state["current_csv"] = await self.csv_processor.apply_csv_transformations(
+                            state["current_csv"], pending_transformations
+                        )
+                        applied = state.get("applied_transformations", [])
+                        applied.extend(pending_transformations)
+                        state["applied_transformations"] = applied
+                        state["pending_transformations"] = []
+                        
+                        response_message = "Great! I've applied the changes to your data."
+                    else:
+                        response_message = "No changes were applied."
+                else:
+                    # Clear pending transformations
+                    state["pending_transformations"] = []
+                    response_message = "Understood. I won't make those changes."
+                    
+                    if request.user_feedback:
+                        response_message += f" {request.user_feedback}"
+                
+                state["response"] = response_message
+                
+                # Store updated state
+                self.sessions[request.session_id] = state
+                
+                return CSVProcessingResponse(
+                    success=True,
+                    original_csv=state["original_csv"],
+                    cleaned_csv=state["current_csv"],
+                    changes_made=state.get("applied_transformations", []),
+                    session_id=request.session_id,
+                    conversation_active=True,
+                    response_message=response_message
+                )
+            else:
+                # Legacy Pydantic model handling
+                state.awaiting_approval = False
+                
+                if request.approved:
+                    # Apply pending transformations
+                    if state.pending_transformations:
+                        state.current_csv = await self.csv_processor.apply_csv_transformations(
+                            state.current_csv, state.pending_transformations
+                        )
+                        state.applied_transformations.extend(state.pending_transformations)
+                        state.pending_transformations = []
+                        
+                        response_message = "Great! I've applied the changes to your data."
+                    else:
+                        response_message = "No changes were applied."
+                else:
+                    # Clear pending transformations
+                    state.pending_transformations = []
+                    response_message = "Understood. I won't make those changes."
+                    
+                    if request.user_feedback:
+                        response_message += f" {request.user_feedback}"
+                
+                state.response = response_message
+                state.updated_at = datetime.now()
+                
+                # Store updated state
+                self.sessions[request.session_id] = state
+                
+                return CSVProcessingResponse(
+                    success=True,
+                    original_csv=state.original_csv,
+                    cleaned_csv=state.current_csv,
+                    changes_made=state.applied_transformations,
+                    session_id=request.session_id,
+                    conversation_active=True,
+                    response_message=response_message
+                )
             
         except Exception as e:
             logger.error(f"Error handling approval: {str(e)}")
@@ -239,14 +283,16 @@ class CSVConversationGraph:
         try:
             message = state["user_message"].lower().strip()
             
-            # Intent classification
+            # Intent classification with enhanced patterns
             if message in ["hi", "hello", "hey"]:
                 state["intent"] = "greeting"
-            elif any(word in message for word in ["clean", "fix", "improve"]):
-                state["intent"] = "transform"
-            elif any(word in message for word in ["yes", "no", "approve", "reject"]):
+            elif any(word in message for word in ["yes", "apply", "fix it", "do it", "please apply", "go ahead"]):
                 state["intent"] = "approval"
-            elif any(word in message for word in ["analyze", "check", "examine"]):
+            elif any(word in message for word in ["clean", "fix", "improve", "transform", "remove duplicates", "fill missing"]):
+                state["intent"] = "transform"
+            elif any(word in message for word in ["no", "don't", "cancel", "reject", "skip"]):
+                state["intent"] = "rejection"
+            elif any(word in message for word in ["analyze", "check", "examine", "review", "show me"]):
                 state["intent"] = "analyze"
             else:
                 state["intent"] = "analyze"  # Default to analysis
@@ -267,6 +313,8 @@ class CSVConversationGraph:
             # Update state with analysis results
             state["quality_issues"] = analysis.quality_issues
             state["confidence_score"] = analysis.confidence_score
+            # Store any AI or rule-based suggestions from analysis for later use
+            state["analysis_suggestions"] = getattr(analysis, "suggestions", [])
             
             logger.info(f"Analyzed CSV: {len(analysis.quality_issues)} issues found")
             return state
@@ -291,9 +339,25 @@ class CSVConversationGraph:
                     suggestions.append("Remove duplicate rows")
                 elif "empty rows" in issue.lower():
                     suggestions.append("Remove empty rows")
-            
-            # Store suggestions in pending transformations
-            state["pending_transformations"] = suggestions
+                elif "inconsistent" in issue.lower() or "capitalization" in issue.lower() or "spelling" in issue.lower():
+                    suggestions.append("Standardize categorical values")
+                elif "outlier" in issue.lower():
+                    suggestions.append("Handle outliers")
+ 
+            # Merge in AI/analysis suggestions (if any) and deduplicate
+            analysis_suggestions = state.get("analysis_suggestions", [])
+            suggestions.extend(analysis_suggestions)
+
+            # Deduplicate while preserving order
+            seen = set()
+            deduped = []
+            for s in suggestions:
+                if s not in seen:
+                    deduped.append(s)
+                    seen.add(s)
+
+            # Store combined suggestions as pending transformations
+            state["pending_transformations"] = deduped
             
             logger.info(f"Generated {len(suggestions)} suggestions for session {state['session_id']}")
             return state
@@ -303,52 +367,56 @@ class CSVConversationGraph:
             state["pending_transformations"] = []
             return state
     
-    async def _request_approval(self, state: CSVConversationState) -> CSVConversationState:
+    async def _request_approval(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Request user approval for transformations."""
         try:
-            if state.pending_transformations:
-                state.awaiting_approval = True
+            pending_transformations = state.get("pending_transformations", [])
+            if pending_transformations:
+                state["awaiting_approval"] = True
                 
                 response = "I suggest the following changes:\n"
-                for i, transformation in enumerate(state.pending_transformations, 1):
+                for i, transformation in enumerate(pending_transformations, 1):
                     response += f"{i}. {transformation}\n"
                 response += "\nWould you like me to apply these changes?"
                 
-                state.response = response
+                state["response"] = response
             else:
-                state.response = "No changes are needed for your data."
+                state["response"] = "No changes are needed for your data."
             
-            logger.info(f"Requested approval for session {state.session_id}")
+            logger.info(f"Requested approval for session {state['session_id']}")
             return state
             
         except Exception as e:
             logger.error(f"Error requesting approval: {str(e)}")
-            state.response = f"Error requesting approval: {str(e)}"
+            state["response"] = f"Error requesting approval: {str(e)}"
             return state
     
-    async def _apply_changes(self, state: CSVConversationState) -> CSVConversationState:
+    async def _apply_changes(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Apply approved transformations."""
         try:
-            if state.pending_transformations:
+            pending_transformations = state.get("pending_transformations", [])
+            if pending_transformations:
                 # Apply transformations
-                state.current_csv = await self.csv_processor.apply_csv_transformations(
-                    state.current_csv, state.pending_transformations
+                state["current_csv"] = await self.csv_processor.apply_csv_transformations(
+                    state["current_csv"], pending_transformations
                 )
                 
                 # Move to applied transformations
-                state.applied_transformations.extend(state.pending_transformations)
-                state.pending_transformations = []
+                applied = state.get("applied_transformations", [])
+                applied.extend(pending_transformations)
+                state["applied_transformations"] = applied
+                state["pending_transformations"] = []
                 
-                state.response = "Changes have been applied to your data."
+                state["response"] = "Changes have been applied to your data."
             else:
-                state.response = "No changes to apply."
+                state["response"] = "No changes to apply."
             
-            logger.info(f"Applied changes for session {state.session_id}")
+            logger.info(f"Applied changes for session {state['session_id']}")
             return state
             
         except Exception as e:
             logger.error(f"Error applying changes: {str(e)}")
-            state.response = f"Error applying changes: {str(e)}"
+            state["response"] = f"Error applying changes: {str(e)}"
             return state
     
     async def _compose_response(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -379,9 +447,11 @@ class CSVConversationGraph:
         if intent == "approval":
             return "approval"
         elif intent == "transform":
-            return "transform"
+            return "analyze"  # Analyze first, then suggest transformations
         elif intent in ["greeting", "analyze"]:
             return "analyze"
+        elif intent == "rejection":
+            return "response"
         else:
             return "response"
     
@@ -389,7 +459,12 @@ class CSVConversationGraph:
         """Route after generating suggestions."""
         pending = state.get("pending_transformations", [])
         intent = state.get("intent", "")
-        if pending and intent != "greeting":
+        
+        # If user explicitly requested transformation, apply directly
+        if intent == "transform" and pending:
+            return "apply_directly"  # Apply changes directly without asking
+        # If greeting or analysis, show suggestions and ask for approval
+        elif pending and intent in ["greeting", "analyze"]:
             return "approval_needed"
         else:
             return "direct_response"
@@ -401,20 +476,28 @@ class CSVConversationGraph:
         if request.session_id in self.sessions:
             # Convert existing Pydantic state to dict and update
             existing_state = self.sessions[request.session_id]
-            state = {
-                "session_id": existing_state.session_id,
-                "user_id": existing_state.user_id,
-                "original_csv": existing_state.original_csv,
-                "current_csv": request.csv_data,  # Update with latest CSV
-                "user_message": request.user_message,
-                "intent": getattr(existing_state, 'intent', ''),
-                "response": getattr(existing_state, 'response', ''),
-                "quality_issues": existing_state.quality_issues,
-                "pending_transformations": existing_state.pending_transformations,
-                "awaiting_approval": existing_state.awaiting_approval,
-                "applied_transformations": existing_state.applied_transformations,
-                "confidence_score": existing_state.confidence_score
-            }
+            
+            # Handle both Pydantic models and dictionaries
+            if isinstance(existing_state, dict):
+                # It's already a dictionary
+                state = existing_state.copy()
+                state["user_message"] = request.user_message
+            else:
+                # It's a Pydantic model
+                state = {
+                    "session_id": existing_state.session_id,
+                    "user_id": existing_state.user_id,
+                    "original_csv": existing_state.original_csv,
+                    "current_csv": existing_state.current_csv,  # Keep existing CSV if not updating
+                    "user_message": request.user_message,
+                    "intent": getattr(existing_state, 'intent', ''),
+                    "response": getattr(existing_state, 'response', ''),
+                    "quality_issues": existing_state.quality_issues,
+                    "pending_transformations": existing_state.pending_transformations,
+                    "awaiting_approval": existing_state.awaiting_approval,
+                    "applied_transformations": existing_state.applied_transformations,
+                    "confidence_score": existing_state.confidence_score
+                }
         else:
             # Create new state as dictionary
             state = {
@@ -436,29 +519,13 @@ class CSVConversationGraph:
     
     def _state_to_response(self, state: Dict[str, Any]) -> CSVProcessingResponse:
         """Convert conversation state dictionary to response."""
-        # Save state as Pydantic model for session storage
-        pydantic_state = CSVConversationState(
-            session_id=state["session_id"],
-            user_id=state["user_id"],
-            original_csv=state["original_csv"],
-            current_csv=state["current_csv"],
-            user_message=state["user_message"],
-            intent=state.get("intent"),
-            response=state.get("response"),
-            quality_issues=state.get("quality_issues", []),
-            pending_transformations=state.get("pending_transformations", []),
-            awaiting_approval=state.get("awaiting_approval", False),
-            applied_transformations=state.get("applied_transformations", []),
-            confidence_score=state.get("confidence_score", 0.0)
-        )
-        
-        # Store in sessions
-        self.sessions[state["session_id"]] = pydantic_state
+        # Store state as dictionary for consistency
+        self.sessions[state["session_id"]] = state.copy()
         
         return CSVProcessingResponse(
             success=True,
             original_csv=state["original_csv"],
-            cleaned_csv=state["current_csv"] if state["current_csv"] != state["original_csv"] else None,
+            cleaned_csv=state["current_csv"],
             changes_made=state.get("applied_transformations", []),
             suggestions=state.get("pending_transformations", []),
             requires_approval=state.get("awaiting_approval", False),
@@ -513,15 +580,31 @@ class CSVConversationGraph:
         """Get session summary."""
         if session_id in self.sessions:
             state = self.sessions[session_id]
-            return {
-                "session_id": session_id,
-                "user_id": state.user_id,
-                "conversation_active": True,
-                "awaiting_approval": state.awaiting_approval,
-                "applied_transformations": len(state.applied_transformations),
-                "pending_transformations": len(state.pending_transformations),
-                "quality_issues": len(state.quality_issues),
-                "confidence_score": state.confidence_score,
-                "last_updated": state.updated_at.isoformat()
-            }
+            
+            # Handle both dictionary and Pydantic model states
+            if isinstance(state, dict):
+                return {
+                    "session_id": session_id,
+                    "user_id": state.get("user_id", "unknown"),
+                    "conversation_active": True,
+                    "awaiting_approval": state.get("awaiting_approval", False),
+                    "applied_transformations": len(state.get("applied_transformations", [])),
+                    "pending_transformations": len(state.get("pending_transformations", [])),
+                    "quality_issues": len(state.get("quality_issues", [])),
+                    "confidence_score": state.get("confidence_score", 0.0),
+                    "last_updated": datetime.now().isoformat()  # Use current time for dict states
+                }
+            else:
+                # Legacy Pydantic model handling
+                return {
+                    "session_id": session_id,
+                    "user_id": state.user_id,
+                    "conversation_active": True,
+                    "awaiting_approval": state.awaiting_approval,
+                    "applied_transformations": len(state.applied_transformations),
+                    "pending_transformations": len(state.pending_transformations),
+                    "quality_issues": len(state.quality_issues),
+                    "confidence_score": state.confidence_score,
+                    "last_updated": state.updated_at.isoformat()
+                }
         return None 

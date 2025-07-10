@@ -176,6 +176,16 @@ class CSVDirectProcessor:
             if self.quality_agent:
                 try:
                     ai_issues = await self.quality_agent.analyze_data(df)
+                    # Merge AI-detected issues into overall quality issues list
+                    for issue in ai_issues:
+                        if hasattr(issue, "description"):
+                            quality_issues.append(issue.description)
+                        elif isinstance(issue, dict) and "description" in issue:
+                            quality_issues.append(issue["description"])
+                        else:
+                            # Fallback – string representation
+                            quality_issues.append(str(issue))
+
                     ai_suggestions = await self.quality_agent.generate_suggestions(ai_issues, df)
                     
                     # Extract suggestions from AI response
@@ -229,15 +239,76 @@ class CSVDirectProcessor:
             if df is None:
                 return csv_data
             
-            # Apply basic transformations
+            original_shape = df.shape
+            applied_changes = []
+            
+            # Apply transformations in order
             for transformation in transformations:
-                if "remove duplicates" in transformation.lower():
+                if "remove duplicate" in transformation.lower():
+                    before_count = len(df)
                     df = df.drop_duplicates()
+                    after_count = len(df)
+                    if before_count != after_count:
+                        applied_changes.append(f"Removed {before_count - after_count} duplicate rows")
+                        
                 elif "fill missing" in transformation.lower():
-                    df = df.fillna("")
+                    # Count missing values before
+                    missing_before = df.isnull().sum().sum()
+                    
+                    # Fill missing values with appropriate strategies
+                    for col in df.columns:
+                        if df[col].isnull().any():
+                            # For numeric columns, fill with median
+                            if df[col].dtype in ['int64', 'float64']:
+                                df[col] = df[col].fillna(df[col].median())
+                            else:
+                                # For text columns, fill with empty string or mode
+                                mode_val = df[col].mode()
+                                if len(mode_val) > 0 and pd.notna(mode_val.iloc[0]):
+                                    df[col] = df[col].fillna(mode_val.iloc[0])
+                                else:
+                                    df[col] = df[col].fillna("")
+                    
+                    missing_after = df.isnull().sum().sum()
+                    if missing_before != missing_after:
+                        applied_changes.append(f"Filled {missing_before - missing_after} missing values")
+                        
                 elif "remove empty rows" in transformation.lower():
+                    before_count = len(df)
                     df = df.dropna(how='all')
-                # Add more transformation logic as needed
+                    after_count = len(df)
+                    if before_count != after_count:
+                        applied_changes.append(f"Removed {before_count - after_count} empty rows")
+                        
+                elif "clean whitespace" in transformation.lower():
+                    # Trim whitespace from string columns
+                    for col in df.columns:
+                        if df[col].dtype == 'object':
+                            df[col] = df[col].astype(str).str.strip()
+                    applied_changes.append("Cleaned whitespace from text columns")
+
+                elif "standardize categorical" in transformation.lower() or "standardize" in transformation.lower():
+                    # Standardize string columns: convert all categorical/text columns to lowercase
+                    for col in df.select_dtypes(include=['object']).columns:
+                        df[col] = df[col].astype(str).str.strip().str.lower()
+                    applied_changes.append("Standardized categorical text values to lowercase")
+
+                elif "handle outlier" in transformation.lower() or "outlier" in transformation.lower():
+                    # Remove rows with numeric outliers using 3*std rule
+                    numeric_cols = df.select_dtypes(include=['number']).columns
+                    before_count = len(df)
+                    for col in numeric_cols:
+                        col_mean = df[col].mean()
+                        col_std = df[col].std()
+                        df = df[(df[col] >= col_mean - 3 * col_std) & (df[col] <= col_mean + 3 * col_std)]
+                    after_count = len(df)
+                    if before_count != after_count:
+                        applied_changes.append(f"Removed {before_count - after_count} outlier rows")
+            
+            # Log transformation results
+            new_shape = df.shape
+            logger.info(f"Applied {len(transformations)} transformations. Shape: {original_shape} → {new_shape}")
+            logger.info(f"Changes applied: {applied_changes}")
             
             # Convert back to CSV string
             return self._dataframe_to_csv_string(df)

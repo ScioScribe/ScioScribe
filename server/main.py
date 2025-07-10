@@ -15,6 +15,9 @@ from api.planning import router as planning_router
 from api.analysis import router as analysis_router
 from api.database import router as database_router
 
+# Import database initialization functions
+from database import init_db, check_db_connection
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -42,6 +45,53 @@ app.include_router(dataclean_router)
 app.include_router(planning_router)
 app.include_router(analysis_router)
 app.include_router(database_router)
+
+# Database initialization on startup
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database on application startup."""
+    logger.info("=== Starting ScioScribe API server ===")
+    
+    try:
+        logger.info("Step 1: Checking database connection...")
+        if check_db_connection():
+            logger.info("✓ Database connection verified successfully")
+        else:
+            logger.warning("✗ Database connection failed - attempting to initialize...")
+            
+            logger.info("Step 2: Initializing database...")
+            init_db()
+            
+            logger.info("Step 3: Re-checking connection after initialization...")
+            if check_db_connection():
+                logger.info("✓ Database initialized and connected successfully")
+            else:
+                logger.error("✗ Database initialization failed - server may not function properly")
+        
+        # Additional verification: Check if experiments table exists
+        logger.info("Step 4: Verifying experiments table exists...")
+        try:
+            from database.database import engine
+            from sqlalchemy import text
+            with engine.connect() as conn:
+                result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='experiments';"))
+                table_exists = result.fetchone() is not None
+                if table_exists:
+                    logger.info("✓ Experiments table exists in database")
+                else:
+                    logger.error("✗ Experiments table NOT found - forcing recreation...")
+                    # Force table creation
+                    from database.models import Base
+                    Base.metadata.create_all(bind=engine)
+                    logger.info("✓ Tables recreated")
+        except Exception as table_check_error:
+            logger.error(f"✗ Table verification failed: {table_check_error}")
+                
+    except Exception as e:
+        logger.error(f"Database startup error: {e}")
+        logger.warning("Server starting without database - some features may not work")
+        
+    logger.info("=== ScioScribe API server startup complete ===")
 
 @app.get("/")
 async def root():

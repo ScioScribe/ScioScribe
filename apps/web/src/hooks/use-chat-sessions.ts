@@ -55,12 +55,13 @@ export function useChatSessions(): ChatSessionsHookReturn {
    * @param userId User ID for the session (defaults to "demo-user")
    * @returns Session ID and response data
    */
-  const initializeDatacleanSession = useCallback(async (userId: string = "demo-user") => {
+  const initializeDatacleanSession = useCallback(async (userId: string = "demo-user", initialCsv?: string) => {
     try {
       console.log("🧹 Initializing dataclean session for user:", userId)
       
       const requestBody: StartConversationRequest = {
         user_id: userId,
+        csv_data: initialCsv,
       }
       console.log("📤 START CONVERSATION REQUEST:", requestBody)
       
