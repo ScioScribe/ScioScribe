@@ -1923,8 +1923,7 @@ async def process_image_background(artifact_id: str, image_path: str):
         # Clean up temporary file
         if os.path.exists(image_path):
             os.remove(image_path)
-<<<<<<< HEAD
-            print(f"Cleaned up temporary image file: {image_path}") 
+            print(f"Cleaned up temporary image file: {image_path}")
 
 
 @router.post("/csv-conversation/save-cleaned-data")
@@ -2055,8 +2054,7 @@ async def download_cleaned_data(
             content=experiment.csv_data,
             media_type="text/csv",
             headers=headers
-=======
-            print(f"Cleaned up temporary image file: {image_path}")
+        )
 
 
 # === Header Generation Endpoint ===
@@ -2175,21 +2173,13 @@ async def generate_headers_from_plan(request: GenerateHeadersRequest) -> Generat
             success=True,
             headers=headers,
             csv_data=csv_data
->>>>>>> 3588f206e58e865bf9284bfc54c9e252d5a8bb42
         )
         
     except HTTPException:
         raise
     except Exception as e:
-<<<<<<< HEAD
-        logger.error(f"Error downloading cleaned data for session {session_id}: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to download cleaned data: {str(e)}"
-=======
         print(f"Error generating headers: {str(e)}")
         return GenerateHeadersResponse(
             success=False,
             error_message=f"Failed to generate headers: {str(e)}"
->>>>>>> 3588f206e58e865bf9284bfc54c9e252d5a8bb42
         ) 
