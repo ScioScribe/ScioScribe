@@ -272,8 +272,9 @@ export async function getConversationCapabilities(): Promise<ConversationCapabil
 export interface ProcessFileCompleteResponse {
   success: boolean
   artifact_id: string
-  cleaned_data?: unknown
+  cleaned_data?: unknown // This will be a CSV string when response_format="csv"
   data_shape?: number[]
+  error_message?: string
   [key: string]: unknown // allow additional backend fields without strict typing
 }
 
@@ -308,6 +309,40 @@ export async function uploadCsvFile(csvText: string, experimentId: string = "dem
   catch (_err) {
     /* silently ignore logging errors (e.g., non-browser env) */
   }
+
+  const response = await fetch(`${BASE_URL}/process-file-complete`, {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ message: response.statusText }))
+    throw new Error(err.message || 'Upload failed')
+  }
+
+  return await response.json()
+}
+
+/**
+ * Upload any file (CSV, image, PDF) to the dataclean service using the "process-file-complete"
+ * endpoint. This performs end-to-end processing including OCR for images/PDFs.
+ *
+ * @param file - The file to upload
+ * @param experimentId - The experiment ID
+ * @param responseFormat - The format to get back (csv for CSV string)
+ * @returns Promise resolving to the processing response
+ */
+export async function uploadFile(
+  file: File, 
+  experimentId: string = "demo-experiment",
+  responseFormat: string = "csv"
+): Promise<ProcessFileCompleteResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('experiment_id', experimentId)
+  formData.append('response_format', responseFormat)
+  formData.append('auto_apply_suggestions', 'true')
+  formData.append('confidence_threshold', '0.7')
 
   const response = await fetch(`${BASE_URL}/process-file-complete`, {
     method: 'POST',
