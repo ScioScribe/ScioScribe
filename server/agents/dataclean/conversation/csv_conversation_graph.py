@@ -634,7 +634,7 @@ class CSVConversationGraph:
             logger.error(f"Error handling row operations: {str(e)}")
             state["response"] = f"I encountered an error while handling the row operation: {str(e)}"
             return state
-
+    
     # Routing Functions
     
     def _route_after_intent(self, state: Dict[str, Any]) -> str:
@@ -777,18 +777,15 @@ class CSVConversationGraph:
                 
             if df is not None:
                 rows, cols = len(df), len(df.columns)
-                response = f"Hello! I can see you have a dataset with {rows} rows and {cols} columns."
+                response = f"Hello! Your dataset is ready ({rows}×{cols})."
                 
                 if data_status == "cleaned":
-                    response += " (This is your cleaned data.)"
+                    response += " (cleaned data)"
                 
-                response += "\n\nI'm ready to help you with:"
-                response += "\n• Data quality analysis"
-                response += "\n• Cleaning and fixing issues"
-                response += "\n• Removing duplicates"
-                response += "\n• Handling missing values"
-                response += "\n• Data transformation"
-                response += "\n\nWhat would you like to do with your data?"
+                response += "\n\n**Tell me to:**"
+                response += "\n• \"analyze data quality\" • \"clean the data\" • \"describe columns\""
+                response += "\n• \"add/delete rows\" • \"fix missing values\""
+                response += "\n\nWhat first?"
                 return response
             else:
                 return "Hello! I'd be happy to help you clean your data. Please make sure your CSV data is properly formatted."
