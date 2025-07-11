@@ -33,11 +33,7 @@ from .graph import (
     determine_section_to_edit,
     get_stage_routing_map,
     get_stage_descriptions,
-
     extract_user_intent,
-    validate_stage_name,
-    get_next_stage,
-    get_previous_stage,
     calculate_progress_percentage,
     format_stage_name,
     is_terminal_stage,
@@ -85,9 +81,6 @@ __all__ = [
     "get_stage_descriptions",
 
     "extract_user_intent",
-    "validate_stage_name",
-    "get_next_stage",
-    "get_previous_stage",
     "calculate_progress_percentage",
     "format_stage_name",
     "is_terminal_stage",

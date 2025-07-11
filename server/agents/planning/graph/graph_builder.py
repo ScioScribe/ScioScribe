@@ -29,8 +29,7 @@ from .routing import (
     review_completion_check,
     route_to_section
 )
-from .helpers import determine_section_to_edit
-from .error_handling import get_latest_user_input
+from .helpers import determine_section_to_edit, get_latest_user_input
 from ..factory import add_chat_message
 from ..transitions import transition_to_stage
 

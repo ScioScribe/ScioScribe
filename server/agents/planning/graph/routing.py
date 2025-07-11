@@ -391,39 +391,7 @@ def route_to_section(state: ExperimentPlanState) -> str:
     )
 
 
-def validate_stage_completion(state: ExperimentPlanState, stage: str) -> bool:
-    """
-    Validate that a specific stage has been completed successfully.
-    
-    This function provides a unified way to check if any planning stage
-    has been completed according to its specific requirements.
-    
-    Args:
-        state: Current experiment plan state
-        stage: Name of the stage to validate
-        
-    Returns:
-        True if stage is complete, False otherwise
-    """
-    stage_validators = {
-        "objective_setting": lambda s: objective_completion_check(s) == "continue",
-        "variable_identification": lambda s: variable_completion_check(s) == "continue",
-        "experimental_design": lambda s: design_completion_check(s) == "continue",
-        "methodology_protocol": lambda s: methodology_completion_check(s) == "continue",
-        "data_planning": lambda s: data_completion_check(s) == "continue",
-        "final_review": lambda s: review_completion_check(s) == "complete"
-    }
-    
-    validator = stage_validators.get(stage)
-    if validator:
-        try:
-            return validator(state)
-        except Exception as e:
-            logger.error(f"Stage validation failed for {stage}: {str(e)}")
-            return False
-    
-    logger.warning(f"No validator found for stage: {stage}")
-    return False
+
 
 
 def get_incomplete_stages(state: ExperimentPlanState) -> list[str]:
@@ -439,6 +407,8 @@ def get_incomplete_stages(state: ExperimentPlanState) -> list[str]:
     Returns:
         List of incomplete stage names
     """
+    from ..validation import validate_stage_completion
+    
     incomplete_stages = []
     
     for stage in PLANNING_STAGES:
@@ -496,6 +466,7 @@ def should_allow_stage_transition(
             return True
         
         # Forward transitions require completion of intermediate stages
+        from ..validation import validate_stage_completion
         for i in range(from_index, to_index):
             stage = PLANNING_STAGES[i]
             if not validate_stage_completion(state, stage):

@@ -152,57 +152,10 @@ def extract_user_intent(user_input: str) -> str:
     return "unclear"
 
 
-def validate_stage_name(stage_name: str) -> bool:
-    """
-    Validate that a stage name is valid.
-    
-    Args:
-        stage_name: Name of the planning stage
-        
-    Returns:
-        True if valid, False otherwise
-    """
-    return stage_name in PLANNING_STAGES
 
 
-def get_next_stage(current_stage: str) -> str | None:
-    """
-    Get the next planning stage after the current one.
-    
-    Args:
-        current_stage: Current planning stage
-        
-    Returns:
-        Next stage name or None if current is the last stage
-    """
-    try:
-        current_index = PLANNING_STAGES.index(current_stage)
-        if current_index < len(PLANNING_STAGES) - 1:
-            return PLANNING_STAGES[current_index + 1]
-        return None
-    except ValueError:
-        logger.error(f"Invalid current stage: {current_stage}")
-        return None
 
 
-def get_previous_stage(current_stage: str) -> str | None:
-    """
-    Get the previous planning stage before the current one.
-    
-    Args:
-        current_stage: Current planning stage
-        
-    Returns:
-        Previous stage name or None if current is the first stage
-    """
-    try:
-        current_index = PLANNING_STAGES.index(current_stage)
-        if current_index > 0:
-            return PLANNING_STAGES[current_index - 1]
-        return None
-    except ValueError:
-        logger.error(f"Invalid current stage: {current_stage}")
-        return None
 
 
 def calculate_progress_percentage(completed_stages: List[str]) -> float:

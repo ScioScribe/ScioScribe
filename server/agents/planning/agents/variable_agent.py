@@ -63,7 +63,8 @@ class VariableAgent(BaseAgent):
         """
         self.logger.info(f"Processing state for experiment: {state.get('experiment_id')}")
         
-        user_input = self._get_latest_user_input(state)
+        from ..graph.helpers import get_latest_user_input
+        user_input = get_latest_user_input(state)
         chat_history = state.get("chat_history", [])
         
         prompt = ChatPromptTemplate.from_messages([
@@ -145,13 +146,7 @@ class VariableAgent(BaseAgent):
 
         return is_valid, missing_requirements
 
-    def _get_latest_user_input(self, state: ExperimentPlanState) -> str:
-        """Extract the latest user input from chat history."""
-        chat_history = state.get("chat_history", [])
-        for message in reversed(chat_history):
-            if message.get("role") == "user":
-                return message.get("content", "")
-        return ""
+
 
     def generate_questions(self, state: ExperimentPlanState) -> List[str]:
         """

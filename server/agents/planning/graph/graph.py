@@ -20,7 +20,8 @@ import logging
 # Core imports from focused modules
 from .graph_builder import create_planning_graph
 from .executor import PlanningGraphExecutor
-from .error_handling import safe_conditional_check, get_latest_user_input
+from .error_handling import safe_conditional_check
+from .helpers import get_latest_user_input
 from .routing import (
     objective_completion_check,
     variable_completion_check,
@@ -29,7 +30,6 @@ from .routing import (
     data_completion_check,
     review_completion_check,
     route_to_section,
-    validate_stage_completion,
     get_incomplete_stages,
     get_routing_options,
     should_allow_stage_transition
@@ -38,15 +38,13 @@ from .helpers import (
     determine_section_to_edit,
     get_stage_routing_map,
     get_stage_descriptions,
-
     extract_user_intent,
-    validate_stage_name,
-    get_next_stage,
-    get_previous_stage,
     calculate_progress_percentage,
     format_stage_name,
     is_terminal_stage
 )
+from ..transitions import get_next_stage, get_previous_stage
+from ..validation import validate_stage, validate_stage_completion
 
 # State and configuration imports
 from ..state import ExperimentPlanState, PLANNING_STAGES
@@ -134,7 +132,7 @@ __all__ = [
     "get_stage_descriptions",
 
     "extract_user_intent",
-    "validate_stage_name",
+    "validate_stage",
     "get_next_stage",
     "get_previous_stage",
     "calculate_progress_percentage",
