@@ -91,7 +91,10 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
     })
   }
 
-  const saveCellChanges = () => {
+  const saveCellChanges = (rowId: string, header: string, newValue: string) => {
+    // Update the table data
+    handleCellEdit(rowId, header, newValue)
+    
     // Clear any pending timeout
     if (csvSyncTimeoutRef.current) {
       clearTimeout(csvSyncTimeoutRef.current)
@@ -118,7 +121,6 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const newValue = e.target.value
       setValue(newValue)
-      handleCellEdit(rowId, header, newValue)
     }
     
     const handleFocus = () => {
@@ -129,7 +131,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
       if (e.key === 'Enter') {
         // Save on Enter and blur the input
         e.preventDefault()
-        saveCellChanges()
+        saveCellChanges(rowId, header, value)
         inputRef.current?.blur()
       }
     }
@@ -155,7 +157,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
       // Only blur if clicking outside the entire table viewer
       setIsFocused(false)
       // Save changes when actually blurring
-      saveCellChanges()
+      saveCellChanges(rowId, header, value)
     }
     
     return (
