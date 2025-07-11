@@ -2055,6 +2055,15 @@ async def download_cleaned_data(
             media_type="text/csv",
             headers=headers
         )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading cleaned data for session {session_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to download cleaned data: {str(e)}"
+        )
 
 
 # === Header Generation Endpoint ===
