@@ -139,8 +139,9 @@ Adhere strictly to the required output format with proper conditions dictionarie
             state['control_groups'] = [group.dict() for group in design_output.control_groups]
             state['sample_size'] = design_output.sample_size.dict()
             
-            # Create summary for logging (no chat message - handled by streaming)
+            # Create summary and add to chat history so it appears in the AI chat
             summary_message = self._create_design_summary(state)
+            state = add_chat_message(state, "assistant", summary_message)
             self.logger.info(f"Design summary created: {summary_message}")
             self.logger.info("Successfully updated state with new experimental design.")
 

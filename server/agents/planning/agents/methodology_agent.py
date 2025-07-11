@@ -178,6 +178,7 @@ Adhere strictly to the required output format with all required fields.
                 state['materials_equipment'] = [item.dict() for item in methodology_output.materials_equipment]
                 
                 summary_message = self._create_methodology_summary(state)
+                state = add_chat_message(state, "assistant", summary_message)
                 self.logger.info(f"Methodology summary created: {summary_message}")
                 self.logger.info(f"Successfully generated methodology on attempt {attempt + 1}")
                 return state
