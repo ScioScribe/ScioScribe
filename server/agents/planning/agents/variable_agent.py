@@ -113,7 +113,8 @@ class VariableAgent(BaseAgent):
             self.logger.error(f"Error invoking structured LLM for variables: {e}", exc_info=True)
             agent_response_text = "I had trouble understanding the variable details. Could you please clarify or provide them in a more structured way?"
 
-        # Log response (chat message handled by streaming)
+        # Add agent response to chat history so it appears in the AI chat
+        state = add_chat_message(state, "assistant", agent_response_text)
         self.logger.info(f"Variable agent response: {agent_response_text}")
         
         return state

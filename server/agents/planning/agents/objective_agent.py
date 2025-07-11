@@ -109,7 +109,8 @@ class ObjectiveAgent(BaseAgent):
             self.logger.error(f"Error invoking structured LLM: {e}", exc_info=True)
             agent_response_text = "I had trouble understanding that. Could you please rephrase your request or provide more specific details about the objective and hypothesis?"
 
-        # Log response (chat message handled by streaming)
+        # Add agent response to chat history so it appears in the AI chat
+        state = add_chat_message(state, "assistant", agent_response_text)
         self.logger.info(f"Objective agent response: {agent_response_text}")
         
         return state
