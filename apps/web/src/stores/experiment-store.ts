@@ -13,6 +13,7 @@ import {
   updateExperimentPlan, 
   updateExperimentHtml, 
   updateExperimentTitle as updateExperimentTitleAPI,
+  updateExperimentCsv as updateExperimentCsvAPI,
   deleteExperiment as deleteExperimentAPI 
 } from '@/api/database'
 import { IRIS_CSV_DATA, IRIS_EXPERIMENT_PLAN } from '@/data/placeholder'
@@ -134,6 +135,7 @@ interface ExperimentActions {
   updateEditorTextWithSave: (text: string) => Promise<void>
   updateVisualizationHtmlWithSave: (html: string) => Promise<void>
   updateExperimentTitleWithSave: (title: string) => Promise<void>
+  updateExperimentCsvWithSave: (csv: string) => Promise<void>
   refreshVisualization: () => void
   
   // Experiment management
@@ -280,21 +282,8 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
      try {
        console.log("📊 Updating CSV from dataclean data")
        
-       // Update the CSV data in the store
-       set({ csvData })
-       
-       // Auto-save to database if experiment is selected
-       const { currentExperiment } = get()
-       if (currentExperiment) {
-         try {
-           // Note: We need to create an updateExperimentCsv function in the database API
-           // For now, we'll log that this needs to be implemented
-           console.log("🔄 CSV data updated in store, database update would happen here")
-           // await updateExperimentCsv(currentExperiment.id, csvData)
-         } catch (error) {
-           console.error("Failed to update CSV in database:", error)
-         }
-       }
+       // Use the new updateExperimentCsvWithSave action
+       await get().updateExperimentCsvWithSave(csvData)
        
        console.log("✅ CSV updated from dataclean data")
      } catch (error) {
@@ -384,6 +373,34 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
         console.log("Title updated in database")
       } catch (error) {
         console.error("Failed to update title:", error)
+      }
+    }
+  },
+  
+  updateExperimentCsvWithSave: async (csv: string) => {
+    set({ csvData: csv })
+    
+    // Auto-save to database if experiment is selected
+    const { currentExperiment, experiments } = get()
+    if (currentExperiment) {
+      try {
+        const updatedExperiment = await updateExperimentCsvAPI(currentExperiment.id, csv)
+        
+        // Update the current experiment with the new CSV data
+        set({ currentExperiment: updatedExperiment })
+        
+        // Update the experiments array to reflect the new CSV
+        const updatedExperiments = experiments.map((exp: Experiment) => 
+          exp.id === currentExperiment.id 
+            ? { ...exp, csv_data: csv, updated_at: updatedExperiment.updated_at }
+            : exp
+        )
+        set({ experiments: updatedExperiments })
+        
+        console.log("CSV updated in database")
+      } catch (error) {
+        console.error("Failed to update CSV:", error)
+        throw error
       }
     }
   },

@@ -102,7 +102,7 @@ def _get_analysis_agent() -> AnalysisAgent:
         try:
             _analysis_agent = create_analysis_agent(
                 model_provider="openai",
-                model_name="gpt-4"
+                model_name="gpt-4.1"
             )
             logger.info("✅ Analysis agent initialized successfully")
         except Exception as e:

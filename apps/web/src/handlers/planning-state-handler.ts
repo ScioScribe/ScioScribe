@@ -37,7 +37,7 @@ interface ExperimentPlanState {
   experimental_groups: Array<{
     name: string
     description: string
-    conditions: Record<string, any>
+    conditions: Record<string, unknown>
   }>
   control_groups: Array<{
     type: string
@@ -54,7 +54,7 @@ interface ExperimentPlanState {
   methodology_steps: Array<{
     step_number: number
     description: string
-    parameters: Record<string, any>
+    parameters: Record<string, unknown>
     duration: string
   }>
   materials_equipment: Array<{
@@ -84,13 +84,13 @@ interface ExperimentPlanState {
   
   // Administrative (Optional)
   ethical_considerations?: string
-  timeline?: Record<string, any>
-  budget_estimate?: Record<string, any>
+  timeline?: Record<string, unknown>
+  budget_estimate?: Record<string, unknown>
   
   // System State (to be filtered out)
   current_stage: string
   errors: string[]
-  chat_history: Array<Record<string, any>>
+  chat_history: Array<Record<string, unknown>>
 }
 
 /**
@@ -98,7 +98,7 @@ interface ExperimentPlanState {
  * @param rawState Raw planning state from backend
  * @returns Formatted text for display in editor
  */
-export function convertPlanningStateToText(rawState: Record<string, any>): string {
+export function convertPlanningStateToText(rawState: Record<string, unknown>): string {
   try {
     if (!rawState || typeof rawState !== 'object') {
       return "# Experiment Plan\n\n*No planning data available yet. Start a planning session to begin.*"
@@ -504,6 +504,48 @@ function formatPlanningStatus(state: Partial<ExperimentPlanState>): string {
  * Legacy function for backward compatibility
  * Maintains the same interface as the original function
  */
-export function convertPlanningStateToString(planningState: Record<string, any>): string {
+export function convertPlanningStateToString(planningState: Record<string, unknown>): string {
   return convertPlanningStateToText(planningState)
+}
+
+export function extractPlanningState(response: Record<string, unknown>): Record<string, unknown> {
+  console.log("🔍 Extracting planning state from response:", response)
+  
+  try {
+    // Try to extract from various possible locations
+    const state = response.state as Record<string, unknown>
+    if (state && typeof state === 'object') {
+      console.log("✅ Found state in response.state")
+      return state
+    }
+    
+    // Check if the response itself is the state
+    if (response.objective || response.methodology || response.variables) {
+      console.log("✅ Using response as state directly")
+      return response
+    }
+    
+    // Check for nested state structures
+    const data = response.data as Record<string, unknown>
+    if (data && typeof data === 'object') {
+      const nestedState = data.state as Record<string, unknown>
+      if (nestedState && typeof nestedState === 'object') {
+        console.log("✅ Found state in response.data.state")
+        return nestedState
+      }
+      
+      // Check if data itself contains state fields
+      if (data.objective || data.methodology || data.variables) {
+        console.log("✅ Using response.data as state")
+        return data
+      }
+    }
+    
+    console.warn("⚠️ No valid state found in response")
+    return {}
+    
+  } catch (error) {
+    console.error("❌ Error extracting planning state:", error)
+    return {}
+  }
 }

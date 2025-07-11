@@ -343,7 +343,7 @@ function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHan
  */
 function extractRelevantContent(content: string, stage: string): string {
   // Remove excessive formatting and focus on key information
-  let cleaned = content
+  const cleaned = content
     .replace(/\*\*([^*]+)\*\*/g, '$1') // Remove bold formatting
     .replace(/\n{3,}/g, '\n\n') // Reduce multiple newlines
     .trim()

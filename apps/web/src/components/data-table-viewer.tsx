@@ -5,12 +5,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table"
 import { Button } from "../components/ui/button"
 import { Input } from "../components/ui/input"
-import { Upload, Download, Search, MessageSquare, Wifi, WifiOff, Loader2 } from "lucide-react"
+import { Upload, Download, Search, MessageSquare, Wifi, WifiOff, Loader2, Sparkles, Plus } from "lucide-react"
 import { useChatSessions } from "../hooks/use-chat-sessions"
 import { useToast } from "../components/ui/use-toast"
 import { useExperimentStore } from "../stores/experiment-store"
 import { parseCSVData, getCSVHeaders } from "../data/placeholder"
 import { websocketManager } from "../utils/streaming-connection-manager"
+import { generateHeadersFromPlan } from "../api/dataclean"
+import { convertTableToCSV } from "../utils/csv-utils"
 import type { WebSocketMessage, WebSocketConnectionHandlers } from "../types/chat-types"
 
 interface DataTableViewerProps {
@@ -31,13 +33,14 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
   const [processingMessage, setProcessingMessage] = useState("")
   const [awaitingApproval, setAwaitingApproval] = useState(false)
   const [pendingTransformations, setPendingTransformations] = useState<string[]>([])
+  const [isGenerating, setIsGenerating] = useState(false)
 
   // Keep track of current session for WebSocket handlers
   const sessionRef = useRef<string | null>(null)
 
   // Existing hooks
   const { datacleanSession, updateDatacleanSession } = useChatSessions()
-  const { currentExperiment, csvData: storeCsv } = useExperimentStore()
+  const { currentExperiment, editorText, updateExperimentCsvWithSave, updateCsvFromDatacleanResponse } = useExperimentStore()
   const { toast } = useToast()
 
   // Existing useEffect hooks
@@ -64,22 +67,182 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
     }
   }, [searchTerm, tableData])
 
+  // Cleanup effect for timeout
+  useEffect(() => {
+    const currentTimeout = csvSyncTimeoutRef.current
+    return () => {
+      if (currentTimeout) {
+        clearTimeout(currentTimeout)
+      }
+    }
+  }, [])
+
+  // Debounce ref for CSV sync
+  const csvSyncTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
   const handleCellEdit = (id: string, field: string, value: string) => {
-    setTableData(prev => prev.map(row => 
-      row.id === id ? { ...row, [field]: value } : row
-    ))
+    setTableData(prev => {
+      const newData = [...prev]  // copy the array
+      const row = newData.find(r => r.id === id)
+      if (row) {
+        row[field] = value  // mutate the existing row object, preserving its reference
+      }
+      return newData
+    })
   }
 
-  const convertTableToCSV = (data: Array<Record<string, string>>, headers: string[]): string => {
-    if (!headers.length || !data.length) return ""
+  const saveCellChanges = () => {
+    // Clear any pending timeout
+    if (csvSyncTimeoutRef.current) {
+      clearTimeout(csvSyncTimeoutRef.current)
+    }
     
-    const csvHeaders = headers.join(',')
-    const csvRows = data.map(row => 
-      headers.map(header => `"${(row[header] || '').replace(/"/g, '""')}"`).join(',')
-    )
-    
-    return [csvHeaders, ...csvRows].join('\n')
+    // Immediately save to database
+    const csvString = convertTableToCSV(tableData, headers)
+    updateExperimentCsvWithSave(csvString)
   }
+
+  // Create a cell component to handle local state
+  const EditableCell = ({ rowId, header, initialValue }: { rowId: string, header: string, initialValue: string }) => {
+    const [value, setValue] = useState(initialValue)
+    const [isFocused, setIsFocused] = useState(false)
+    const inputRef = useRef<HTMLInputElement>(null)
+    
+    // Update local state when the initial value changes, but only if not focused
+    useEffect(() => {
+      if (!isFocused) {
+        setValue(initialValue)
+      }
+    }, [initialValue, isFocused])
+    
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const newValue = e.target.value
+      setValue(newValue)
+      handleCellEdit(rowId, header, newValue)
+    }
+    
+    const handleFocus = () => {
+      setIsFocused(true)
+    }
+    
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') {
+        // Save on Enter and blur the input
+        e.preventDefault()
+        saveCellChanges()
+        inputRef.current?.blur()
+      }
+    }
+    
+    const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+      // Get the element that will receive focus
+      const relatedTarget = e.relatedTarget as HTMLElement
+      
+      // Check if we're clicking within the DataTableViewer component
+      const tableViewer = e.currentTarget.closest('.data-table-viewer')
+      const clickedInsideTable = relatedTarget && tableViewer && tableViewer.contains(relatedTarget)
+      
+      // If clicking on any element inside the table viewer (including buttons), maintain focus
+      if (clickedInsideTable) {
+        e.preventDefault()
+        // Use requestAnimationFrame to ensure the DOM has updated
+        requestAnimationFrame(() => {
+          inputRef.current?.focus()
+        })
+        return
+      }
+      
+      // Only blur if clicking outside the entire table viewer
+      setIsFocused(false)
+      // Save changes when actually blurring
+      saveCellChanges()
+    }
+    
+    return (
+      <Input
+        ref={inputRef}
+        value={value}
+        onChange={handleChange}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
+        className="border-0 bg-transparent p-0 h-auto text-xs focus-visible:ring-1 focus-visible:ring-blue-500"
+        style={{
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '11px'
+        }}
+      />
+    )
+  }
+
+  const handleGenerateHeaders = async () => {
+    if (!editorText || !editorText.trim()) {
+      toast({
+        variant: "destructive",
+        title: "No experimental plan",
+        description: "Please add content to your experimental plan first.",
+      })
+      return
+    }
+
+    setIsGenerating(true)
+    
+    try {
+      const response = await generateHeadersFromPlan(editorText, currentExperiment?.id)
+      
+      if (response.success) {
+        setHeaders(response.headers)
+        setTableData([]) // Start with empty table
+        updateExperimentCsvWithSave(response.csv_data)
+        
+        toast({
+          title: "Headers generated",
+          description: `Successfully generated ${response.headers.length} headers from your experimental plan.`,
+        })
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Failed to generate headers",
+          description: response.error_message || "An unexpected error occurred",
+        })
+      }
+    } catch (error) {
+      console.error("Failed to generate headers:", error)
+      toast({
+        variant: "destructive",
+        title: "Failed to generate headers",
+        description: error instanceof Error ? error.message : "An unexpected error occurred",
+      })
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  const handleAddRow = () => {
+    if (headers.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "No headers available",
+        description: "Please generate headers first or load CSV data.",
+      })
+      return
+    }
+
+    const newId = (tableData.length ? Number(tableData[tableData.length-1].id) : 0) + 1
+    const emptyRow = Object.fromEntries(headers.map(h => [h, ""]))
+    const newRow = { id: newId.toString(), ...emptyRow }
+    
+    setTableData(prev => {
+      const newData = [...prev, newRow]
+      
+      // Immediately sync to CSV
+      const csvString = convertTableToCSV(newData, headers)
+      updateExperimentCsvWithSave(csvString)
+      
+      return newData
+    })
+  }
+
 
   const generateSessionId = (): string => {
     return `csv-session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
@@ -198,7 +361,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
   }, [handleWebSocketMessage, handleWebSocketOpen, handleWebSocketError, handleWebSocketClose, updateDatacleanSession])
 
   // Send WebSocket message
-  const sendWebSocketMessage = useCallback((message: any) => {
+  const sendWebSocketMessage = useCallback((message: Record<string, unknown>) => {
     if (!sessionRef.current) {
       console.error("No active session for WebSocket message")
       return false
@@ -215,7 +378,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
   }, [])
 
   // Enhanced conversation starter with WebSocket
-  const handleStartConversation = async () => {
+  const handleStartConversation = useCallback(async () => {
     const csvString = convertTableToCSV(tableData, headers)
     
     if (!csvString) {
@@ -277,12 +440,12 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
         throw new Error("Failed to send initial message")
       }
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to start CSV conversation via WebSocket", error)
       // Fallback to HTTP if WebSocket fails
       await handleStartConversationHTTP(csvString, sessionId)
     }
-  }
+  }, [tableData, headers, toast, datacleanSession?.session_id, connectWebSocket, isConnected, connectionStatus, sendWebSocketMessage])
 
   // HTTP fallback (existing implementation)
   const handleStartConversationHTTP = async (csvString: string, sessionId: string) => {
@@ -314,18 +477,18 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
       } else {
         throw new Error(result.error_message || "Failed to start conversation")
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("HTTP fallback failed", error)
       toast({ 
         title: "Connection failed", 
-        description: error?.message || "Could not connect to CSV assistant", 
+        description: error instanceof Error ? error.message : "Could not connect to CSV assistant", 
         variant: "destructive" 
       })
     }
   }
 
   // Enhanced CSV response handler
-  const handleCSVResponse = (response: any) => {
+  const handleCSVResponse = useCallback((response: Record<string, unknown>) => {
     console.log("📊 Processing CSV response:", response)
     
     const data = response.data || response
@@ -360,7 +523,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
           const newData = lines.slice(1).map((line: string, index: number) => {
             const values = line.split(',').map((v: string) => v.trim().replace(/^"|"$/g, ''))
             const row: Record<string, string> = { id: (index + 1).toString() }
-            newHeaders.forEach((header, i) => {
+            newHeaders.forEach((header: string, i: number) => {
               row[header] = values[i] || ''
             })
             return row
@@ -371,7 +534,6 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
           setFilteredData(newData)
           
           // Update experiment store with new CSV
-          const { updateCsvFromDatacleanResponse } = useExperimentStore()
           updateCsvFromDatacleanResponse(cleaned_csv)
         }
       } catch (error) {
@@ -403,14 +565,14 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
     }
     
     setProcessingMessage("")
-  }
+  }, [toast, updateCsvFromDatacleanResponse])
 
   // Handle approval responses
   const handleCSVApprovalResponse = (message: WebSocketMessage) => {
     console.log("✅ CSV approval response received:", message)
     setAwaitingApproval(false)
     setPendingTransformations([])
-    handleCSVResponse(message)
+    handleCSVResponse(message.data)
   }
 
   // Send approval response
@@ -454,42 +616,6 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
     }
   }, [])
 
-  // Send follow-up message
-  const sendFollowUpMessage = useCallback((userMessage: string) => {
-    if (!conversationActive) {
-      toast({
-        title: "No active conversation",
-        description: "Please start a conversation first",
-        variant: "destructive"
-      })
-      return
-    }
-
-    const csvString = convertTableToCSV(tableData, headers)
-    
-    const followUpMessage = {
-      csv_data: csvString,
-      user_message: userMessage,
-      user_id: "demo-user"
-    }
-
-    const sent = sendWebSocketMessage(followUpMessage)
-    
-    if (sent) {
-      setProcessingMessage("Processing your request...")
-      toast({
-        title: "Message Sent",
-        description: "Processing your request...",
-        duration: 2000
-      })
-    } else {
-      toast({
-        title: "Failed to send message",
-        description: "Please check your connection",
-        variant: "destructive"
-      })
-    }
-  }, [conversationActive, tableData, headers, sendWebSocketMessage])
 
   // Handle download
   const handleDownload = () => {
@@ -509,7 +635,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
   }
 
   return (
-    <Card className="h-full flex flex-col dark:bg-gray-900 dark:border-gray-800">
+    <Card className="h-full flex flex-col dark:bg-gray-900 dark:border-gray-800 data-table-viewer" style={{ width: '40vw' }}>
       <CardHeader className="flex-shrink-0 pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base flex items-center gap-2 dark:text-white">
@@ -549,6 +675,21 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
               />
             </div>
             
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-6 px-2 text-xs dark:text-gray-300 dark:hover:text-white"
+              onClick={handleGenerateHeaders}
+              disabled={isGenerating}
+              title="Generate headers from experimental plan"
+            >
+              {isGenerating ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Sparkles className="h-3 w-3" />
+              )}
+            </Button>
+
             <Button 
               variant="ghost" 
               size="sm" 
@@ -623,9 +764,10 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
       </CardHeader>
 
       <CardContent className="flex-1 flex flex-col min-h-0 p-0">
-        <div className="flex-1 min-h-0 border-t dark:border-gray-700 overflow-auto">
-          {tableData.length > 0 ? (
-            <Table>
+        <div className="flex-1 min-h-0 border-t dark:border-gray-700 overflow-auto max-w-full">
+          {headers.length > 0 ? (
+            <div className="w-full overflow-x-auto">
+              <Table className="min-w-full">
               <TableHeader className="sticky top-0 bg-background dark:bg-gray-900">
                 <TableRow className="border-b dark:border-gray-700">
                   {headers.map((header) => (
@@ -649,21 +791,38 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                         key={`${row.id}-${header}`} 
                         className="text-xs px-3 py-2 dark:text-gray-300"
                       >
-                        <Input
-                          value={row[header] || ''}
-                          onChange={(e) => handleCellEdit(row.id, header, e.target.value)}
-                          className="border-0 bg-transparent p-0 h-auto text-xs focus-visible:ring-1 focus-visible:ring-blue-500"
-                          style={{
-                            fontFamily: 'ui-monospace, monospace',
-                            fontSize: '11px'
-                          }}
+                        <EditableCell 
+                          rowId={row.id} 
+                          header={header} 
+                          initialValue={row[header] || ''} 
                         />
                       </TableCell>
                     ))}
                   </TableRow>
                 ))}
+                
+                {/* Add Row Button */}
+                {headers.length > 0 && (
+                  <TableRow className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">
+                    <TableCell 
+                      colSpan={headers.length} 
+                      className="text-center py-3"
+                    >
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleAddRow}
+                        className="h-6 px-3 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                      >
+                        <Plus className="h-3 w-3 mr-1" />
+                        Add Row
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )}
               </TableBody>
-            </Table>
+              </Table>
+            </div>
           ) : (
             <div className="flex items-center justify-center h-full text-xs text-muted-foreground dark:text-gray-400">
               <div className="text-center">

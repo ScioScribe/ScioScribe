@@ -105,7 +105,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     onVisualizationGenerated,
     plan,
     csv
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   ])
 
   // WebSocket message handler for planning
@@ -130,12 +130,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       setIsConnected(false)
       
       // Handle different error types
-      const errorWithDetails = error as Event & {
-        sessionId?: string
-        queuedMessages?: number
-        lastError?: string
-      }
-      
       if (error.type === "max_reconnect_attempts") {
         setConnectionStatus("failed")
         
@@ -167,8 +161,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       setIsConnected(true)
       setConnectionStatus("connected")
       
-      // Use getter to access current session id
-      const currentSession = messageHandlerContext.getPlanningSession()
       const connectionMessage: Message = {
         id: (Date.now() + 1).toString(),
         content: `✅ Connected. Ready to continue planning.`,
@@ -197,7 +189,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       }
     }
   ), [handlePlanningWebSocketMessageWrapper
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   ])
 
   // Mode-specific message handlers

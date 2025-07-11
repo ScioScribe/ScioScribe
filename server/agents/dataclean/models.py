@@ -353,4 +353,20 @@ class CSVAnalysisResult(BaseModel):
     quality_issues: List[str] = Field(default_factory=list, description="Identified quality issues")
     suggestions: List[str] = Field(default_factory=list, description="Improvement suggestions")
     confidence_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Analysis confidence")
-    analysis_notes: List[str] = Field(default_factory=list, description="Analysis notes") 
+    analysis_notes: List[str] = Field(default_factory=list, description="Analysis notes")
+
+
+# === Header Generation Models ===
+
+class GenerateHeadersRequest(BaseModel):
+    """Request model for generating CSV headers from experimental plan."""
+    plan: str = Field(..., description="Full experimental plan text")
+    experiment_id: Optional[str] = Field(None, description="Optional experiment ID to persist the CSV")
+
+
+class GenerateHeadersResponse(BaseModel):
+    """Response model for header generation."""
+    success: bool = Field(..., description="Whether the operation succeeded")
+    headers: List[str] = Field(default_factory=list, description="Generated column headers")
+    csv_data: str = Field(default="", description="CSV header row")
+    error_message: Optional[str] = Field(None, description="Error message if failed") 

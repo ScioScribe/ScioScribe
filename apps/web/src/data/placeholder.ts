@@ -133,10 +133,45 @@ Analyze the morphological characteristics of iris flowers to understand the rela
 // Parse CSV data into structured format for table display
 export function parseCSVData(csvString: string): Array<Record<string, string>> {
   const lines = csvString.trim().split('\n')
-  const headers = lines[0].split(',')
+  if (lines.length === 0) return []
+  
+  // Simple CSV parser that handles basic quoting
+  const parseCSVLine = (line: string): string[] => {
+    const result: string[] = []
+    let current = ''
+    let inQuotes = false
+    
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i]
+      const nextChar = line[i + 1]
+      
+      if (char === '"') {
+        if (inQuotes && nextChar === '"') {
+          // Escaped quote
+          current += '"'
+          i++ // Skip next quote
+        } else {
+          // Toggle quote mode
+          inQuotes = !inQuotes
+        }
+      } else if (char === ',' && !inQuotes) {
+        // End of field
+        result.push(current.trim())
+        current = ''
+      } else {
+        current += char
+      }
+    }
+    
+    // Don't forget the last field
+    result.push(current.trim())
+    return result
+  }
+  
+  const headers = parseCSVLine(lines[0])
   
   return lines.slice(1).map((line, index) => {
-    const values = line.split(',')
+    const values = parseCSVLine(line)
     const row: Record<string, string> = { id: (index + 1).toString() }
     
     headers.forEach((header, i) => {
@@ -149,7 +184,39 @@ export function parseCSVData(csvString: string): Array<Record<string, string>> {
 
 // Get CSV headers
 export function getCSVHeaders(csvString: string): string[] {
-  return csvString.trim().split('\n')[0].split(',')
+  const firstLine = csvString.trim().split('\n')[0]
+  if (!firstLine) return []
+  
+  // Use the same parsing logic for consistency
+  const parseCSVLine = (line: string): string[] => {
+    const result: string[] = []
+    let current = ''
+    let inQuotes = false
+    
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i]
+      const nextChar = line[i + 1]
+      
+      if (char === '"') {
+        if (inQuotes && nextChar === '"') {
+          current += '"'
+          i++
+        } else {
+          inQuotes = !inQuotes
+        }
+      } else if (char === ',' && !inQuotes) {
+        result.push(current.trim())
+        current = ''
+      } else {
+        current += char
+      }
+    }
+    
+    result.push(current.trim())
+    return result
+  }
+  
+  return parseCSVLine(firstLine)
 }
 
 // Sample prompts for different analysis types
