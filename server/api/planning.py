@@ -594,7 +594,16 @@ async def _handle_user_message(websocket: WebSocket, session_id: str, message: D
                 if not original_stage:
                     original_stage = current_state.get("current_stage", "objective_setting")
                 
-                logger.info(f"[EDIT] User at {original_stage}, routing edit to {target_section}")
+                logger.info(f"[EDIT] 🔄 User at '{original_stage}', routing edit to '{target_section}'")
+                
+                # Validate the routing decision
+                if target_section == original_stage:
+                    logger.info(f"[EDIT] Edit targets current stage, no routing needed")
+                    # Process edit in current stage without routing
+                    updated_state = add_chat_message(current_state, "user", user_input)
+                    await graph.aupdate_state(config, updated_state)
+                    await _process_planning_execution(websocket, session_id, updated_state, graph, config)
+                    return
                 
                 # Transition to target section
                 routed_state = transition_to_stage(current_state.copy(), target_section, force=True)
@@ -609,10 +618,11 @@ async def _handle_user_message(websocket: WebSocket, session_id: str, message: D
                 routed_state = add_chat_message(
                     routed_state,
                     "system",
-                    f"Processing your edit request for the {target_section.replace('_', ' ')} section. "
+                    f"🔄 Processing your edit request for the {target_section.replace('_', ' ')} section. "
                     f"After this edit, we'll return to the {original_stage.replace('_', ' ')} stage."
                 )
 
+                logger.info(f"[EDIT] ✅ Successfully routed to {target_section}, will return to {original_stage}")
                 await graph.aupdate_state(config, routed_state)
 
                 # Process the edit request immediately with the user's input

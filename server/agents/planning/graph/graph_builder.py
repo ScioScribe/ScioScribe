@@ -74,50 +74,70 @@ def create_return_router_node():
     """Create a return router node that routes back to the original stage after an edit."""
     def return_router_node(state: ExperimentPlanState) -> ExperimentPlanState:
         return_to_stage = state.get('return_to_stage')
-        if return_to_stage:
+        
+        if return_to_stage and return_to_stage in PLANNING_STAGES:
             logger.info(f"[RETURN] Returning to original stage: {return_to_stage}")
             
-            # Clear the return_to_stage flag
-            updated_state = state.copy()
+            # Clear the return_to_stage flag first
+            updated_state = state.copy() if hasattr(state, 'copy') else dict(state)
             updated_state.pop('return_to_stage', None)
             
             # Add system message about returning
             updated_state = add_chat_message(
                 updated_state,
                 "system",
-                f"Edit completed! Returning to the {return_to_stage.replace('_', ' ')} stage."
+                f"✅ Edit completed! Returning to the {return_to_stage.replace('_', ' ')} stage."
             )
             
             # Transition back to the original stage
-            return transition_to_stage(updated_state, return_to_stage)
+            updated_state = transition_to_stage(updated_state, return_to_stage)
+            
+            logger.info(f"[RETURN] Successfully returned to {return_to_stage}")
+            return updated_state
         else:
-            # Fallback to objective if no return stage specified
-            logger.warning("[RETURN] No return_to_stage found, defaulting to objective_setting")
-            return transition_to_stage(state, "objective_setting")
+            # Fallback: if no return stage specified, go to objective_setting
+            logger.warning(f"[RETURN] No valid return_to_stage found (was: {return_to_stage}), defaulting to objective_setting")
+            
+            # Clear any invalid return_to_stage flag
+            updated_state = state.copy() if hasattr(state, 'copy') else dict(state)
+            updated_state.pop('return_to_stage', None)
+            
+            # Add system message about fallback
+            updated_state = add_chat_message(
+                updated_state,
+                "system",
+                "Edit completed! Continuing with the planning process."
+            )
+            
+            # Transition to objective_setting as fallback
+            updated_state = transition_to_stage(updated_state, "objective_setting")
+            
+            return updated_state
     
     return return_router_node
 
 
 def create_stage_return_router():
-    """Create a router that determines which stage to return to based on return_to_stage."""
+    """Create a return router function that determines where to route after completing an edit."""
     def stage_return_router(state: ExperimentPlanState) -> str:
+        """Route back to the original stage after completing an edit."""
         return_to_stage = state.get('return_to_stage')
-        if not return_to_stage:
+        
+        if return_to_stage and return_to_stage in PLANNING_STAGES:
+            logger.info(f"[RETURN] Routing back to original stage: {return_to_stage}")
+            # Map stage to routing key
+            stage_routing_map = {
+                "objective_setting": "objective",
+                "variable_identification": "variables",
+                "experimental_design": "design",
+                "methodology_protocol": "methodology",
+                "data_planning": "data_planning",
+                "final_review": "review"
+            }
+            return stage_routing_map.get(return_to_stage, "objective")
+        else:
+            logger.warning(f"[RETURN] No valid return_to_stage found, defaulting to objective")
             return "objective"
-        
-        # Map stages to routing keys
-        stage_routing_map = {
-            "objective_setting": "objective",
-            "variable_identification": "variables",
-            "experimental_design": "design",
-            "methodology_protocol": "methodology",
-            "data_planning": "data_planning",
-            "final_review": "review"
-        }
-        
-        routing_key = stage_routing_map.get(return_to_stage, "objective")
-        logger.info(f"[RETURN_ROUTER] Routing back to {routing_key} (stage: {return_to_stage})")
-        return routing_key
     
     return stage_return_router
 
