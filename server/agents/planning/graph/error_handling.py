@@ -43,26 +43,6 @@ def safe_conditional_check(
         return fallback_result
 
 
-def get_latest_user_input(state: ExperimentPlanState) -> str:
-    """
-    Extract the latest user input from chat history.
-    
-    Args:
-        state: Current experiment plan state
-        
-    Returns:
-        Latest user input content or empty string if none found
-    """
-    chat_history = state.get('chat_history', [])
-    
-    # Find the most recent user message
-    for message in reversed(chat_history):
-        if message.get('role') == 'user':
-            return message.get('content', '')
-    
-    return ''
-
-
 # Legacy function stubs for backward compatibility
 def error_recovery_context(node_name: str, state: ExperimentPlanState):
     """Legacy function - error handling is now done by LangGraph."""

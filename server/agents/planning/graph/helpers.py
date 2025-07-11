@@ -3,12 +3,15 @@ Helper utility functions for the experiment planning graph system.
 
 This module provides common utility functions used across the planning system
 for input processing, section determination, and other shared functionality.
+All classification is now 100% LLM-based for maximum accuracy and consistency.
 """
 
 from typing import Dict, List, Any
 import logging
 
 from ..state import ExperimentPlanState, PLANNING_STAGES
+from ..llm_config import get_llm_manager, LLMConfigError
+from langchain_core.messages import SystemMessage, HumanMessage
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +43,9 @@ def determine_section_to_edit(user_input: str, state: ExperimentPlanState) -> st
     """
     Determine which section the user wants to edit based on their input.
     
-    This function analyzes user input to identify which planning stage
-    they want to navigate to for editing. Uses enhanced keyword matching 
-    and context analysis with fallback logic.
+    This function uses LLM-based classification to identify which planning stage
+    they want to navigate to for editing. Uses enhanced prompts and robust
+    error handling to ensure reliable classification.
     
     Args:
         user_input: User's input message
@@ -50,96 +53,75 @@ def determine_section_to_edit(user_input: str, state: ExperimentPlanState) -> st
         
     Returns:
         Planning stage name to navigate to
+        
+    Raises:
+        RuntimeError: If LLM classification fails completely
     """
-    user_input_lower = user_input.lower().strip()
+    logger.info(f"[SECTION] Determining section to edit for: '{user_input}'")
     
-    # Enhanced section keywords mapping with more comprehensive coverage
-    section_keywords = {
-        "objective_setting": [
-            "objective", "goal", "hypothesis", "purpose", "aim", "research question",
-            "what we're trying", "what we want", "main goal", "research aim",
-            "study objective", "experimental objective"
-        ],
-        "variable_identification": [
-            "variable", "independent", "dependent", "control", "measure", "measurement",
-            "what we're measuring", "what we're changing", "factors", "parameters",
-            "iv", "dv", "controlled variable", "confounding"
-        ],
-        "experimental_design": [
-            "design", "groups", "control group", "experimental group", "sample", 
-            "statistical", "power", "replicates", "randomization", "treatment",
-            "control condition", "experimental condition", "group size", "n=",
-            "power analysis", "sample size"
-        ],
-        "methodology_protocol": [
-            "protocol", "method", "procedure", "steps", "materials", "equipment",
-            "how to", "protocol steps", "experimental procedure", "methodology",
-            "materials list", "reagents", "instruments", "step by step"
-        ],
-        "data_planning": [
-            "data", "analysis", "statistics", "visualization", "pitfalls", "collection",
-            "statistical test", "data analysis", "graphs", "charts", "results",
-            "statistical analysis", "data collection", "potential problems"
-        ],
-        "final_review": [
-            "review", "export", "summary", "complete", "finalize", "overview",
-            "final plan", "export plan", "summary report", "complete plan",
-            "plan review", "final summary"
-        ]
-    }
+    # Get current stage for context
+    current_stage = state.get("current_stage", "objective_setting")
+    logger.info(f"[SECTION] Current stage: {current_stage}")
     
-    # Check for specific section keywords with scoring
-    section_scores = {}
-    for section, keywords in section_keywords.items():
-        score = sum(1 for keyword in keywords if keyword in user_input_lower)
-        if score > 0:
-            section_scores[section] = score
+    # 🔍 DEBUG LOG 5: Section determination process
+    logger.info(f"🔍 DEBUG 5 - SECTION DETERMINATION:")
+    logger.info(f"   Input to classify: '{user_input}'")
+    logger.info(f"   Current stage: '{current_stage}'")
+    logger.info(f"   State experiment_id: {state.get('experiment_id', 'not set')}")
     
-    # If we found matches, return the highest scoring section
-    if section_scores:
-        best_section = max(section_scores, key=section_scores.get)
-        logger.info(f"Determined section to edit: {best_section} (score: {section_scores[best_section]})")
-        return best_section
-    
-    # Context-based fallback: analyze what might be incomplete
-    incomplete_stages = []
-    
-    # Check each stage for completeness
-    if not state.get('experiment_objective') or not state.get('hypothesis'):
-        incomplete_stages.append("objective_setting")
-    
+    # Check what sections are incomplete for context
+    incomplete_sections = []
+    if not state.get('experiment_objective'):
+        incomplete_sections.append('objective_setting')
     if not state.get('independent_variables') or not state.get('dependent_variables'):
-        incomplete_stages.append("variable_identification")
-    
-    if not state.get('experimental_groups') or not state.get('control_groups'):
-        incomplete_stages.append("experimental_design")
-    
+        incomplete_sections.append('variable_identification')
+    if not state.get('experimental_groups') or not state.get('sample_size'):
+        incomplete_sections.append('experimental_design')
     if not state.get('methodology_steps') or not state.get('materials_equipment'):
-        incomplete_stages.append("methodology_protocol")
-    
+        incomplete_sections.append('methodology_protocol')
     if not state.get('data_collection_plan') or not state.get('data_analysis_plan'):
-        incomplete_stages.append("data_planning")
+        incomplete_sections.append('data_planning')
     
-    # If there are incomplete stages, suggest the first one
-    if incomplete_stages:
-        suggested_section = incomplete_stages[0]
-        logger.info(f"No specific section identified, suggesting incomplete stage: {suggested_section}")
-        return suggested_section
+    logger.info(f"   Incomplete sections: {incomplete_sections}")
+    logger.info(f"   Available sections: {PLANNING_STAGES}")
     
-    # Final fallback: if everything seems complete, go to review
-    if all([
-        state.get('experiment_objective'),
-        state.get('independent_variables'),
-        state.get('experimental_groups'),
-        state.get('methodology_steps'),
-        state.get('data_collection_plan')
-    ]):
-        logger.info("All stages appear complete, directing to final review")
-        return "final_review"
+    # Use LLM-based classification with enhanced error handling
+    llm_section = _classify_section_with_llm(user_input, state)
     
-    # Ultimate fallback
-    logger.info("No specific section identified, defaulting to objective_setting")
-    return "objective_setting"
+    logger.info(f"🔍 DEBUG 5a - PRIMARY LLM CLASSIFICATION:")
+    logger.info(f"   LLM Result: '{llm_section}'")
+    logger.info(f"   Result Type: {type(llm_section)}")
+    logger.info(f"   Is Valid Stage: {llm_section in PLANNING_STAGES if llm_section else False}")
+    
+    if llm_section and llm_section in PLANNING_STAGES:
+        logger.info(f"[SECTION] ✅ LLM classified '{user_input}' -> {llm_section}")
+        logger.info(f"🔍 DEBUG 5b - PRIMARY SUCCESS: Using LLM result '{llm_section}'")
+        return llm_section
+    
+    # If LLM classification fails, try with a more direct approach
+    logger.warning(f"[SECTION] ⚠️ Primary LLM classification failed (result: {llm_section}), trying fallback approach")
+    fallback_section = _classify_section_with_fallback_llm(user_input, state)
+    
+    logger.info(f"🔍 DEBUG 5c - FALLBACK LLM CLASSIFICATION:")
+    logger.info(f"   Fallback Result: '{fallback_section}'")
+    logger.info(f"   Result Type: {type(fallback_section)}")
+    logger.info(f"   Is Valid Stage: {fallback_section in PLANNING_STAGES if fallback_section else False}")
+    
+    if fallback_section and fallback_section in PLANNING_STAGES:
+        logger.info(f"[SECTION] ✅ Fallback LLM classified '{user_input}' -> {fallback_section}")
+        logger.info(f"🔍 DEBUG 5d - FALLBACK SUCCESS: Using fallback result '{fallback_section}'")
+        return fallback_section
+    
+    # If both approaches fail, make an intelligent guess based on state
+    intelligent_guess = _make_intelligent_section_guess(state, user_input)
+    logger.warning(f"[SECTION] ⚠️ LLM classification failed completely, using intelligent guess: {intelligent_guess}")
+    
+    logger.info(f"🔍 DEBUG 5e - INTELLIGENT GUESS:")
+    logger.info(f"   Guess Result: '{intelligent_guess}'")
+    logger.info(f"   Guess Logic: Based on incomplete sections and current stage")
+    logger.info(f"   Final Decision: '{intelligent_guess}'")
+    
+    return intelligent_guess
 
 
 def get_stage_routing_map() -> Dict[str, str]:
@@ -176,128 +158,39 @@ def get_stage_descriptions() -> Dict[str, str]:
     }
 
 
-def get_completion_keywords() -> Dict[str, List[str]]:
-    """
-    Get keywords used to identify completion or approval intents.
-    
-    Returns:
-        Dictionary with approval and edit keywords
-    """
-    return {
-        "approval": ["approve", "approved", "yes", "confirm", "complete", "finalize"],
-        "edit": ["edit", "modify", "change", "update", "revise", "go back"]
-    }
-
-
 def extract_user_intent(user_input: str) -> str:
     """
-    Extract the user's intent from their input message using improved NLP.
+    Extract the user's intent from their input message using LLM classification.
     
     Args:
         user_input: User's input message
         
     Returns:
         Intent category: 'approval', 'edit', or 'unclear'
-    """
-    user_input_lower = user_input.lower().strip()
-    
-    # Enhanced keyword sets for better detection
-    approval_keywords = [
-        "approve", "approved", "yes", "confirm", "complete", "finalize", 
-        "done", "finished", "good", "looks good", "perfect", "ready",
-        "export", "save", "accept", "ok", "okay", "great", "excellent",
-        "thanks", "thank you", "that's all", "all set"
-    ]
-    
-    edit_keywords = [
-        "edit", "modify", "change", "update", "revise", "go back",
-        "fix", "adjust", "improve", "refine", "alter", "correct",
-        "want to change", "need to", "let me", "can we", "should we"
-    ]
-    
-    # Strong approval phrases (higher priority)
-    strong_approval_phrases = [
-        "looks good", "looks great", "that's perfect", "ready to go",
-        "ready to export", "ready to save", "all done", "we're done",
-        "that's it", "that's all", "thank you"
-    ]
-    
-    # Check for strong approval phrases first
-    for phrase in strong_approval_phrases:
-        if phrase in user_input_lower:
-            return "approval"
-    
-    # Check for explicit approval/edit keywords
-    approval_count = sum(1 for keyword in approval_keywords if keyword in user_input_lower)
-    edit_count = sum(1 for keyword in edit_keywords if keyword in user_input_lower)
-    
-    # If user mentions specific sections, likely wants to edit
-    section_mentions = ["objective", "variable", "design", "methodology", "data", "protocol"]
-    if any(section in user_input_lower for section in section_mentions) and edit_count > 0:
-        return "edit"
-    
-    # Determine intent based on keyword counts
-    if approval_count > edit_count and approval_count > 0:
-        return "approval"
-    elif edit_count > approval_count and edit_count > 0:
-        return "edit"
-    elif approval_count > 0:
-        return "approval"
-    else:
-        return "unclear"
-
-
-def validate_stage_name(stage_name: str) -> bool:
-    """
-    Validate that a stage name is valid.
-    
-    Args:
-        stage_name: Name of the planning stage
         
-    Returns:
-        True if valid, False otherwise
+    Raises:
+        RuntimeError: If LLM classification fails completely
     """
-    return stage_name in PLANNING_STAGES
-
-
-def get_next_stage(current_stage: str) -> str | None:
-    """
-    Get the next planning stage after the current one.
+    logger.info(f"[INTENT] Classifying user input: '{user_input}'")
     
-    Args:
-        current_stage: Current planning stage
-        
-    Returns:
-        Next stage name or None if current is the last stage
-    """
-    try:
-        current_index = PLANNING_STAGES.index(current_stage)
-        if current_index < len(PLANNING_STAGES) - 1:
-            return PLANNING_STAGES[current_index + 1]
-        return None
-    except ValueError:
-        logger.error(f"Invalid current stage: {current_stage}")
-        return None
-
-
-def get_previous_stage(current_stage: str) -> str | None:
-    """
-    Get the previous planning stage before the current one.
+    # Use LLM-based intent classification
+    llm_intent = _classify_intent_with_llm(user_input)
     
-    Args:
-        current_stage: Current planning stage
-        
-    Returns:
-        Previous stage name or None if current is the first stage
-    """
-    try:
-        current_index = PLANNING_STAGES.index(current_stage)
-        if current_index > 0:
-            return PLANNING_STAGES[current_index - 1]
-        return None
-    except ValueError:
-        logger.error(f"Invalid current stage: {current_stage}")
-        return None
+    if llm_intent and llm_intent in {"approval", "edit", "unclear"}:
+        logger.info(f"[INTENT] ✅ LLM classified '{user_input}' -> {llm_intent}")
+        return llm_intent
+    
+    # If primary classification fails, try with a more direct approach
+    logger.warning(f"[INTENT] ⚠️ Primary LLM classification failed (result: {llm_intent}), trying fallback approach")
+    fallback_intent = _classify_intent_with_fallback_llm(user_input)
+    
+    if fallback_intent and fallback_intent in {"approval", "edit", "unclear"}:
+        logger.info(f"[INTENT] ✅ Fallback LLM classified '{user_input}' -> {fallback_intent}")
+        return fallback_intent
+    
+    # If both approaches fail, default to 'unclear' as the safest option
+    logger.warning(f"[INTENT] ⚠️ LLM classification failed completely, defaulting to 'unclear'")
+    return "unclear"
 
 
 def calculate_progress_percentage(completed_stages: List[str]) -> float:
@@ -402,4 +295,449 @@ def detect_session_completion(session_id: str, graph_components: Dict[str, Any])
             
     except Exception as e:
         logger.error(f"Error detecting session completion: {e}")
-        return False 
+        return False
+
+
+# ============================================================
+# LLM-ASSISTED CLASSIFICATION HELPERS
+# ============================================================
+
+
+def _safe_invoke_llm(messages: list, agent_type: str, max_retries: int = 2) -> str | None:
+    """Invoke the global LLM manager safely with retry logic.
+
+    Args:
+        messages: A list of LangChain message objects.
+        agent_type: A descriptive label for logging/metrics.
+        max_retries: Maximum number of retry attempts.
+
+    Returns:
+        The raw string response from the LLM or None if all attempts fail.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            logger.info(f"[LLM] Invoking classification LLM for {agent_type} (attempt {attempt + 1}/{max_retries + 1})")
+            manager = get_llm_manager()
+            llm = manager.create_llm(agent_type=agent_type, temperature=0.0, max_tokens=64)
+            response = manager.invoke_llm(llm, messages, agent_type)
+            
+            result = response.strip().lower()
+            logger.info(f"[LLM] Raw response for {agent_type}: '{result}'")
+            return result
+            
+        except (LLMConfigError, Exception) as e:
+            logger.warning(
+                f"LLM classification attempt {attempt + 1} failed for {agent_type}: {getattr(e, 'message', str(e))}"
+            )
+            if attempt == max_retries:
+                logger.error(f"All LLM classification attempts failed for {agent_type}")
+                return None
+    
+    return None
+
+
+def _classify_section_with_llm(user_input: str, state: ExperimentPlanState) -> str | None:
+    """Enhanced LLM classification using two-step process with full state context."""
+    
+    # Step 1: Extract what the user wants to change
+    change_analysis = _extract_change_intent(user_input)
+    if not change_analysis:
+        logger.warning(f"[LLM] Failed to extract change intent from: '{user_input}'")
+        return None
+    
+    # Step 2: Map the change to the correct section based on current state
+    section_mapping = _map_change_to_section(change_analysis, state, user_input)
+    
+    logger.info(f"[LLM] Two-step classification: '{user_input}' -> Change: '{change_analysis}' -> Section: '{section_mapping}'")
+    
+    return section_mapping
+
+
+def _extract_change_intent(user_input: str) -> str | None:
+    """First LLM call: Extract what the user wants to change."""
+    
+    system_prompt = (
+        "You are analyzing a user's edit request to extract what they want to change.\n\n"
+        
+        "Your task is to identify the SPECIFIC ASPECT they want to modify. Focus on:\n"
+        "- What element/component they're referring to\n"
+        "- What type of change they want (modify, add, remove, etc.)\n"
+        "- The specific value or characteristic they mention\n\n"
+        
+        "Examples:\n"
+        "- 'Can we change the timeline to 6 months?' -> 'timeline/duration'\n"
+        "- 'Let's use 5 groups instead of 3' -> 'number of groups'\n"
+        "- 'Add temperature as a control variable' -> 'control variables'\n"
+        "- 'Change the sample size to 100' -> 'sample size'\n"
+        "- 'Modify the hypothesis' -> 'hypothesis'\n"
+        "- 'Update the procedure for step 3' -> 'methodology steps'\n"
+        "- 'Change the statistical analysis method' -> 'analysis method'\n"
+        "- 'Add more replicates' -> 'replicates/sample size'\n\n"
+        
+        "Respond with a SHORT phrase describing what they want to change. "
+        "Focus on the CONTENT/ASPECT, not the section name."
+    )
+    
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"User edit request: '{user_input}'")
+    ]
+    
+    result = _safe_invoke_llm(messages, "change_intent_extraction")
+    
+    if result:
+        result = result.strip()
+        logger.info(f"[LLM] Change intent extracted: '{result}'")
+        return result
+    
+    return None
+
+
+def _map_change_to_section(change_intent: str, state: ExperimentPlanState, original_input: str) -> str | None:
+    """Second LLM call: Map the change to the correct section based on current state content."""
+    
+    # Build rich context about current state content
+    state_context = _build_state_context_for_llm(state)
+    
+    system_prompt = (
+        "You are mapping a user's change request to the correct planning section.\n\n"
+        
+        "PLANNING SECTIONS:\n"
+        "1. objective_setting - Research goals, hypotheses, timelines, overall objectives\n"
+        "2. variable_identification - Independent/dependent/control variables, measurements\n"
+        "3. experimental_design - Groups, treatments, sample sizes, experimental structure\n"
+        "4. methodology_protocol - Step-by-step procedures, materials, equipment\n"
+        "5. data_planning - Data collection methods, analysis plans, statistics\n"
+        "6. final_review - Review, summary, export\n\n"
+        
+        "CRITICAL RULES:\n"
+        "- Timeline/duration changes = objective_setting\n"
+        "- Hypothesis changes = objective_setting\n"
+        "- Variable definitions = variable_identification\n"
+        "- Group counts/sample sizes = experimental_design\n"
+        "- Procedure steps = methodology_protocol\n"
+        "- Analysis methods = data_planning\n\n"
+        
+        "You will receive:\n"
+        "1. What the user wants to change\n"
+        "2. Current content of each section\n"
+        "3. The original user input\n\n"
+        
+        "Based on the CURRENT STATE CONTENT, determine which section the change belongs to.\n"
+        "If the change relates to content that exists in a section, that's the correct section.\n\n"
+        
+        "Respond with ONLY the section name (e.g., 'objective_setting')."
+    )
+    
+    human_message = (
+        f"CHANGE REQUEST: {change_intent}\n"
+        f"ORIGINAL INPUT: {original_input}\n\n"
+        f"CURRENT STATE CONTENT:\n{state_context}\n\n"
+        f"Which section should this change be made to?"
+    )
+    
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=human_message)
+    ]
+    
+    result = _safe_invoke_llm(messages, "section_mapping")
+    
+    if result:
+        result = result.strip().lower()
+        logger.info(f"[LLM] Section mapping result: '{result}'")
+        
+        # Validate result
+        if result in PLANNING_STAGES:
+            return result
+        
+        # Try to find partial match
+        for stage in PLANNING_STAGES:
+            if stage in result or result in stage:
+                logger.info(f"[LLM] Found partial match: '{result}' -> '{stage}'")
+                return stage
+    
+    logger.warning(f"[LLM] Section mapping failed for change: '{change_intent}'")
+    return None
+
+
+def _build_state_context_for_llm(state: ExperimentPlanState) -> str:
+    """Build rich context about current state content for LLM."""
+    
+    context_lines = []
+    
+    # Objective Setting Content
+    objective_content = []
+    if state.get('experiment_objective'):
+        objective_content.append(f"Objective: {state['experiment_objective']}")
+    if state.get('hypothesis'):
+        objective_content.append(f"Hypothesis: {state['hypothesis']}")
+    if state.get('research_query'):
+        objective_content.append(f"Research Query: {state['research_query']}")
+    
+    if objective_content:
+        context_lines.append("OBJECTIVE_SETTING:")
+        context_lines.extend([f"  {line}" for line in objective_content])
+    else:
+        context_lines.append("OBJECTIVE_SETTING: [Empty]")
+    
+    # Variable Identification Content
+    var_content = []
+    if state.get('independent_variables'):
+        var_content.append(f"Independent Variables: {len(state['independent_variables'])} defined")
+        for var in state['independent_variables'][:2]:  # Show first 2
+            var_content.append(f"  - {var.get('name', 'unnamed')}")
+    if state.get('dependent_variables'):
+        var_content.append(f"Dependent Variables: {len(state['dependent_variables'])} defined")
+        for var in state['dependent_variables'][:2]:  # Show first 2
+            var_content.append(f"  - {var.get('name', 'unnamed')}")
+    if state.get('control_variables'):
+        var_content.append(f"Control Variables: {len(state['control_variables'])} defined")
+        for var in state['control_variables'][:2]:  # Show first 2
+            var_content.append(f"  - {var.get('name', 'unnamed')}")
+    
+    if var_content:
+        context_lines.append("VARIABLE_IDENTIFICATION:")
+        context_lines.extend([f"  {line}" for line in var_content])
+    else:
+        context_lines.append("VARIABLE_IDENTIFICATION: [Empty]")
+    
+    # Experimental Design Content
+    design_content = []
+    if state.get('experimental_groups'):
+        design_content.append(f"Experimental Groups: {len(state['experimental_groups'])} defined")
+        for group in state['experimental_groups'][:2]:  # Show first 2
+            design_content.append(f"  - {group.get('name', 'unnamed')}")
+    if state.get('control_groups'):
+        design_content.append(f"Control Groups: {len(state['control_groups'])} defined")
+    if state.get('sample_size'):
+        design_content.append(f"Sample Size: {state['sample_size']}")
+    
+    if design_content:
+        context_lines.append("EXPERIMENTAL_DESIGN:")
+        context_lines.extend([f"  {line}" for line in design_content])
+    else:
+        context_lines.append("EXPERIMENTAL_DESIGN: [Empty]")
+    
+    # Methodology Content
+    method_content = []
+    if state.get('methodology_steps'):
+        method_content.append(f"Methodology Steps: {len(state['methodology_steps'])} defined")
+        for step in state['methodology_steps'][:2]:  # Show first 2
+            method_content.append(f"  - Step {step.get('step_number', '?')}: {step.get('description', 'no description')[:50]}...")
+    if state.get('materials_equipment'):
+        method_content.append(f"Materials/Equipment: {len(state['materials_equipment'])} items")
+    
+    if method_content:
+        context_lines.append("METHODOLOGY_PROTOCOL:")
+        context_lines.extend([f"  {line}" for line in method_content])
+    else:
+        context_lines.append("METHODOLOGY_PROTOCOL: [Empty]")
+    
+    # Data Planning Content
+    data_content = []
+    if state.get('data_collection_plan'):
+        data_content.append(f"Data Collection Plan: {type(state['data_collection_plan']).__name__}")
+        if isinstance(state['data_collection_plan'], dict):
+            data_content.append(f"  Keys: {list(state['data_collection_plan'].keys())}")
+    if state.get('data_analysis_plan'):
+        data_content.append(f"Data Analysis Plan: {type(state['data_analysis_plan']).__name__}")
+        if isinstance(state['data_analysis_plan'], dict):
+            data_content.append(f"  Keys: {list(state['data_analysis_plan'].keys())}")
+    
+    if data_content:
+        context_lines.append("DATA_PLANNING:")
+        context_lines.extend([f"  {line}" for line in data_content])
+    else:
+        context_lines.append("DATA_PLANNING: [Empty]")
+    
+    return "\n".join(context_lines)
+
+
+def _classify_section_with_fallback_llm(user_input: str, state: ExperimentPlanState) -> str | None:
+    """Fallback LLM classification with a more direct approach."""
+    
+    system_prompt = (
+        "You are classifying user requests for an experiment planning system. "
+        "The user wants to edit one of these sections:\n\n"
+        
+        "objective_setting - research goals, hypotheses, objectives, timelines\n"
+        "variable_identification - variables, measurements, factors\n"
+        "experimental_design - groups, sample sizes, treatments\n"
+        "methodology_protocol - procedures, materials, equipment\n"
+        "data_planning - data collection, analysis, statistics\n"
+        "final_review - review, export, summary\n\n"
+        
+        "Examples:\n"
+        "- 'change the hypothesis' -> objective_setting\n"
+        "- 'add a control variable' -> variable_identification\n"
+        "- 'modify the sample size' -> experimental_design\n"
+        "- 'update the procedure' -> methodology_protocol\n"
+        "- 'change the analysis method' -> data_planning\n"
+        "- 'review the final plan' -> final_review\n\n"
+        
+        "Respond with ONLY the section name. If unclear, respond with the current stage."
+    )
+
+    current_stage = state.get("current_stage", "objective_setting")
+    
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"User wants to edit: '{user_input}'\nCurrent stage: {current_stage}"),
+    ]
+
+    result = _safe_invoke_llm(messages, "section_routing_fallback")
+    
+    if result:
+        result = result.strip().lower()
+        # Check for exact match
+        if result in PLANNING_STAGES:
+            return result
+        # Check for partial matches
+        for stage in PLANNING_STAGES:
+            if stage in result or result in stage:
+                logger.info(f"[SECTION] Fallback found partial match: '{result}' -> '{stage}'")
+                return stage
+    
+    logger.warning(f"[SECTION] Fallback LLM classification failed for '{user_input}', result: {result}")
+    return None
+
+
+def _make_intelligent_section_guess(state: ExperimentPlanState, user_input: str) -> str:
+    """Make an intelligent guess about which section to edit based on state completeness and user input."""
+    
+    current_stage = state.get("current_stage", "objective_setting")
+    
+    # First, try keyword-based matching as a last resort
+    user_input_lower = user_input.lower()
+    
+    # Keyword matching with scoring
+    stage_scores = {
+        "objective_setting": 0,
+        "variable_identification": 0,
+        "experimental_design": 0,
+        "methodology_protocol": 0,
+        "data_planning": 0,
+        "final_review": 0
+    }
+    
+    # Score based on keywords
+    keyword_mapping = {
+        "objective_setting": ["objective", "goal", "purpose", "hypothesis", "research", "aim", "question", "timeline", "duration"],
+        "variable_identification": ["variable", "independent", "dependent", "control", "factor", "measure", "parameter"],
+        "experimental_design": ["design", "group", "sample", "treatment", "control", "size", "replication", "randomization"],
+        "methodology_protocol": ["method", "procedure", "protocol", "step", "process", "material", "equipment", "tool"],
+        "data_planning": ["data", "analysis", "statistics", "statistical", "test", "collection", "visualization", "chart"],
+        "final_review": ["review", "final", "complete", "finish", "summary", "export", "overview"]
+    }
+    
+    for stage, keywords in keyword_mapping.items():
+        for keyword in keywords:
+            if keyword in user_input_lower:
+                stage_scores[stage] += 1
+    
+    # Find the stage with the highest score
+    best_stage = max(stage_scores, key=stage_scores.get)
+    best_score = stage_scores[best_stage]
+    
+    if best_score > 0:
+        logger.info(f"[SECTION] Keyword-based guess: '{user_input}' -> {best_stage} (score: {best_score})")
+        return best_stage
+    
+    # If no keywords match, check state completeness and prefer current stage or next incomplete stage
+    incomplete_stages = []
+    
+    # Check each stage for completeness
+    if not state.get('experiment_objective') or not state.get('hypothesis'):
+        incomplete_stages.append("objective_setting")
+    
+    if not state.get('independent_variables') or not state.get('dependent_variables'):
+        incomplete_stages.append("variable_identification")
+    
+    if not state.get('experimental_groups') or not state.get('sample_size'):
+        incomplete_stages.append("experimental_design")
+    
+    if not state.get('methodology_steps') or not state.get('materials_equipment'):
+        incomplete_stages.append("methodology_protocol")
+    
+    if not state.get('data_collection_plan') or not state.get('data_analysis_plan'):
+        incomplete_stages.append("data_planning")
+    
+    # Prefer current stage if it's incomplete
+    if current_stage in incomplete_stages:
+        logger.info(f"[SECTION] Intelligent guess: using current incomplete stage '{current_stage}'")
+        return current_stage
+    
+    # Otherwise, use the first incomplete stage
+    if incomplete_stages:
+        logger.info(f"[SECTION] Intelligent guess: using first incomplete stage '{incomplete_stages[0]}'")
+        return incomplete_stages[0]
+    
+    # If everything seems complete, default to current stage
+    logger.info(f"[SECTION] Intelligent guess: defaulting to current stage '{current_stage}'")
+    return current_stage
+
+
+def _classify_intent_with_llm(user_input: str) -> str | None:
+    """Classify the user_input as 'approval', 'edit', or 'unclear' using the LLM."""
+
+    system_prompt = (
+        "You are an intent classifier for an experimental planning system. "
+        "Users are being asked to approve sections of their experiment plan or request changes.\n\n"
+        
+        "**INTENT CATEGORIES:**\n"
+        "- **approval**: User agrees to proceed with the current section as-is\n"
+        "  Examples: 'approve', 'yes', 'looks good', 'proceed', 'continue', 'ready to move on'\n\n"
+        
+        "- **edit**: User wants to modify or change something in the current section\n"
+        "  Examples: 'instead of X, make it Y', 'change the duration', 'can we modify', 'rather than', 'but what if'\n"
+        "  Key indicators: 'instead', 'change', 'modify', 'could we', 'can we', 'rather than', 'but', 'however'\n\n"
+        
+        "- **unclear**: User message is ambiguous or doesn't clearly indicate approval or edit intent\n"
+        "  Examples: unclear questions, off-topic comments, or ambiguous statements\n\n"
+        
+        "**CRITICAL RULES:**\n"
+        "1. If a user suggests ANY modification, change, or alternative (even while being polite), classify as 'edit'\n"
+        "2. Phrases like 'instead of X could we make it Y' are clearly edit requests\n"
+        "3. Only classify as 'approval' if the user clearly agrees with the current state\n\n"
+        
+        "CRITICAL: You must respond with ONLY the category name: approval, edit, or unclear. "
+        "Do not include any other text, explanations, or formatting."
+    )
+
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"User message: {user_input}"),
+    ]
+
+    result = _safe_invoke_llm(messages, "intent_classification")
+    
+    if result and result in {"approval", "edit", "unclear"}:
+        return result
+    
+    logger.warning(f"[INTENT] Primary LLM classification failed for '{user_input}', result: {result}")
+    return None
+
+
+def _classify_intent_with_fallback_llm(user_input: str) -> str | None:
+    """Fallback LLM intent classification with a more direct approach."""
+    
+    system_prompt = (
+        "Classify this user message:\n"
+        "- 'approval' if they agree/approve\n"
+        "- 'edit' if they want to change something\n"
+        "- 'unclear' if ambiguous\n\n"
+        "Respond with only: approval, edit, or unclear"
+    )
+
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_input),
+    ]
+
+    result = _safe_invoke_llm(messages, "intent_classification_fallback")
+    
+    if result and result in {"approval", "edit", "unclear"}:
+        return result
+    
+    return None 

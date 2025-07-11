@@ -29,6 +29,8 @@ from agents.planning.serialization import (
 )
 from agents.planning.factory import create_new_experiment_state, add_chat_message
 from config import validate_openai_config
+from agents.planning.graph.helpers import extract_user_intent, determine_section_to_edit
+from agents.planning.transitions import transition_to_stage
 
 logger = logging.getLogger(__name__)
 
@@ -560,7 +562,144 @@ async def _handle_user_message(websocket: WebSocket, session_id: str, message: D
             await _send_error_message(websocket, session_id, "Session not found")
             return
 
-        # Add user message to state
+        # ------------------------------------------------------------
+        # NEW: Handle messages received while graph is interrupted
+        # ------------------------------------------------------------
+
+        is_interrupted = await _is_graph_interrupted(session_id)
+        
+        # 🔍 DEBUG LOG 1: Critical intent classification and routing decisions
+        logger.info(f"🔍 DEBUG 1 - USER MESSAGE ANALYSIS:")
+        logger.info(f"   Session ID: {session_id}")
+        logger.info(f"   User Input: '{user_input}'")
+        logger.info(f"   Current State: {current_state.get('current_stage', 'unknown')}")
+        logger.info(f"   Is Interrupted: {is_interrupted}")
+        logger.info(f"   Chat History Length: {len(current_state.get('chat_history', []))}")
+        logger.info(f"   Return to Stage: {current_state.get('return_to_stage', 'not set')}")
+
+        if is_interrupted:
+            # Decide whether this looks like approval or an edit request
+            intent = extract_user_intent(user_input)
+            
+            # 🔍 DEBUG LOG 2: Intent classification results
+            logger.info(f"🔍 DEBUG 2 - INTENT CLASSIFICATION:")
+            logger.info(f"   Raw Intent Result: '{intent}'")
+            logger.info(f"   Intent Type: {type(intent)}")
+            logger.info(f"   Is Valid Intent: {intent in ['approval', 'edit', 'unclear']}")
+
+            if intent == "approval":
+                logger.info(f"🔍 DEBUG 2a - APPROVAL FLOW: Re-routing as approval_response")
+                # Re-route as an approval_response = True so normal flow continues
+                await _handle_approval_response(
+                    websocket,
+                    session_id,
+                    {
+                        "type": "approval_response",
+                        "data": {"approved": True, "feedback": ""},
+                        "session_id": session_id,
+                    },
+                )
+                return  # handled
+
+            elif intent == "edit":
+                # IMPROVED: Process edit request directly with user's actual input
+                target_section = determine_section_to_edit(user_input, current_state)
+                
+                # STORE CURRENT STAGE FOR RETURN NAVIGATION
+                original_stage = await _get_current_stage_from_graph(session_id)
+                if not original_stage:
+                    original_stage = current_state.get("current_stage", "objective_setting")
+                
+                # 🔍 DEBUG LOG 3: Edit routing decisions
+                logger.info(f"🔍 DEBUG 3 - EDIT ROUTING:")
+                logger.info(f"   Original Stage: '{original_stage}'")
+                logger.info(f"   Target Section: '{target_section}'")
+                logger.info(f"   Section Determination Valid: {target_section in PLANNING_STAGES}")
+                logger.info(f"   Same Stage Edit: {target_section == original_stage}")
+                logger.info(f"   Available Stages: {PLANNING_STAGES}")
+                
+                logger.info(f"[EDIT] 🔄 User at '{original_stage}', routing edit to '{target_section}'")
+                
+                # Validate the routing decision
+                if target_section == original_stage:
+                    logger.info(f"[EDIT] Edit targets current stage, no routing needed")
+                    logger.info(f"🔍 DEBUG 3a - SAME STAGE EDIT: Processing in current location")
+                    # Process edit in current stage without routing - let LangGraph handle it
+                    updated_state = add_chat_message(current_state, "user", user_input)
+                    await graph.aupdate_state(config, updated_state)
+                    
+                    # 🔍 CRITICAL FIX: We need to invoke LangGraph to continue execution
+                    # This will trigger the agent to process the edit in the current stage
+                    logger.info(f"🔍 DEBUG 3a2 - INVOKING LANGGRAPH TO CONTINUE SAME-STAGE EDIT")
+                    await _process_planning_execution(websocket, session_id, updated_state, graph, config)
+                    return
+                
+                # Transition to target section
+                routed_state = transition_to_stage(current_state.copy(), target_section, force=True)
+                
+                # STORE THE RETURN STAGE IN STATE
+                routed_state["return_to_stage"] = original_stage
+                
+                # 🔍 DEBUG LOG 4: Return stage storage
+                logger.info(f"🔍 DEBUG 4 - RETURN STAGE STORAGE:")
+                logger.info(f"   Stored return_to_stage: '{original_stage}'")
+                logger.info(f"   Current stage after routing: '{routed_state.get('current_stage', 'unknown')}'")
+                logger.info(f"   State keys: {list(routed_state.keys())}")
+                logger.info(f"   Return stage in state: {routed_state.get('return_to_stage', 'NOT FOUND')}")
+                
+                # Add the user's actual edit request to chat history (not a generic message)
+                routed_state = add_chat_message(routed_state, "user", user_input)
+                
+                # Add system message explaining the transition
+                routed_state = add_chat_message(
+                    routed_state,
+                    "system",
+                    f"🔄 Processing your edit request for the {target_section.replace('_', ' ')} section. "
+                    f"After this edit, we'll return to the {original_stage.replace('_', ' ')} stage."
+                )
+
+                logger.info(f"[EDIT] ✅ Successfully routed to {target_section}, will return to {original_stage}")
+                await graph.aupdate_state(config, routed_state)
+
+                # 🔍 CRITICAL FIX: We need to invoke LangGraph to continue execution after state update
+                # This will trigger the agent to process the edit and then handle return routing
+                logger.info(f"🔍 DEBUG 4a - INVOKING LANGGRAPH TO CONTINUE EDIT EXECUTION")
+                logger.info(f"   State updated with return_to_stage: '{routed_state.get('return_to_stage')}'")
+                logger.info(f"   Now calling _process_planning_execution to trigger LangGraph execution")
+                
+                # Continue processing - this will trigger the agent to process the edit
+                # and then LangGraph's conditional edges will handle the return routing
+                await _process_planning_execution(websocket, session_id, routed_state, graph, config)
+                return  # exit original handler
+            
+            else:
+                logger.info(f"🔍 DEBUG 2b - UNCLEAR INTENT: Asking for clarification")
+                # Intent is unclear - ask for clarification
+                await _send_websocket_message(websocket, {
+                    "type": "planning_update",
+                    "data": {
+                        "state": serialize_state_to_dict(current_state),
+                        "clarification_needed": True
+                    },
+                    "session_id": session_id
+                })
+                
+                clarification_message = add_chat_message(
+                    current_state,
+                    "assistant",
+                    "I'm not sure if you'd like to approve this section or make changes. "
+                    "Please either say 'approve' to continue, or clearly specify what you'd like to modify."
+                )
+                
+                await graph.aupdate_state(config, clarification_message)
+                await _send_planning_update(websocket, session_id, clarification_message)
+                return
+
+        # ------------------------------------------------------------
+        # Normal (non-interrupted) flow
+        # ------------------------------------------------------------
+
+        logger.info(f"🔍 DEBUG 1b - NORMAL FLOW: Processing non-interrupted message")
         updated_state = add_chat_message(current_state, "user", user_input)
         await graph.aupdate_state(config, updated_state)
 

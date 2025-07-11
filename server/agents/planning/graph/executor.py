@@ -14,7 +14,7 @@ from ..state import ExperimentPlanState, PLANNING_STAGES
 from .graph_builder import create_planning_graph
 from ..factory import create_new_experiment_state, add_chat_message, add_error
 from ..debug import StateDebugger, get_global_debugger
-from .helpers import extract_user_intent, get_completion_keywords
+from .helpers import extract_user_intent
 
 logger = logging.getLogger(__name__)
 
@@ -285,16 +285,16 @@ class PlanningGraphExecutor:
             # Check if we're in final review and approved
             current_stage = state.get('current_stage', '')
             if current_stage == 'final_review':
-                # Look for approval in recent chat messages
+                # Look for approval in recent chat messages using LLM classification
                 chat_history = state.get('chat_history', [])
                 recent_messages = chat_history[-5:] if len(chat_history) >= 5 else chat_history
                 
                 for message in reversed(recent_messages):
                     if message.get('role') == 'user':
-                        content = message.get('content', '').lower()
-                        keywords = get_completion_keywords()
-                        approval_keywords = keywords["approval"]
-                        if any(keyword in content for keyword in approval_keywords):
+                        content = message.get('content', '')
+                        # Use LLM-based intent classification
+                        intent = extract_user_intent(content)
+                        if intent == 'approval':
                             return True
             
             return False
