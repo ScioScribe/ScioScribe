@@ -63,24 +63,64 @@ def determine_section_to_edit(user_input: str, state: ExperimentPlanState) -> st
     current_stage = state.get("current_stage", "objective_setting")
     logger.info(f"[SECTION] Current stage: {current_stage}")
     
+    # 🔍 DEBUG LOG 5: Section determination process
+    logger.info(f"🔍 DEBUG 5 - SECTION DETERMINATION:")
+    logger.info(f"   Input to classify: '{user_input}'")
+    logger.info(f"   Current stage: '{current_stage}'")
+    logger.info(f"   State experiment_id: {state.get('experiment_id', 'not set')}")
+    
+    # Check what sections are incomplete for context
+    incomplete_sections = []
+    if not state.get('experiment_objective'):
+        incomplete_sections.append('objective_setting')
+    if not state.get('independent_variables') or not state.get('dependent_variables'):
+        incomplete_sections.append('variable_identification')
+    if not state.get('experimental_groups') or not state.get('sample_size'):
+        incomplete_sections.append('experimental_design')
+    if not state.get('methodology_steps') or not state.get('materials_equipment'):
+        incomplete_sections.append('methodology_protocol')
+    if not state.get('data_collection_plan') or not state.get('data_analysis_plan'):
+        incomplete_sections.append('data_planning')
+    
+    logger.info(f"   Incomplete sections: {incomplete_sections}")
+    logger.info(f"   Available sections: {PLANNING_STAGES}")
+    
     # Use LLM-based classification with enhanced error handling
     llm_section = _classify_section_with_llm(user_input, state)
     
+    logger.info(f"🔍 DEBUG 5a - PRIMARY LLM CLASSIFICATION:")
+    logger.info(f"   LLM Result: '{llm_section}'")
+    logger.info(f"   Result Type: {type(llm_section)}")
+    logger.info(f"   Is Valid Stage: {llm_section in PLANNING_STAGES if llm_section else False}")
+    
     if llm_section and llm_section in PLANNING_STAGES:
         logger.info(f"[SECTION] ✅ LLM classified '{user_input}' -> {llm_section}")
+        logger.info(f"🔍 DEBUG 5b - PRIMARY SUCCESS: Using LLM result '{llm_section}'")
         return llm_section
     
     # If LLM classification fails, try with a more direct approach
     logger.warning(f"[SECTION] ⚠️ Primary LLM classification failed (result: {llm_section}), trying fallback approach")
     fallback_section = _classify_section_with_fallback_llm(user_input, state)
     
+    logger.info(f"🔍 DEBUG 5c - FALLBACK LLM CLASSIFICATION:")
+    logger.info(f"   Fallback Result: '{fallback_section}'")
+    logger.info(f"   Result Type: {type(fallback_section)}")
+    logger.info(f"   Is Valid Stage: {fallback_section in PLANNING_STAGES if fallback_section else False}")
+    
     if fallback_section and fallback_section in PLANNING_STAGES:
         logger.info(f"[SECTION] ✅ Fallback LLM classified '{user_input}' -> {fallback_section}")
+        logger.info(f"🔍 DEBUG 5d - FALLBACK SUCCESS: Using fallback result '{fallback_section}'")
         return fallback_section
     
     # If both approaches fail, make an intelligent guess based on state
     intelligent_guess = _make_intelligent_section_guess(state, user_input)
     logger.warning(f"[SECTION] ⚠️ LLM classification failed completely, using intelligent guess: {intelligent_guess}")
+    
+    logger.info(f"🔍 DEBUG 5e - INTELLIGENT GUESS:")
+    logger.info(f"   Guess Result: '{intelligent_guess}'")
+    logger.info(f"   Guess Logic: Based on incomplete sections and current stage")
+    logger.info(f"   Final Decision: '{intelligent_guess}'")
+    
     return intelligent_guess
 
 
@@ -297,119 +337,221 @@ def _safe_invoke_llm(messages: list, agent_type: str, max_retries: int = 2) -> s
 
 
 def _classify_section_with_llm(user_input: str, state: ExperimentPlanState) -> str | None:
-    """Use an LLM to map user_input to one of the planning stage identifiers.
+    """Enhanced LLM classification using two-step process with full state context."""
+    
+    # Step 1: Extract what the user wants to change
+    change_analysis = _extract_change_intent(user_input)
+    if not change_analysis:
+        logger.warning(f"[LLM] Failed to extract change intent from: '{user_input}'")
+        return None
+    
+    # Step 2: Map the change to the correct section based on current state
+    section_mapping = _map_change_to_section(change_analysis, state, user_input)
+    
+    logger.info(f"[LLM] Two-step classification: '{user_input}' -> Change: '{change_analysis}' -> Section: '{section_mapping}'")
+    
+    return section_mapping
 
-    The function returns the stage identifier if confident, otherwise None.
-    """
-    current_stage = state.get("current_stage", "objective_setting")
-    
-    # Create a comprehensive mapping of keywords to stages
-    stage_keywords = {
-        "objective_setting": [
-            "objective", "goal", "purpose", "hypothesis", "research question", "aim", "target",
-            "timeline", "duration", "timeframe", "schedule", "deadline", "phase", "overall goal"
-        ],
-        "variable_identification": [
-            "variable", "independent", "dependent", "control", "factor", "parameter", "measurement",
-            "metric", "indicator", "predictor", "outcome", "response", "treatment", "condition"
-        ],
-        "experimental_design": [
-            "design", "group", "sample", "treatment", "control group", "experimental group",
-            "replication", "randomization", "sample size", "power", "allocation", "assignment"
-        ],
-        "methodology_protocol": [
-            "method", "procedure", "protocol", "step", "process", "technique", "approach",
-            "material", "equipment", "tool", "instrument", "reagent", "supply", "resource"
-        ],
-        "data_planning": [
-            "data", "analysis", "statistics", "statistical", "test", "collection", "visualization",
-            "chart", "graph", "plot", "report", "analysis plan", "data collection"
-        ],
-        "final_review": [
-            "review", "final", "complete", "finish", "summary", "export", "overview", "conclusion"
-        ]
-    }
-    
-    # Build examples for better classification
-    examples = []
-    for stage, keywords in stage_keywords.items():
-        examples.append(f"- {stage}: {', '.join(keywords[:5])}")
+
+def _extract_change_intent(user_input: str) -> str | None:
+    """First LLM call: Extract what the user wants to change."""
     
     system_prompt = (
-        "You are a section-routing assistant for an experimental planning system. "
-        "Users can request edits to any part of their experiment plan at any time. "
-        "Based on their message, determine which planning stage they want to edit.\n\n"
+        "You are analyzing a user's edit request to extract what they want to change.\n\n"
         
-        "**PLANNING STAGES WITH KEYWORDS:**\n"
-        f"{chr(10).join(examples)}\n\n"
+        "Your task is to identify the SPECIFIC ASPECT they want to modify. Focus on:\n"
+        "- What element/component they're referring to\n"
+        "- What type of change they want (modify, add, remove, etc.)\n"
+        "- The specific value or characteristic they mention\n\n"
         
-        "**CLASSIFICATION RULES:**\n"
-        "1. Look for specific keywords that indicate which section to edit\n"
-        "2. Consider the context of what the user is trying to change\n"
-        "3. If user mentions specific variables or measurements, route to variable_identification\n"
-        "4. If user mentions groups, treatments, or sample sizes, route to experimental_design\n"
-        "5. If user mentions steps, procedures, or materials, route to methodology_protocol\n"
-        "6. If user mentions data collection or analysis, route to data_planning\n"
-        "7. If user mentions objectives or hypotheses, route to objective_setting\n"
-        "8. If user mentions review or completion, route to final_review\n\n"
+        "Examples:\n"
+        "- 'Can we change the timeline to 6 months?' -> 'timeline/duration'\n"
+        "- 'Let's use 5 groups instead of 3' -> 'number of groups'\n"
+        "- 'Add temperature as a control variable' -> 'control variables'\n"
+        "- 'Change the sample size to 100' -> 'sample size'\n"
+        "- 'Modify the hypothesis' -> 'hypothesis'\n"
+        "- 'Update the procedure for step 3' -> 'methodology steps'\n"
+        "- 'Change the statistical analysis method' -> 'analysis method'\n"
+        "- 'Add more replicates' -> 'replicates/sample size'\n\n"
         
-        f"Available stages: {', '.join(PLANNING_STAGES)}\n\n"
-        
-        "CRITICAL: You must respond with ONLY the stage identifier (e.g., 'variable_identification'). "
-        "Do not include any other text, explanations, or formatting. "
-        "If you cannot determine the stage with high confidence, respond with 'unknown'."
+        "Respond with a SHORT phrase describing what they want to change. "
+        "Focus on the CONTENT/ASPECT, not the section name."
     )
-
-    # Create detailed context about the current state
-    incomplete_stages = []
-    for stage in PLANNING_STAGES:
-        stage_field = stage.replace("_", "")
-        if stage == "objective_setting":
-            if not state.get('experiment_objective') or not state.get('hypothesis'):
-                incomplete_stages.append(stage)
-        elif stage == "variable_identification":
-            if not state.get('independent_variables') or not state.get('dependent_variables'):
-                incomplete_stages.append(stage)
-        elif stage == "experimental_design":
-            if not state.get('experimental_groups') or not state.get('sample_size'):
-                incomplete_stages.append(stage)
-        elif stage == "methodology_protocol":
-            if not state.get('methodology_steps') or not state.get('materials_equipment'):
-                incomplete_stages.append(stage)
-        elif stage == "data_planning":
-            if not state.get('data_collection_plan') or not state.get('data_analysis_plan'):
-                incomplete_stages.append(stage)
     
-    human_msg = (
-        f"USER MESSAGE: '{user_input}'\n\n"
-        f"CURRENT CONTEXT:\n"
-        f"- Current stage: {current_stage}\n"
-        f"- Incomplete stages: {', '.join(incomplete_stages) if incomplete_stages else 'none'}\n\n"
-        f"TASK: Analyze the user's message and determine which planning stage they want to edit. "
-        f"Focus on the specific content they want to change, not just the current stage."
-    )
-
     messages = [
         SystemMessage(content=system_prompt),
-        HumanMessage(content=human_msg),
+        HumanMessage(content=f"User edit request: '{user_input}'")
     ]
-
-    result = _safe_invoke_llm(messages, "section_routing")
     
-    # Clean and validate the result
+    result = _safe_invoke_llm(messages, "change_intent_extraction")
+    
+    if result:
+        result = result.strip()
+        logger.info(f"[LLM] Change intent extracted: '{result}'")
+        return result
+    
+    return None
+
+
+def _map_change_to_section(change_intent: str, state: ExperimentPlanState, original_input: str) -> str | None:
+    """Second LLM call: Map the change to the correct section based on current state content."""
+    
+    # Build rich context about current state content
+    state_context = _build_state_context_for_llm(state)
+    
+    system_prompt = (
+        "You are mapping a user's change request to the correct planning section.\n\n"
+        
+        "PLANNING SECTIONS:\n"
+        "1. objective_setting - Research goals, hypotheses, timelines, overall objectives\n"
+        "2. variable_identification - Independent/dependent/control variables, measurements\n"
+        "3. experimental_design - Groups, treatments, sample sizes, experimental structure\n"
+        "4. methodology_protocol - Step-by-step procedures, materials, equipment\n"
+        "5. data_planning - Data collection methods, analysis plans, statistics\n"
+        "6. final_review - Review, summary, export\n\n"
+        
+        "CRITICAL RULES:\n"
+        "- Timeline/duration changes = objective_setting\n"
+        "- Hypothesis changes = objective_setting\n"
+        "- Variable definitions = variable_identification\n"
+        "- Group counts/sample sizes = experimental_design\n"
+        "- Procedure steps = methodology_protocol\n"
+        "- Analysis methods = data_planning\n\n"
+        
+        "You will receive:\n"
+        "1. What the user wants to change\n"
+        "2. Current content of each section\n"
+        "3. The original user input\n\n"
+        
+        "Based on the CURRENT STATE CONTENT, determine which section the change belongs to.\n"
+        "If the change relates to content that exists in a section, that's the correct section.\n\n"
+        
+        "Respond with ONLY the section name (e.g., 'objective_setting')."
+    )
+    
+    human_message = (
+        f"CHANGE REQUEST: {change_intent}\n"
+        f"ORIGINAL INPUT: {original_input}\n\n"
+        f"CURRENT STATE CONTENT:\n{state_context}\n\n"
+        f"Which section should this change be made to?"
+    )
+    
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=human_message)
+    ]
+    
+    result = _safe_invoke_llm(messages, "section_mapping")
+    
     if result:
         result = result.strip().lower()
-        # Check for exact match
+        logger.info(f"[LLM] Section mapping result: '{result}'")
+        
+        # Validate result
         if result in PLANNING_STAGES:
             return result
-        # Check for partial matches
+        
+        # Try to find partial match
         for stage in PLANNING_STAGES:
             if stage in result or result in stage:
-                logger.info(f"[SECTION] Found partial match: '{result}' -> '{stage}'")
+                logger.info(f"[LLM] Found partial match: '{result}' -> '{stage}'")
                 return stage
     
-    logger.warning(f"[SECTION] Primary LLM classification failed for '{user_input}', result: {result}")
+    logger.warning(f"[LLM] Section mapping failed for change: '{change_intent}'")
     return None
+
+
+def _build_state_context_for_llm(state: ExperimentPlanState) -> str:
+    """Build rich context about current state content for LLM."""
+    
+    context_lines = []
+    
+    # Objective Setting Content
+    objective_content = []
+    if state.get('experiment_objective'):
+        objective_content.append(f"Objective: {state['experiment_objective']}")
+    if state.get('hypothesis'):
+        objective_content.append(f"Hypothesis: {state['hypothesis']}")
+    if state.get('research_query'):
+        objective_content.append(f"Research Query: {state['research_query']}")
+    
+    if objective_content:
+        context_lines.append("OBJECTIVE_SETTING:")
+        context_lines.extend([f"  {line}" for line in objective_content])
+    else:
+        context_lines.append("OBJECTIVE_SETTING: [Empty]")
+    
+    # Variable Identification Content
+    var_content = []
+    if state.get('independent_variables'):
+        var_content.append(f"Independent Variables: {len(state['independent_variables'])} defined")
+        for var in state['independent_variables'][:2]:  # Show first 2
+            var_content.append(f"  - {var.get('name', 'unnamed')}")
+    if state.get('dependent_variables'):
+        var_content.append(f"Dependent Variables: {len(state['dependent_variables'])} defined")
+        for var in state['dependent_variables'][:2]:  # Show first 2
+            var_content.append(f"  - {var.get('name', 'unnamed')}")
+    if state.get('control_variables'):
+        var_content.append(f"Control Variables: {len(state['control_variables'])} defined")
+        for var in state['control_variables'][:2]:  # Show first 2
+            var_content.append(f"  - {var.get('name', 'unnamed')}")
+    
+    if var_content:
+        context_lines.append("VARIABLE_IDENTIFICATION:")
+        context_lines.extend([f"  {line}" for line in var_content])
+    else:
+        context_lines.append("VARIABLE_IDENTIFICATION: [Empty]")
+    
+    # Experimental Design Content
+    design_content = []
+    if state.get('experimental_groups'):
+        design_content.append(f"Experimental Groups: {len(state['experimental_groups'])} defined")
+        for group in state['experimental_groups'][:2]:  # Show first 2
+            design_content.append(f"  - {group.get('name', 'unnamed')}")
+    if state.get('control_groups'):
+        design_content.append(f"Control Groups: {len(state['control_groups'])} defined")
+    if state.get('sample_size'):
+        design_content.append(f"Sample Size: {state['sample_size']}")
+    
+    if design_content:
+        context_lines.append("EXPERIMENTAL_DESIGN:")
+        context_lines.extend([f"  {line}" for line in design_content])
+    else:
+        context_lines.append("EXPERIMENTAL_DESIGN: [Empty]")
+    
+    # Methodology Content
+    method_content = []
+    if state.get('methodology_steps'):
+        method_content.append(f"Methodology Steps: {len(state['methodology_steps'])} defined")
+        for step in state['methodology_steps'][:2]:  # Show first 2
+            method_content.append(f"  - Step {step.get('step_number', '?')}: {step.get('description', 'no description')[:50]}...")
+    if state.get('materials_equipment'):
+        method_content.append(f"Materials/Equipment: {len(state['materials_equipment'])} items")
+    
+    if method_content:
+        context_lines.append("METHODOLOGY_PROTOCOL:")
+        context_lines.extend([f"  {line}" for line in method_content])
+    else:
+        context_lines.append("METHODOLOGY_PROTOCOL: [Empty]")
+    
+    # Data Planning Content
+    data_content = []
+    if state.get('data_collection_plan'):
+        data_content.append(f"Data Collection Plan: {type(state['data_collection_plan']).__name__}")
+        if isinstance(state['data_collection_plan'], dict):
+            data_content.append(f"  Keys: {list(state['data_collection_plan'].keys())}")
+    if state.get('data_analysis_plan'):
+        data_content.append(f"Data Analysis Plan: {type(state['data_analysis_plan']).__name__}")
+        if isinstance(state['data_analysis_plan'], dict):
+            data_content.append(f"  Keys: {list(state['data_analysis_plan'].keys())}")
+    
+    if data_content:
+        context_lines.append("DATA_PLANNING:")
+        context_lines.extend([f"  {line}" for line in data_content])
+    else:
+        context_lines.append("DATA_PLANNING: [Empty]")
+    
+    return "\n".join(context_lines)
 
 
 def _classify_section_with_fallback_llm(user_input: str, state: ExperimentPlanState) -> str | None:

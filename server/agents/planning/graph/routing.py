@@ -39,41 +39,69 @@ def objective_completion_check(state: ExperimentPlanState) -> Literal["continue"
     def _check_objective_completion(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
         # Check if this was an edit operation that should return to original stage
         return_to_stage = state.get('return_to_stage')
+        current_stage = state.get('current_stage', 'unknown')
+        
+        # 🔍 DEBUG LOG 9: Completion check analysis
+        logger.info(f"🔍 DEBUG 9 - OBJECTIVE COMPLETION CHECK:")
+        logger.info(f"   Current stage: '{current_stage}'")
+        logger.info(f"   Return to stage: '{return_to_stage}'")
+        logger.info(f"   Is edit operation: {return_to_stage is not None}")
+        logger.info(f"   Is different stage edit: {return_to_stage and return_to_stage != 'objective_setting'}")
+        
+        # Log current objective content
+        objective = state.get('experiment_objective')
+        hypothesis = state.get('hypothesis')
+        research_query = state.get('research_query', '')
+        
+        logger.info(f"   Objective present: {bool(objective)}")
+        logger.info(f"   Hypothesis present: {bool(hypothesis)}")
+        logger.info(f"   Research query present: {bool(research_query)}")
+        if objective:
+            logger.info(f"   Objective length: {len(str(objective))}")
+            logger.info(f"   Objective preview: '{str(objective)[:100]}...'")
+        
         if return_to_stage and return_to_stage != "objective_setting":
             # Use the validate_objective_completeness function with 0-100 scoring
             from ..prompts.objective_prompts import validate_objective_completeness
             
-            objective = state.get('experiment_objective')
-            hypothesis = state.get('hypothesis')
-            research_query = state.get('research_query', '')
-            
             validation_results = validate_objective_completeness(objective, hypothesis, research_query)
             score = validation_results.get('score', 0)
+            
+            logger.info(f"🔍 DEBUG 9a - EDIT COMPLETION VALIDATION:")
+            logger.info(f"   Validation score: {score}")
+            logger.info(f"   Validation results: {validation_results}")
+            logger.info(f"   Score threshold for edit: 70")
+            logger.info(f"   Edit complete: {score >= 70}")
             
             # If edit is complete enough (≥70 for edits), return to original stage
             if score >= 70:
                 logger.info(f"Objective edit complete (score: {score}), returning to {return_to_stage}")
+                logger.info(f"🔍 DEBUG 9b - RETURNING TO ORIGINAL: '{return_to_stage}'")
                 return "return_to_original"
             else:
                 logger.info(f"Objective edit needs more work (score: {score}, need ≥70)")
+                logger.info(f"🔍 DEBUG 9c - EDIT RETRY: Score too low, staying in objective")
                 return "retry"
         
         # Normal flow - use higher threshold for continuing to next stage
         from ..prompts.objective_prompts import validate_objective_completeness
         
-        objective = state.get('experiment_objective')
-        hypothesis = state.get('hypothesis')
-        research_query = state.get('research_query', '')
-        
         validation_results = validate_objective_completeness(objective, hypothesis, research_query)
         score = validation_results.get('score', 0)
         
+        logger.info(f"🔍 DEBUG 9d - NORMAL FLOW VALIDATION:")
+        logger.info(f"   Validation score: {score}")
+        logger.info(f"   Score threshold for continue: 80")
+        logger.info(f"   Can continue: {score >= 80}")
+        
         # Only continue if score is ≥80 as requested
         if score >= 80:
-            logger.info(f"Objective completion check: PASS (score: {score})")
+            logger.info(f"Objective completion check: CONTINUE (score: {score})")
+            logger.info(f"🔍 DEBUG 9e - CONTINUE TO NEXT: Moving to variable identification")
             return "continue"
         else:
-            logger.info(f"Objective completion check: RETRY (score: {score}, need ≥80)")
+            logger.info(f"Objective completion check: RETRY (score: {score})")
+            logger.info(f"🔍 DEBUG 9f - NORMAL RETRY: Score too low, staying in objective")
             return "retry"
     
     return safe_conditional_check(
