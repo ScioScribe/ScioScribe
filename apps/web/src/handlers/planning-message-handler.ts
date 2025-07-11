@@ -222,34 +222,71 @@ export function handlePlanningWebSocketMessage(message: WebSocketMessage, contex
 export function parseApprovalResponse(message: string): ApprovalResponse {
   const lowerMessage = message.toLowerCase().trim()
   
-  // Check for approval keywords
-  const approvalKeywords = ["approve", "approved", "yes", "ok", "proceed", "continue", "accept", "go ahead"]
-  const rejectionKeywords = ["reject", "rejected", "no", "stop", "cancel", "decline", "refuse", "deny"]
+  // Strong approval keywords - these clearly indicate approval
+  const strongApprovalKeywords = ["approve", "approved", "yes", "proceed", "continue", "accept", "go ahead", "looks good", "perfect", "ready"]
   
-  const isApproval = approvalKeywords.some(keyword => lowerMessage.includes(keyword))
-  const isRejection = rejectionKeywords.some(keyword => lowerMessage.includes(keyword))
+  // Strong rejection keywords - these clearly indicate rejection
+  const strongRejectionKeywords = ["reject", "rejected", "no", "stop", "cancel", "decline", "refuse", "deny"]
   
-  if (isApproval && !isRejection) {
+  // Edit/change keywords - these indicate user wants to make changes
+  const editKeywords = ["instead", "change", "modify", "update", "revise", "make it", "could we", "can we", "rather than", "but", "however", "actually"]
+  
+  // Check for strong approval indicators
+  const hasStrongApproval = strongApprovalKeywords.some(keyword => lowerMessage.includes(keyword))
+  const hasStrongRejection = strongRejectionKeywords.some(keyword => lowerMessage.includes(keyword))
+  const hasEditIntent = editKeywords.some(keyword => lowerMessage.includes(keyword))
+  
+  // Clear approval (no conflicting signals)
+  if (hasStrongApproval && !hasStrongRejection && !hasEditIntent) {
     return {
       isApprovalResponse: true,
       approved: true,
       feedback: message.length > 20 ? message : undefined
     }
-  } else if (isRejection && !isApproval) {
+  }
+  
+  // Clear rejection (no conflicting signals)
+  if (hasStrongRejection && !hasStrongApproval && !hasEditIntent) {
     return {
       isApprovalResponse: true,
       approved: false,
       feedback: message
     }
-  } else if (lowerMessage.length > 3) {
-    // If it's longer than 3 characters but not clearly approval/rejection,
-    // treat as feedback with implicit approval
+  }
+  
+  // Edit intent detected - this is NOT an approval response
+  if (hasEditIntent) {
     return {
-      isApprovalResponse: true,
-      approved: true,
-      feedback: message
+      isApprovalResponse: false,
+      approved: false
     }
   }
+  
+  // Short responses that might be approvals
+  if (lowerMessage.length <= 10) {
+    const shortApprovals = ["ok", "okay", "sure", "fine", "good", "great", "yep", "yeah"]
+    const shortRejections = ["no", "nope", "nah", "stop"]
+    
+    if (shortApprovals.some(word => lowerMessage === word)) {
+      return {
+        isApprovalResponse: true,
+        approved: true,
+        feedback: undefined
+      }
+    }
+    
+    if (shortRejections.some(word => lowerMessage === word)) {
+      return {
+        isApprovalResponse: true,
+        approved: false,
+        feedback: message
+      }
+    }
+  }
+  
+  // 🚨 REMOVED THE BROKEN FALLBACK LOGIC 🚨
+  // Previously: any message > 3 chars was treated as implicit approval
+  // Now: when in doubt, don't assume it's an approval response
   
   return {
     isApprovalResponse: false,

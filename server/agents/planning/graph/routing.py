@@ -21,7 +21,7 @@ from .helpers import (
 logger = logging.getLogger(__name__)
 
 
-def objective_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+def objective_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
     """
     Check if objective setting is complete with error handling.
     
@@ -33,10 +33,32 @@ def objective_completion_check(state: ExperimentPlanState) -> Literal["continue"
         state: Current experiment plan state
         
     Returns:
-        "continue" if objectives are complete, "retry" if more work needed
+        "continue" if objectives are complete, "retry" if more work needed,
+        "return_to_original" if this was an edit and should return to original stage
     """
-    def _check_objective_completion(state: ExperimentPlanState) -> Literal["continue", "retry"]:
-        # Use the validate_objective_completeness function with 0-100 scoring
+    def _check_objective_completion(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
+        # Check if this was an edit operation that should return to original stage
+        return_to_stage = state.get('return_to_stage')
+        if return_to_stage and return_to_stage != "objective_setting":
+            # Use the validate_objective_completeness function with 0-100 scoring
+            from ..prompts.objective_prompts import validate_objective_completeness
+            
+            objective = state.get('experiment_objective')
+            hypothesis = state.get('hypothesis')
+            research_query = state.get('research_query', '')
+            
+            validation_results = validate_objective_completeness(objective, hypothesis, research_query)
+            score = validation_results.get('score', 0)
+            
+            # If edit is complete enough (≥70 for edits), return to original stage
+            if score >= 70:
+                logger.info(f"Objective edit complete (score: {score}), returning to {return_to_stage}")
+                return "return_to_original"
+            else:
+                logger.info(f"Objective edit needs more work (score: {score}, need ≥70)")
+                return "retry"
+        
+        # Normal flow - use higher threshold for continuing to next stage
         from ..prompts.objective_prompts import validate_objective_completeness
         
         objective = state.get('experiment_objective')
@@ -62,7 +84,7 @@ def objective_completion_check(state: ExperimentPlanState) -> Literal["continue"
     )
 
 
-def variable_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+def variable_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
     """
     Check if variable identification is complete with error handling.
     
@@ -74,9 +96,26 @@ def variable_completion_check(state: ExperimentPlanState) -> Literal["continue",
         state: Current experiment plan state
         
     Returns:
-        "continue" if variables are complete, "retry" if more work needed
+        "continue" if variables are complete, "retry" if more work needed,
+        "return_to_original" if this was an edit and should return to original stage
     """
-    def _check_variable_completion(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+    def _check_variable_completion(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
+        # Check if this was an edit operation that should return to original stage
+        return_to_stage = state.get('return_to_stage')
+        if return_to_stage and return_to_stage != "variable_identification":
+            independent_vars = state.get('independent_variables', [])
+            dependent_vars = state.get('dependent_variables', [])
+            control_vars = state.get('control_variables', [])
+            
+            # For edits, use more lenient criteria (at least some variables defined)
+            if independent_vars and dependent_vars:
+                logger.info(f"Variable edit complete, returning to {return_to_stage}")
+                return "return_to_original"
+            else:
+                logger.info("Variable edit needs more work")
+                return "retry"
+        
+        # Normal flow - use stricter criteria for continuing to next stage
         independent_vars = state.get('independent_variables', [])
         dependent_vars = state.get('dependent_variables', [])
         control_vars = state.get('control_variables', [])
@@ -101,7 +140,7 @@ def variable_completion_check(state: ExperimentPlanState) -> Literal["continue",
     )
 
 
-def design_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+def design_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
     """
     Check if experimental design is complete with error handling.
     
@@ -113,9 +152,25 @@ def design_completion_check(state: ExperimentPlanState) -> Literal["continue", "
         state: Current experiment plan state
         
     Returns:
-        "continue" if design is complete, "retry" if more work needed
+        "continue" if design is complete, "retry" if more work needed,
+        "return_to_original" if this was an edit and should return to original stage
     """
-    def _check_design_completion(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+    def _check_design_completion(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
+        # Check if this was an edit operation that should return to original stage
+        return_to_stage = state.get('return_to_stage')
+        if return_to_stage and return_to_stage != "experimental_design":
+            experimental_groups = state.get('experimental_groups', [])
+            control_groups = state.get('control_groups', [])
+            
+            # For edits, use more lenient criteria
+            if experimental_groups and control_groups:
+                logger.info(f"Design edit complete, returning to {return_to_stage}")
+                return "return_to_original"
+            else:
+                logger.info("Design edit needs more work")
+                return "retry"
+        
+        # Normal flow - use stricter criteria
         experimental_groups = state.get('experimental_groups', [])
         control_groups = state.get('control_groups', [])
         sample_size = state.get('sample_size', {})
@@ -140,7 +195,7 @@ def design_completion_check(state: ExperimentPlanState) -> Literal["continue", "
     )
 
 
-def methodology_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+def methodology_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
     """
     Check if methodology and protocol development is complete with error handling.
     
@@ -152,9 +207,25 @@ def methodology_completion_check(state: ExperimentPlanState) -> Literal["continu
         state: Current experiment plan state
         
     Returns:
-        "continue" if methodology is complete, "retry" if more work needed
+        "continue" if methodology is complete, "retry" if more work needed,
+        "return_to_original" if this was an edit and should return to original stage
     """
-    def _check_methodology_completion(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+    def _check_methodology_completion(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
+        # Check if this was an edit operation that should return to original stage
+        return_to_stage = state.get('return_to_stage')
+        if return_to_stage and return_to_stage != "methodology_protocol":
+            methodology_steps = state.get('methodology_steps', [])
+            materials_equipment = state.get('materials_equipment', [])
+            
+            # For edits, use more lenient criteria
+            if methodology_steps and materials_equipment:
+                logger.info(f"Methodology edit complete, returning to {return_to_stage}")
+                return "return_to_original"
+            else:
+                logger.info("Methodology edit needs more work")
+                return "retry"
+        
+        # Normal flow - use stricter criteria
         methodology_steps = state.get('methodology_steps', [])
         materials_equipment = state.get('materials_equipment', [])
         
@@ -177,7 +248,7 @@ def methodology_completion_check(state: ExperimentPlanState) -> Literal["continu
     )
 
 
-def data_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+def data_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
     """
     Check if data planning is complete with error handling.
     
@@ -189,9 +260,25 @@ def data_completion_check(state: ExperimentPlanState) -> Literal["continue", "re
         state: Current experiment plan state
         
     Returns:
-        "continue" if data planning is complete, "retry" if more work needed
+        "continue" if data planning is complete, "retry" if more work needed,
+        "return_to_original" if this was an edit and should return to original stage
     """
-    def _check_data_completion(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+    def _check_data_completion(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
+        # Check if this was an edit operation that should return to original stage
+        return_to_stage = state.get('return_to_stage')
+        if return_to_stage and return_to_stage != "data_planning":
+            data_collection_plan = state.get('data_collection_plan', {})
+            data_analysis_plan = state.get('data_analysis_plan', {})
+            
+            # For edits, use more lenient criteria
+            if data_collection_plan and data_analysis_plan:
+                logger.info(f"Data planning edit complete, returning to {return_to_stage}")
+                return "return_to_original"
+            else:
+                logger.info("Data planning edit needs more work")
+                return "retry"
+        
+        # Normal flow - use stricter criteria
         data_collection_plan = state.get('data_collection_plan', {})
         data_analysis_plan = state.get('data_analysis_plan', {})
         

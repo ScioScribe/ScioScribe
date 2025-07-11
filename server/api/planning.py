@@ -29,6 +29,8 @@ from agents.planning.serialization import (
 )
 from agents.planning.factory import create_new_experiment_state, add_chat_message
 from config import validate_openai_config
+from agents.planning.graph.helpers import extract_user_intent, determine_section_to_edit
+from agents.planning.transitions import transition_to_stage
 
 logger = logging.getLogger(__name__)
 
@@ -560,7 +562,91 @@ async def _handle_user_message(websocket: WebSocket, session_id: str, message: D
             await _send_error_message(websocket, session_id, "Session not found")
             return
 
-        # Add user message to state
+        # ------------------------------------------------------------
+        # NEW: Handle messages received while graph is interrupted
+        # ------------------------------------------------------------
+
+        is_interrupted = await _is_graph_interrupted(session_id)
+
+        if is_interrupted:
+            # Decide whether this looks like approval or an edit request
+            intent = extract_user_intent(user_input)
+
+            if intent == "approval":
+                # Re-route as an approval_response = True so normal flow continues
+                await _handle_approval_response(
+                    websocket,
+                    session_id,
+                    {
+                        "type": "approval_response",
+                        "data": {"approved": True, "feedback": ""},
+                        "session_id": session_id,
+                    },
+                )
+                return  # handled
+
+            elif intent == "edit":
+                # IMPROVED: Process edit request directly with user's actual input
+                target_section = determine_section_to_edit(user_input, current_state)
+                
+                # STORE CURRENT STAGE FOR RETURN NAVIGATION
+                original_stage = await _get_current_stage_from_graph(session_id)
+                if not original_stage:
+                    original_stage = current_state.get("current_stage", "objective_setting")
+                
+                logger.info(f"[EDIT] User at {original_stage}, routing edit to {target_section}")
+                
+                # Transition to target section
+                routed_state = transition_to_stage(current_state.copy(), target_section, force=True)
+                
+                # STORE THE RETURN STAGE IN STATE
+                routed_state["return_to_stage"] = original_stage
+                
+                # Add the user's actual edit request to chat history (not a generic message)
+                routed_state = add_chat_message(routed_state, "user", user_input)
+                
+                # Add system message explaining the transition
+                routed_state = add_chat_message(
+                    routed_state,
+                    "system",
+                    f"Processing your edit request for the {target_section.replace('_', ' ')} section. "
+                    f"After this edit, we'll return to the {original_stage.replace('_', ' ')} stage."
+                )
+
+                await graph.aupdate_state(config, routed_state)
+
+                # Process the edit request immediately with the user's input
+                await _process_planning_execution(
+                    websocket, session_id, routed_state, graph, config
+                )
+                return  # exit original handler
+            
+            else:
+                # Intent is unclear - ask for clarification
+                await _send_websocket_message(websocket, {
+                    "type": "planning_update",
+                    "data": {
+                        "state": serialize_state_to_dict(current_state),
+                        "clarification_needed": True
+                    },
+                    "session_id": session_id
+                })
+                
+                clarification_message = add_chat_message(
+                    current_state,
+                    "assistant",
+                    "I'm not sure if you'd like to approve this section or make changes. "
+                    "Please either say 'approve' to continue, or clearly specify what you'd like to modify."
+                )
+                
+                await graph.aupdate_state(config, clarification_message)
+                await _send_planning_update(websocket, session_id, clarification_message)
+                return
+
+        # ------------------------------------------------------------
+        # Normal (non-interrupted) flow
+        # ------------------------------------------------------------
+
         updated_state = add_chat_message(current_state, "user", user_input)
         await graph.aupdate_state(config, updated_state)
 
