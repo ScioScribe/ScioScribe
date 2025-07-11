@@ -109,10 +109,10 @@ class ObjectiveAgent(BaseAgent):
             self.logger.error(f"Error invoking structured LLM: {e}", exc_info=True)
             agent_response_text = "I had trouble understanding that. Could you please rephrase your request or provide more specific details about the objective and hypothesis?"
 
-        # Add agent response to chat history
-        updated_state = add_chat_message(state, "assistant", agent_response_text)
+        # Log response (chat message handled by streaming)
+        self.logger.info(f"Objective agent response: {agent_response_text}")
         
-        return updated_state
+        return state
     
     def validate_stage_requirements(self, state: ExperimentPlanState) -> Tuple[bool, List[str]]:
         """

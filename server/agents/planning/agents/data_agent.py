@@ -155,7 +155,7 @@ Keep descriptions concise but complete.
                 state['potential_pitfalls'] = [pitfall.dict() for pitfall in data_output.potential_pitfalls]
                 
                 summary_message = self._create_data_plan_summary(state)
-                state = add_chat_message(state, "assistant", summary_message)
+                self.logger.info(f"Data plan summary created: {summary_message}")
                 self.logger.info(f"Successfully generated data plan on attempt {attempt + 1}")
                 return state
                 
