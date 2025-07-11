@@ -36,7 +36,7 @@ export interface NodeUpdateData {
 
 export interface AnalysisWebSocketMessage {
   type: 'node_update' | 'analysis_complete' | 'error' | 'session_status' | 'pong'
-  data: any
+  data: Record<string, unknown>
   session_id: string
 }
 
@@ -66,11 +66,9 @@ export async function generateVisualization(request: GenerateVisualizationReques
 
     const result: GenerateVisualizationResponse = await response.json()
     return result
-  } catch (error) {
-    if (error instanceof Error) {
-      throw error
-    }
-    throw new Error('Unknown error occurred during visualization generation')
+  } catch (error: unknown) {
+    console.error('Analysis request failed:', error)
+    throw new Error(error instanceof Error ? error.message : 'Unknown error occurred')
   }
 }
 

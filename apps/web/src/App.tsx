@@ -24,6 +24,7 @@ export default function Home() {
     updateVisualizationHtmlWithSave,
     updateExperimentTitleWithSave,
     refreshVisualization,
+    removeExperiment,
   } = useExperimentStore()
 
   // Load experiments on component mount
@@ -40,6 +41,7 @@ export default function Home() {
           selectedExperiment={null}
           onExperimentSelect={selectExperiment}
           onExperimentCreated={loadExperiments}
+          onExperimentDelete={removeExperiment}
           experimentTitle="Untitled Experiment"
           onTitleChange={updateExperimentTitleWithSave}
         />
@@ -59,6 +61,7 @@ export default function Home() {
           selectedExperiment={null}
           onExperimentSelect={selectExperiment}
           onExperimentCreated={loadExperiments}
+          onExperimentDelete={removeExperiment}
           experimentTitle="Untitled Experiment"
           onTitleChange={updateExperimentTitleWithSave}
         />
@@ -87,6 +90,7 @@ export default function Home() {
         selectedExperiment={currentExperiment}
         onExperimentSelect={selectExperiment}
         onExperimentCreated={loadExperiments}
+        onExperimentDelete={removeExperiment}
         experimentTitle={experimentTitle}
         onTitleChange={updateExperimentTitleWithSave}
       />

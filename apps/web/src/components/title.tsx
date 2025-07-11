@@ -14,11 +14,12 @@ interface TitleProps {
   selectedExperiment?: Experiment | null
   onExperimentSelect?: (experiment: Experiment) => void
   onExperimentCreated?: () => void
+  onExperimentDelete?: (experimentId: string) => Promise<void>
   experimentTitle?: string
   onTitleChange?: (title: string) => void
 }
 
-export function Title({ experiments = [], selectedExperiment, onExperimentSelect, onExperimentCreated, experimentTitle, onTitleChange }: TitleProps) {
+export function Title({ experiments = [], selectedExperiment, onExperimentSelect, onExperimentCreated, onExperimentDelete, experimentTitle, onTitleChange }: TitleProps) {
   const [isSaving, setIsSaving] = useState(false)
   const [isSaved, setIsSaved] = useState(false)
   
@@ -127,6 +128,7 @@ export function Title({ experiments = [], selectedExperiment, onExperimentSelect
           selectedExperiment={selectedExperiment || null}
           onExperimentSelect={onExperimentSelect}
           onExperimentCreated={onExperimentCreated}
+          onExperimentDelete={onExperimentDelete}
         />
       </div>
     </div>

@@ -320,4 +320,56 @@ export async function uploadCsvFile(csvText: string, experimentId: string = "dem
   }
 
   return await response.json()
+}
+
+/**
+ * Header Generation API
+ */
+
+export interface GenerateHeadersRequest {
+  plan: string
+  experiment_id?: string
+}
+
+export interface GenerateHeadersResponse {
+  success: boolean
+  headers: string[]
+  csv_data: string
+  error_message?: string
+}
+
+/**
+ * Generate CSV headers from experimental plan using AI
+ * 
+ * @param plan - The experimental plan text
+ * @param experimentId - Optional experiment ID to immediately persist the CSV
+ * @returns Promise resolving to the generated headers response
+ * @throws Error if the request fails
+ */
+export async function generateHeadersFromPlan(plan: string, experimentId?: string): Promise<GenerateHeadersResponse> {
+  try {
+    const response = await fetch(`${BASE_URL}/generate-headers-from-plan`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        plan,
+        experiment_id: experimentId,
+      }),
+    })
+
+    if (!response.ok) {
+      const errorData: DataCleanError = await response.json()
+      throw new Error(`Failed to generate headers: ${errorData.message}`)
+    }
+
+    const result: GenerateHeadersResponse = await response.json()
+    return result
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error
+    }
+    throw new Error('Unknown error occurred while generating headers')
+  }
 } 

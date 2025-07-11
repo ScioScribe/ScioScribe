@@ -35,7 +35,6 @@ export function ChatMessages({
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [showScrollButton, setShowScrollButton] = useState(false)
-  const [isScrolling, setIsScrolling] = useState(false)
   const scrollTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
   const lastMessageCountRef = useRef(messages.length)
 
@@ -126,9 +125,6 @@ export function ChatMessages({
     const shouldShowButton = scrollHeight - scrollTop - clientHeight > 200
     setShowScrollButton(shouldShowButton)
     
-    // Set scrolling state for visual feedback
-    setIsScrolling(true)
-    
     // Clear previous timeout
     if (scrollTimeoutRef.current !== undefined) {
       clearTimeout(scrollTimeoutRef.current)
@@ -136,7 +132,7 @@ export function ChatMessages({
     
     // Reset scrolling state after a delay
     scrollTimeoutRef.current = setTimeout(() => {
-      setIsScrolling(false)
+      // setIsScrolling(false) // This line is removed
     }, 150)
   }, [])
 
@@ -170,11 +166,11 @@ export function ChatMessages({
       <div
         ref={scrollAreaRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-6 py-4 transition-all duration-200"
+        className="flex-1 overflow-y-auto px-4 py-3 transition-all duration-200"
         style={{
           fontFamily: '"Source Code Pro", ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
-          fontSize: "16px",
-          lineHeight: "24px",
+          fontSize: "13px",
+          lineHeight: "18px",
           scrollBehavior: "smooth"
         }}
       >

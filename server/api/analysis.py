@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, FileResponse, Response
 from pydantic import BaseModel, Field
 import aiofiles
 import json
+from starlette.websockets import WebSocketState
 
 from agents.analysis.agent import AnalysisAgent, create_analysis_agent
 from config import validate_openai_config
@@ -101,7 +102,7 @@ def _get_analysis_agent() -> AnalysisAgent:
         try:
             _analysis_agent = create_analysis_agent(
                 model_provider="openai",
-                model_name="gpt-4"
+                model_name="gpt-4.1"
             )
             logger.info("✅ Analysis agent initialized successfully")
         except Exception as e:
@@ -542,16 +543,21 @@ async def analysis_health_check():
 
 # WebSocket utility functions
 async def _send_websocket_message(websocket: WebSocket, message: Dict[str, Any]):
-    """Send a message via WebSocket."""
+    """Safely send a message via WebSocket, skipping if already closed."""
     try:
-        message_json = json.dumps(message)
-        logger.info(f"📤 Sending WebSocket message: {message.get('type', 'unknown')} - {message_json[:200]}...")
-        await websocket.send_text(message_json)
-        logger.info(f"✅ WebSocket message sent successfully")
-    except Exception as e:
-        logger.error(f"❌ Failed to send WebSocket message: {e}")
-        logger.error(f"📊 WebSocket state: {websocket.client_state if hasattr(websocket, 'client_state') else 'unknown'}")
-        raise
+        if (
+            websocket.application_state == WebSocketState.CONNECTED
+            and websocket.client_state == WebSocketState.CONNECTED
+        ):
+            message_json = json.dumps(message)
+            await websocket.send_text(message_json)
+            logger.debug("WebSocket message sent: %s", message.get("type"))
+        else:
+            logger.debug("WebSocket not connected; skipping send for message %s", message.get("type"))
+    except RuntimeError as exc:
+        logger.warning("WebSocket send after close: %s", exc)
+    except Exception as exc:
+        logger.error("Failed to send WebSocket message: %s", exc)
 
 
 async def _send_node_update(websocket: WebSocket, session_id: str, node_name: str, node_data: Dict[str, Any]):
@@ -807,6 +813,14 @@ async def websocket_analysis_session(websocket: WebSocket, session_id: str):
                 await _send_error_message(websocket, session_id, "Invalid JSON format")
             except Exception as e:
                 logger.error(f"Error processing WebSocket message: {e}")
+                # Break out if connection closed to avoid log spam
+                if (
+                    websocket.application_state != WebSocketState.CONNECTED
+                    or websocket.client_state != WebSocketState.CONNECTED
+                ):
+                    logger.info("WebSocket closed; ending analysis loop for session %s", session_id)
+                    break
+
                 await _send_error_message(websocket, session_id, f"Error processing message: {str(e)}")
                 
     except WebSocketDisconnect:

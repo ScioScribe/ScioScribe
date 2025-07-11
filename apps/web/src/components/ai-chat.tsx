@@ -105,7 +105,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     onVisualizationGenerated,
     plan,
     csv
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   ])
 
   // WebSocket message handler for planning
@@ -130,18 +130,12 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       setIsConnected(false)
       
       // Handle different error types
-      const errorWithDetails = error as Event & {
-        sessionId?: string
-        queuedMessages?: number
-        lastError?: string
-      }
-      
       if (error.type === "max_reconnect_attempts") {
         setConnectionStatus("failed")
         
         const maxAttemptsMessage: Message = {
           id: (Date.now() + 1).toString(),
-          content: `❌ **Connection Failed**\n\nCould not reconnect to planning server after multiple attempts.\n\nQueued messages: ${errorWithDetails.queuedMessages || 0}\n\n**Options:**\n• Click the retry button in the connection status bar\n• Refresh the page to start a new session\n• Check your internet connection\n\nYour progress has been saved and can be recovered.`,
+          content: `❌ **Connection Lost**\n\nUnable to reconnect. Please refresh the page to continue.`,
           sender: "ai",
           timestamp: new Date(),
           mode: "plan",
@@ -153,7 +147,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         
         const errorMessage: Message = {
           id: (Date.now() + 1).toString(),
-          content: `❌ **WebSocket Connection Error**\n\nLost connection to planning server.\n\nError: ${error.type || 'Connection failed'}\n\nTrying to reconnect...`,
+          content: `⚠️ Connection interrupted. Attempting to reconnect...`,
           sender: "ai",
           timestamp: new Date(),
           mode: "plan",
@@ -167,11 +161,9 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       setIsConnected(true)
       setConnectionStatus("connected")
       
-      // Use getter to access current session id
-      const currentSession = messageHandlerContext.getPlanningSession()
       const connectionMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: `✅ **WebSocket Connected**\n\nReal-time communication established with planning server.\n\nSession ID: ${currentSession.session_id}\n\nYou can now send messages and receive real-time updates.`,
+        content: `✅ Connected. Ready to continue planning.`,
         sender: "ai",
         timestamp: new Date(),
         mode: "plan",
@@ -187,7 +179,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       if (!event.wasClean) {
         const disconnectMessage: Message = {
           id: (Date.now() + 1).toString(),
-          content: `🔒 **WebSocket Disconnected**\n\nConnection to planning server was lost.\n\nCode: ${event.code}\nReason: ${event.reason || 'Unknown'}\n\nAttempting to reconnect...`,
+          content: `🔒 Connection lost. Attempting to reconnect...`,
           sender: "ai",
           timestamp: new Date(),
           mode: "plan",
@@ -197,7 +189,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       }
     }
   ), [handlePlanningWebSocketMessageWrapper
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   ])
 
   // Mode-specific message handlers
@@ -240,7 +232,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         // Add initial response message
         const initialMessage: Message = {
           id: (Date.now() + 1).toString(),
-          content: `🎯 **Planning Session Started**\n\nSession ID: ${sessionResponse.session_id}\nExperiment ID: ${sessionResponse.experiment_id}\n\nI'm analyzing your research query: "${message}"\n\nEstablishing WebSocket connection for real-time communication...\n\nI'll help you create a comprehensive experiment plan through:\n\n• **Objective Definition** - Clarifying your research goals\n• **Methodology Selection** - Choosing appropriate methods\n• **Variable Identification** - Defining key variables\n• **Data Requirements** - Specifying data needs\n• **Design Validation** - Reviewing the complete plan\n\nConnecting to planning agent...`,
+          content: `🎯 **Planning Your Experiment**\n\nAnalyzing: "${message}"\n\nI'll guide you through creating a comprehensive research plan.`,
           sender: "ai",
           timestamp: new Date(),
           mode: "plan",
@@ -512,7 +504,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       if (success) {
         const retryMessage: Message = {
           id: (Date.now() + 1).toString(),
-          content: `🔄 **Retry Connection**\n\nAttempting to reconnect to planning server...\n\nSession ID: ${currentSession.session_id}\n\nPlease wait while we restore your connection.`,
+          content: `🔄 Reconnecting...`,
           sender: "ai",
           timestamp: new Date(),
           mode: "plan",

@@ -243,6 +243,7 @@ export function GraphViewer({ htmlContent, onRefresh }: GraphViewerProps) {
     <Card 
       ref={containerRef}
       className="h-full flex flex-col dark:bg-gray-900 dark:border-gray-800"
+      style={{ width: '40vw' }}
     >
       <CardHeader className="flex-shrink-0 pb-2">
         <div className="flex items-center justify-between">

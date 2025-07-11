@@ -92,7 +92,7 @@ export function ChatMessage({ message, enableTypewriter = true }: ChatMessagePro
   }, [showCursor, isTyping])
 
   return (
-    <div className="mb-4 animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
+    <div className="mb-2 animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
       {isUser && (
         <div className="text-gray-900 dark:text-gray-100 font-bold">
           <span className="text-blue-500 mr-2">→</span>
@@ -106,7 +106,7 @@ export function ChatMessage({ message, enableTypewriter = true }: ChatMessagePro
       )}
       
       {isAi && (
-        <div className="text-gray-700 dark:text-gray-300 mt-1 pl-4">
+        <div className="text-gray-700 dark:text-gray-300 mt-0.5 pl-3">
           {message.mode && (
             <span className="text-xs text-gray-500 dark:text-gray-400 mb-1 block">
               [{message.mode}] {getResponseTypeIndicator(message.response_type)}

@@ -12,9 +12,12 @@ import {
   createExperiment as createExperimentAPI, 
   updateExperimentPlan, 
   updateExperimentHtml, 
-  updateExperimentTitle as updateExperimentTitleAPI 
+  updateExperimentTitle as updateExperimentTitleAPI,
+  updateExperimentCsv as updateExperimentCsvAPI,
+  deleteExperiment as deleteExperimentAPI 
 } from '@/api/database'
 import { IRIS_CSV_DATA, IRIS_EXPERIMENT_PLAN } from '@/data/placeholder'
+import { convertPlanningStateToText } from '@/handlers/planning-state-handler'
 
 // Type definitions for planning state
 interface PlanningVariables {
@@ -56,16 +59,16 @@ interface DatacleanResponse {
   data?: DatacleanData[] | string | DatacleanData
 }
 
-// Planning state conversion utility
+// Planning state conversion utility (now using the structured handler)
 const convertPlanningStateToString = (planningState: PlanningState): string => {
   try {
     if (!planningState) return "";
 
-    // Pretty-printed JSON wrapped in a Markdown code block for readability
-    return `\`\`\`json\n${JSON.stringify(planningState, null, 2)}\n\`\`\``;
+    // Use the new structured text formatter instead of raw JSON
+    return convertPlanningStateToText(planningState);
   } catch (error) {
     console.error("❌ Error converting planning state to string:", error);
-    return `Error serializing planning state: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    return `# Experiment Plan\n\n*Error formatting planning data: ${error instanceof Error ? error.message : 'Unknown error'}*`;
   }
 }
 
@@ -132,7 +135,11 @@ interface ExperimentActions {
   updateEditorTextWithSave: (text: string) => Promise<void>
   updateVisualizationHtmlWithSave: (html: string) => Promise<void>
   updateExperimentTitleWithSave: (title: string) => Promise<void>
+  updateExperimentCsvWithSave: (csv: string) => Promise<void>
   refreshVisualization: () => void
+  
+  // Experiment management
+  removeExperiment: (experimentId: string) => Promise<void>
   
   // Planning integration functions
   updatePlanFromPlanningState: (planningState: PlanningState) => Promise<void>
@@ -275,21 +282,8 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
      try {
        console.log("📊 Updating CSV from dataclean data")
        
-       // Update the CSV data in the store
-       set({ csvData })
-       
-       // Auto-save to database if experiment is selected
-       const { currentExperiment } = get()
-       if (currentExperiment) {
-         try {
-           // Note: We need to create an updateExperimentCsv function in the database API
-           // For now, we'll log that this needs to be implemented
-           console.log("🔄 CSV data updated in store, database update would happen here")
-           // await updateExperimentCsv(currentExperiment.id, csvData)
-         } catch (error) {
-           console.error("Failed to update CSV in database:", error)
-         }
-       }
+       // Use the new updateExperimentCsvWithSave action
+       await get().updateExperimentCsvWithSave(csvData)
        
        console.log("✅ CSV updated from dataclean data")
      } catch (error) {
@@ -383,8 +377,70 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
     }
   },
   
+  updateExperimentCsvWithSave: async (csv: string) => {
+    set({ csvData: csv })
+    
+    // Auto-save to database if experiment is selected
+    const { currentExperiment, experiments } = get()
+    if (currentExperiment) {
+      try {
+        const updatedExperiment = await updateExperimentCsvAPI(currentExperiment.id, csv)
+        
+        // Update the current experiment with the new CSV data
+        set({ currentExperiment: updatedExperiment })
+        
+        // Update the experiments array to reflect the new CSV
+        const updatedExperiments = experiments.map((exp: Experiment) => 
+          exp.id === currentExperiment.id 
+            ? { ...exp, csv_data: csv, updated_at: updatedExperiment.updated_at }
+            : exp
+        )
+        set({ experiments: updatedExperiments })
+        
+        console.log("CSV updated in database")
+      } catch (error) {
+        console.error("Failed to update CSV:", error)
+        throw error
+      }
+    }
+  },
+  
   refreshVisualization: () => {
     set({ visualizationHtml: "" })
+  },
+  
+  removeExperiment: async (experimentId: string) => {
+    try {
+      // Delete from database
+      await deleteExperimentAPI(experimentId)
+      
+      // Remove from local state
+      const { experiments, currentExperiment } = get()
+      const updatedExperiments = experiments.filter(exp => exp.id !== experimentId)
+      set({ experiments: updatedExperiments })
+      
+      // Handle current experiment switching if deleted experiment was active
+      if (currentExperiment?.id === experimentId) {
+        if (updatedExperiments.length > 0) {
+          // Select the first experiment (most recently created)
+          get().selectExperiment(updatedExperiments[0])
+        } else {
+          // No experiments left, clear current experiment
+          set({ 
+            currentExperiment: null,
+            experimentTitle: "New Experiment",
+            editorText: IRIS_EXPERIMENT_PLAN,
+            csvData: IRIS_CSV_DATA,
+            visualizationHtml: "",
+          })
+        }
+      }
+      
+      console.log("✅ Experiment removed successfully")
+    } catch (error) {
+      console.error("❌ Failed to remove experiment:", error)
+      throw error
+    }
   },
   
   resetState: () => {

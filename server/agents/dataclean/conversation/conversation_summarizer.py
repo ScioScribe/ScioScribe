@@ -237,7 +237,7 @@ CONVERSATION TO SUMMARIZE:
 Provide a concise summary that captures the essential information:"""
 
             response = await self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4.1",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=200,
                 temperature=0.3

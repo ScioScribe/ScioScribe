@@ -54,8 +54,6 @@ async function sendDatacleanMessage(sessionId: string, message: string, context:
   try {
     console.log("📤 Sending dataclean message:", message)
     
-    const datacleanSession = context.getDatacleanSession()
-    
     // Get CSV data from experiment store for the CSV conversation endpoint
     const csvData = await getCsvDataFromExperimentStore(context)
     

@@ -18,7 +18,7 @@ let currentSessionId: string | null = null
  * @param context Context containing state and handlers
  */
 export async function handleAnalysisMessage(message: string, context: MessageHandlerContext): Promise<void> {
-  const { setMessages, onVisualizationGenerated, plan, csv } = context
+  const { setMessages, plan, csv } = context
   
   console.log("📊 Handling analysis message:", message)
   
@@ -128,90 +128,91 @@ export async function handleAnalysisMessage(message: string, context: MessageHan
  * Handles WebSocket messages from the analysis backend
  */
 function handleAnalysisWebSocketMessage(wsMessage: AnalysisWebSocketMessage, context: MessageHandlerContext): void {
-  const { setMessages, onVisualizationGenerated } = context
+  const { setMessages } = context
   
-  console.log("📨 Processing analysis WebSocket message:", wsMessage)
+  console.log("📊 Analysis WebSocket message received:", wsMessage)
   
-  switch (wsMessage.type) {
-    case 'session_status':
-      const statusMessage: Message = {
-        id: (Date.now()).toString(),
-        content: `✅ **Analysis Session Connected**\n\nSession ID: ${wsMessage.session_id}\n\n${wsMessage.data.message}\n\nReady to process your visualization request with real-time updates.`,
-        sender: "ai",
-        timestamp: new Date(),
-        mode: "analysis",
-        response_type: "text"
-      }
-      setMessages((prev) => [...prev, statusMessage])
-      break
-      
-    case 'node_update':
-      const nodeData = wsMessage.data as NodeUpdateData
-      console.log(`🔄 Node update received: ${nodeData.node_name} - ${nodeData.node_data.status}`)
-      
-      const nodeMessage: Message = {
-        id: (Date.now()).toString(),
-        content: `🔄 **${nodeData.node_name.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}**\n\n${getNodeStatusEmoji(nodeData.node_data.status)} ${nodeData.node_data.description}`,
-        sender: "ai",
-        timestamp: new Date(),
-        mode: "analysis",
-        response_type: "text"
-      }
-      setMessages((prev) => [...prev, nodeMessage])
-      console.log(`✅ Node update message added to chat: ${nodeData.node_name}`)
-      break
-      
-    case 'analysis_complete':
-      const result = wsMessage.data.result
-      
-      // Add the explanatory message first
-      const textMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: result.explanation,
-        sender: "ai",
-        timestamp: new Date(),
-        mode: "analysis",
-        response_type: "text"
+  try {
+    switch (wsMessage.type) {
+      case 'session_status':
+        console.log("📊 Session status update:", wsMessage.data)
+        break
+        
+      case "node_update": {
+        const updateData = wsMessage.data as unknown as NodeUpdateData
+        const nodeStatusMessage: Message = {
+          id: (Date.now() + Math.random()).toString(),
+          content: `🔄 **${updateData.node_name}**\n\n${updateData.node_data.description}\n\nStatus: ${updateData.node_data.status}`,
+          sender: "ai",
+          timestamp: new Date(),
+          mode: "analysis",
+          response_type: "text"
+        }
+        setMessages((prev) => [...prev, nodeStatusMessage])
+        break
       }
       
-      // Add the HTML visualization response
-      const visualizationMessage: Message = {
-        id: (Date.now() + 2).toString(),
-        content: result.html_content,
-        sender: "ai",
-        timestamp: new Date(),
-        isHtml: true,
-        mode: "analysis",
-        response_type: "html"
+      case 'analysis_complete': {
+        const analysisData = wsMessage.data as unknown as { html?: string; message?: string }
+        const html = analysisData.html
+        const message = analysisData.message || "Analysis complete"
+        
+        if (html) {
+          const htmlMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            content: html,
+            sender: "ai",
+            timestamp: new Date(),
+            mode: "analysis",
+            response_type: "html",
+            isHtml: true
+          }
+          setMessages((prev) => [...prev, htmlMessage])
+          
+          // Call the visualization callback if provided
+          if (context.onVisualizationGenerated) {
+            context.onVisualizationGenerated(html)
+          }
+        } else {
+          const textMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            content: `📊 **Analysis Complete**\n\n${message}`,
+            sender: "ai",
+            timestamp: new Date(),
+            mode: "analysis",
+            response_type: "text"
+          }
+          setMessages((prev) => [...prev, textMessage])
+        }
+        break
       }
       
-      setMessages((prev) => [...prev, textMessage, visualizationMessage])
-      
-      // Notify parent component about the visualization
-      if (onVisualizationGenerated) {
-        onVisualizationGenerated(result.html_content)
+      case 'error': {
+        const errorData = wsMessage.data as unknown as { message?: string }
+        const errorMessage: Message = {
+          id: (Date.now() + 2).toString(),
+          content: `❌ **Analysis Error**\n\n${errorData.message || "An error occurred during analysis"}`,
+          sender: "ai",
+          timestamp: new Date(),
+          mode: "analysis",
+          response_type: "error"
+        }
+        setMessages((prev) => [...prev, errorMessage])
+        break
       }
-      break
       
-    case 'error':
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: `❌ **Analysis Error**\n\n${wsMessage.data.message}\n\nPlease try again or check your input data.`,
-        sender: "ai",
-        timestamp: new Date(),
-        mode: "analysis",
-        response_type: "error"
-      }
-      setMessages((prev) => [...prev, errorMessage])
-      break
-      
-    default:
-      console.log("📨 Unknown analysis WebSocket message type:", wsMessage.type)
+      default:
+        console.log("📨 Unknown analysis WebSocket message type:", wsMessage.type)
+    }
+  } catch (error) {
+    console.error("🚨 Error processing WebSocket message:", error)
   }
 }
 
 /**
- * Fallback to regular API when WebSocket fails
+ * Fallback HTTP handler for analysis messages when WebSocket fails
+ * @param message User message to process
+ * @param context Message handler context
  */
 async function handleAnalysisMessageFallback(message: string, context: MessageHandlerContext): Promise<void> {
   const { setMessages, onVisualizationGenerated, plan, csv } = context
@@ -269,20 +270,6 @@ async function handleAnalysisMessageFallback(message: string, context: MessageHa
       response_type: "error"
     }
     setMessages((prev) => [...prev, errorMessage])
-  }
-}
-
-/**
- * Get emoji for node status
- */
-function getNodeStatusEmoji(status: 'starting' | 'completed'): string {
-  switch (status) {
-    case 'starting':
-      return '⏳'
-    case 'completed':
-      return '✅'
-    default:
-      return '🔄'
   }
 }
 
