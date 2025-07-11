@@ -33,7 +33,7 @@ from .graph import (
     determine_section_to_edit,
     get_stage_routing_map,
     get_stage_descriptions,
-    get_completion_keywords,
+
     extract_user_intent,
     validate_stage_name,
     get_next_stage,
@@ -83,7 +83,7 @@ __all__ = [
     "determine_section_to_edit",
     "get_stage_routing_map",
     "get_stage_descriptions",
-    "get_completion_keywords",
+
     "extract_user_intent",
     "validate_stage_name",
     "get_next_stage",

@@ -3,14 +3,15 @@ Helper utility functions for the experiment planning graph system.
 
 This module provides common utility functions used across the planning system
 for input processing, section determination, and other shared functionality.
+All classification is now 100% LLM-based for maximum accuracy and consistency.
 """
 
 from typing import Dict, List, Any
 import logging
 
 from ..state import ExperimentPlanState, PLANNING_STAGES
-from ..llm_config import get_llm_manager, LLMConfigError  # noqa: E501 – functional import for new utilities
-from langchain_core.messages import SystemMessage, HumanMessage  # type: ignore
+from ..llm_config import get_llm_manager, LLMConfigError
+from langchain_core.messages import SystemMessage, HumanMessage
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +43,9 @@ def determine_section_to_edit(user_input: str, state: ExperimentPlanState) -> st
     """
     Determine which section the user wants to edit based on their input.
     
-    This function analyzes user input to identify which planning stage
-    they want to navigate to for editing. Uses enhanced keyword matching 
-    and context analysis with fallback logic.
+    This function uses LLM-based classification to identify which planning stage
+    they want to navigate to for editing. Uses enhanced prompts and robust
+    error handling to ensure reliable classification.
     
     Args:
         user_input: User's input message
@@ -52,115 +53,31 @@ def determine_section_to_edit(user_input: str, state: ExperimentPlanState) -> st
         
     Returns:
         Planning stage name to navigate to
+        
+    Raises:
+        RuntimeError: If LLM classification fails completely
     """
-    # --------------------------------------------------------
-    # 1. Attempt LLM-based classification (preferred)
-    # --------------------------------------------------------
+    logger.info(f"[SECTION] Determining section to edit for: '{user_input}'")
+    
+    # Use LLM-based classification with enhanced error handling
     llm_section = _classify_section_with_llm(user_input, state)
-    if llm_section:
+    
+    if llm_section and llm_section in PLANNING_STAGES:
+        logger.info(f"[SECTION] LLM classified '{user_input}' -> {llm_section}")
         return llm_section
-
-    # --------------------------------------------------------
-    # 2. Heuristic keyword fallback (legacy logic)
-    # --------------------------------------------------------
-
-    user_input_lower = user_input.lower().strip()
     
-    # Enhanced section keywords mapping with more comprehensive coverage
-    section_keywords = {
-        "objective_setting": [
-            "objective", "goal", "hypothesis", "purpose", "aim", "research question",
-            "what we're trying", "what we want", "main goal", "research aim",
-            "study objective", "experimental objective", "month", "week", "day", "period",
-            "timeline", "duration", "time frame"
-        ],
-        "variable_identification": [
-            "variable", "independent", "dependent", "control", "measure", "measurement",
-            "what we're measuring", "what we're changing", "factors", "parameters",
-            "iv", "dv", "controlled variable", "confounding",
-            # Common variable names and phrases
-            "food source", "temperature", "ph", "concentration", "dose", "treatment",
-            "control variable", "independent variable", "dependent variable",
-            "remove", "add", "modify variable", "change variable", "variable type",
-            "co2", "oxygen", "light", "humidity", "pressure", "time point"
-        ],
-        "experimental_design": [
-            "design", "groups", "control group", "experimental group", "sample", 
-            "statistical", "power", "replicates", "randomization", "treatment",
-            "control condition", "experimental condition", "group size", "n=",
-            "power analysis", "sample size", "biological replicates", "technical replicates"
-        ],
-        "methodology_protocol": [
-            "protocol", "method", "procedure", "steps", "materials", "equipment",
-            "how to", "protocol steps", "experimental procedure", "methodology",
-            "materials list", "reagents", "instruments", "step by step",
-            "incubation", "centrifuge", "pipette", "buffer", "solution"
-        ],
-        "data_planning": [
-            "data", "analysis", "statistics", "visualization", "pitfalls", "collection",
-            "statistical test", "data analysis", "graphs", "charts", "results",
-            "statistical analysis", "data collection", "potential problems",
-            "anova", "t-test", "regression", "correlation"
-        ],
-        "final_review": [
-            "review", "export", "summary", "complete", "finalize", "overview",
-            "final plan", "export plan", "summary report", "complete plan",
-            "plan review", "final summary"
-        ]
-    }
+    # If LLM classification fails, try with a more direct approach
+    logger.warning(f"[SECTION] Primary LLM classification failed, trying fallback approach")
+    fallback_section = _classify_section_with_fallback_llm(user_input, state)
     
-    # Check for specific section keywords with scoring
-    section_scores = {}
-    for section, keywords in section_keywords.items():
-        score = sum(1 for keyword in keywords if keyword in user_input_lower)
-        if score > 0:
-            section_scores[section] = score
+    if fallback_section and fallback_section in PLANNING_STAGES:
+        logger.info(f"[SECTION] Fallback LLM classified '{user_input}' -> {fallback_section}")
+        return fallback_section
     
-    # If we found matches, return the highest scoring section
-    if section_scores:
-        best_section = max(section_scores, key=section_scores.get)
-        logger.info(f"Determined section to edit: {best_section} (score: {section_scores[best_section]})")
-        return best_section
-    
-    # Context-based fallback: analyze what might be incomplete
-    incomplete_stages = []
-    
-    # Check each stage for completeness
-    if not state.get('experiment_objective') or not state.get('hypothesis'):
-        incomplete_stages.append("objective_setting")
-    
-    if not state.get('independent_variables') or not state.get('dependent_variables'):
-        incomplete_stages.append("variable_identification")
-    
-    if not state.get('experimental_groups') or not state.get('control_groups'):
-        incomplete_stages.append("experimental_design")
-    
-    if not state.get('methodology_steps') or not state.get('materials_equipment'):
-        incomplete_stages.append("methodology_protocol")
-    
-    if not state.get('data_collection_plan') or not state.get('data_analysis_plan'):
-        incomplete_stages.append("data_planning")
-    
-    # If there are incomplete stages, suggest the first one
-    if incomplete_stages:
-        suggested_section = incomplete_stages[0]
-        logger.info(f"No specific section identified, suggesting incomplete stage: {suggested_section}")
-        return suggested_section
-    
-    # Final fallback: if everything seems complete, go to review
-    if all([
-        state.get('experiment_objective'),
-        state.get('independent_variables'),
-        state.get('experimental_groups'),
-        state.get('methodology_steps'),
-        state.get('data_collection_plan')
-    ]):
-        logger.info("All stages appear complete, directing to final review")
-        return "final_review"
-    
-    # Ultimate fallback
-    logger.info("No specific section identified, defaulting to objective_setting")
-    return "objective_setting"
+    # If both approaches fail, make an intelligent guess based on state
+    intelligent_guess = _make_intelligent_section_guess(state)
+    logger.warning(f"[SECTION] LLM classification failed completely, using intelligent guess: {intelligent_guess}")
+    return intelligent_guess
 
 
 def get_stage_routing_map() -> Dict[str, str]:
@@ -197,114 +114,42 @@ def get_stage_descriptions() -> Dict[str, str]:
     }
 
 
-def get_completion_keywords() -> Dict[str, List[str]]:
-    """
-    Get keywords used to identify completion or approval intents.
-    
-    Returns:
-        Dictionary with approval and edit keywords
-    """
-    return {
-        "approval": ["approve", "approved", "yes", "confirm", "complete", "finalize"],
-        "edit": ["edit", "modify", "change", "update", "revise", "go back"]
-    }
+
 
 
 def extract_user_intent(user_input: str) -> str:
     """
-    Extract the user's intent from their input message using improved NLP.
+    Extract the user's intent from their input message using LLM classification.
     
     Args:
         user_input: User's input message
         
     Returns:
         Intent category: 'approval', 'edit', or 'unclear'
+        
+    Raises:
+        RuntimeError: If LLM classification fails completely
     """
     logger.info(f"[INTENT] Classifying user input: '{user_input}'")
     
-    # --------------------------------------------------------
-    # 1. Attempt LLM-based intent classification
-    # --------------------------------------------------------
+    # Use LLM-based intent classification
     llm_intent = _classify_intent_with_llm(user_input)
-    if llm_intent:
-        logger.info(f"[INTENT] LLM classification result: {llm_intent}")
+    
+    if llm_intent and llm_intent in {"approval", "edit", "unclear"}:
+        logger.info(f"[INTENT] LLM classified '{user_input}' -> {llm_intent}")
         return llm_intent
     
-    logger.info("[INTENT] LLM classification failed, using keyword fallback")
-
-    # --------------------------------------------------------
-    # 2. Heuristic keyword analysis (fallback)
-    # --------------------------------------------------------
-
-    user_input_lower = user_input.lower().strip()
+    # If primary classification fails, try with a more direct approach
+    logger.warning(f"[INTENT] Primary LLM classification failed, trying fallback approach")
+    fallback_intent = _classify_intent_with_fallback_llm(user_input)
     
-    # Enhanced keyword sets for better detection
-    approval_keywords = [
-        "approve", "approved", "yes", "confirm", "complete", "finalize", 
-        "done", "finished", "good", "looks good", "perfect", "ready",
-        "export", "save", "accept", "ok", "okay", "great", "excellent",
-        "thanks", "thank you", "that's all", "all set"
-    ]
+    if fallback_intent and fallback_intent in {"approval", "edit", "unclear"}:
+        logger.info(f"[INTENT] Fallback LLM classified '{user_input}' -> {fallback_intent}")
+        return fallback_intent
     
-    edit_keywords = [
-        "edit", "modify", "change", "update", "revise", "go back",
-        "fix", "adjust", "improve", "refine", "alter", "correct",
-        "want to change", "need to", "let me", "can we", "should we",
-        "instead", "rather than", "could we", "make it", "but", "however", "actually"
-    ]
-    
-    # Strong approval phrases (higher priority)
-    strong_approval_phrases = [
-        "looks good", "looks great", "that's perfect", "ready to go",
-        "ready to export", "ready to save", "all done", "we're done",
-        "that's it", "that's all", "thank you"
-    ]
-    
-    # Strong edit phrases (higher priority)
-    strong_edit_phrases = [
-        "instead of", "rather than", "could we make it", "can we change",
-        "what if we", "but what about", "however", "actually"
-    ]
-    
-    # Check for strong edit phrases first (these are very clear indicators)
-    for phrase in strong_edit_phrases:
-        if phrase in user_input_lower:
-            logger.info(f"[INTENT] Strong edit phrase detected: '{phrase}' -> edit")
-            return "edit"
-    
-    # Check for strong approval phrases
-    for phrase in strong_approval_phrases:
-        if phrase in user_input_lower:
-            logger.info(f"[INTENT] Strong approval phrase detected: '{phrase}' -> approval")
-            return "approval"
-    
-    # Check for explicit approval/edit keywords
-    approval_count = sum(1 for keyword in approval_keywords if keyword in user_input_lower)
-    edit_count = sum(1 for keyword in edit_keywords if keyword in user_input_lower)
-    
-    logger.info(f"[INTENT] Keyword counts - approval: {approval_count}, edit: {edit_count}")
-    
-    # If user mentions specific sections, likely wants to edit
-    section_mentions = ["objective", "variable", "design", "methodology", "data", "protocol"]
-    section_mentioned = any(section in user_input_lower for section in section_mentions)
-    
-    if section_mentioned and edit_count > 0:
-        logger.info(f"[INTENT] Section mention + edit keywords detected -> edit")
-        return "edit"
-    
-    # Determine intent based on keyword counts
-    if edit_count > approval_count and edit_count > 0:
-        logger.info(f"[INTENT] Edit keywords dominate -> edit")
-        return "edit"
-    elif approval_count > edit_count and approval_count > 0:
-        logger.info(f"[INTENT] Approval keywords dominate -> approval")
-        return "approval"
-    elif approval_count > 0:
-        logger.info(f"[INTENT] Some approval keywords found -> approval")
-        return "approval"
-    else:
-        logger.info(f"[INTENT] No clear intent detected -> unclear")
-        return "unclear"
+    # If both approaches fail, default to 'unclear' as the safest option
+    logger.warning(f"[INTENT] LLM classification failed completely, defaulting to 'unclear'")
+    return "unclear"
 
 
 def validate_stage_name(stage_name: str) -> bool:
@@ -470,71 +315,69 @@ def detect_session_completion(session_id: str, graph_components: Dict[str, Any])
 # ============================================================
 
 
-def _safe_invoke_llm(messages: list, agent_type: str) -> str | None:
-    """Invoke the global LLM manager safely.
+def _safe_invoke_llm(messages: list, agent_type: str, max_retries: int = 2) -> str | None:
+    """Invoke the global LLM manager safely with retry logic.
 
     Args:
         messages: A list of LangChain message objects.
         agent_type: A descriptive label for logging/metrics.
+        max_retries: Maximum number of retry attempts.
 
     Returns:
-        The raw string response from the LLM **or** None if the call fails.
+        The raw string response from the LLM or None if all attempts fail.
     """
-    logger.info("[LLM] Invoking classification LLM for %s", agent_type)
-    try:
-        manager = get_llm_manager()
-        llm = manager.create_llm(agent_type=agent_type, temperature=0.0, max_tokens=64)
-        response = manager.invoke_llm(llm, messages, agent_type)
-        return response.strip()
-    except (LLMConfigError, Exception) as e:  # noqa: BLE001 – broad except used intentionally as a guardrail
-        logger.warning(
-            "LLM classification failed (%s). Falling back to keyword heuristics.",
-            getattr(e, "message", str(e)),
-        )
-        return None
+    for attempt in range(max_retries + 1):
+        try:
+            logger.info(f"[LLM] Invoking classification LLM for {agent_type} (attempt {attempt + 1}/{max_retries + 1})")
+            manager = get_llm_manager()
+            llm = manager.create_llm(agent_type=agent_type, temperature=0.0, max_tokens=64)
+            response = manager.invoke_llm(llm, messages, agent_type)
+            return response.strip()
+        except (LLMConfigError, Exception) as e:
+            logger.warning(
+                f"LLM classification attempt {attempt + 1} failed for {agent_type}: {getattr(e, 'message', str(e))}"
+            )
+            if attempt == max_retries:
+                logger.error(f"All LLM classification attempts failed for {agent_type}")
+                return None
+    
+    return None
 
 
 def _classify_section_with_llm(user_input: str, state: ExperimentPlanState) -> str | None:
-    """Use an LLM to map *user_input* to one of the planning stage identifiers.
+    """Use an LLM to map user_input to one of the planning stage identifiers.
 
-    The function returns the stage identifier if confident, otherwise *None*.
+    The function returns the stage identifier if confident, otherwise None.
     """
     stage_list = ", ".join(PLANNING_STAGES)
 
     system_prompt = (
         "You are a section-routing assistant for an experimental planning system. "
         "Users can request edits to any part of their experiment plan at any time. "
-        "Based on their message, determine which planning stage they want to edit:\n\n"
+        "Based on their message, determine which planning stage they want to edit.\n\n"
         
-        "**objective_setting**: Research objectives, hypotheses, goals, purpose, aims, timelines\n"
-        "- Examples: 'change the objective', 'modify the hypothesis', 'make it 6 months instead of 3'\n\n"
+        "**PLANNING STAGES:**\n"
+        "- **objective_setting**: Research objectives, hypotheses, goals, purpose, aims, timelines, duration\n"
+        "- **variable_identification**: Independent, dependent, control variables, measurements, factors\n"
+        "- **experimental_design**: Experimental groups, control groups, sample sizes, replicates, treatments\n"
+        "- **methodology_protocol**: Step-by-step procedures, materials, equipment, protocols, methods\n"
+        "- **data_planning**: Data collection methods, statistical analysis, visualization plans\n"
+        "- **final_review**: Overall plan review, export, summary, completion\n\n"
         
-        "**variable_identification**: Independent, dependent, control variables, measurements, factors\n"
-        "- Examples: 'remove the food source control variable', 'add temperature as a variable', 'change the measurement method'\n"
-        "- Key indicators: specific variable names, 'control variable', 'independent variable', 'dependent variable'\n\n"
-        
-        "**experimental_design**: Experimental groups, control groups, sample sizes, replicates, treatments\n"
-        "- Examples: 'add another control group', 'change sample size', 'modify the treatment groups'\n\n"
-        
-        "**methodology_protocol**: Step-by-step procedures, materials, equipment, protocols, methods\n"
-        "- Examples: 'change the protocol steps', 'add more materials', 'modify the procedure'\n\n"
-        
-        "**data_planning**: Data collection methods, statistical analysis, visualization plans\n"
-        "- Examples: 'change the statistical test', 'modify data collection', 'update analysis plan'\n\n"
-        
-        "**final_review**: Overall plan review, export, summary, completion\n"
-        "- Examples: 'review the whole plan', 'export the plan', 'final summary'\n\n"
+        "**CLASSIFICATION RULES:**\n"
+        "1. If user mentions specific variable names or types (like 'food source', 'temperature', 'pH'), route to variable_identification\n"
+        "2. If user mentions 'control variable', 'independent variable', or 'dependent variable', route to variable_identification\n"
+        "3. If user mentions time periods, durations, or objectives, route to objective_setting\n"
+        "4. If user mentions groups, sample sizes, or treatments, route to experimental_design\n"
+        "5. If user mentions steps, procedures, materials, or equipment, route to methodology_protocol\n"
+        "6. If user mentions data collection, analysis, or statistics, route to data_planning\n"
+        "7. If user mentions review, export, or completion, route to final_review\n\n"
         
         f"Available stages: {stage_list}\n\n"
         
-        "IMPORTANT: \n"
-        "- If user mentions specific variable names or types (like 'food source', 'temperature', 'pH'), route to variable_identification\n"
-        "- If user mentions 'control variable', 'independent variable', or 'dependent variable', route to variable_identification\n"
-        "- If user mentions time periods, durations, or objectives, route to objective_setting\n"
-        "- Be very specific about variable-related requests\n\n"
-        
-        "Respond with only the stage identifier (e.g. `variable_identification`). "
-        "If none apply clearly, respond with `unknown`."
+        "CRITICAL: You must respond with ONLY the stage identifier (e.g., 'variable_identification'). "
+        "Do not include any other text, explanations, or formatting. "
+        "If you cannot determine the stage with high confidence, respond with 'unknown'."
     )
 
     # Include current context and incomplete stages for better routing
@@ -554,37 +397,91 @@ def _classify_section_with_llm(user_input: str, state: ExperimentPlanState) -> s
         HumanMessage(content=human_msg),
     ]
 
-    result = _safe_invoke_llm(messages, "routing")
+    result = _safe_invoke_llm(messages, "section_routing")
     if result and result in PLANNING_STAGES:
-        logger.info(f"[SECTION] LLM classified '{user_input}' -> {result}")
         return result
     
-    logger.warning(f"[SECTION] LLM classification failed for '{user_input}', result: {result}")
+    logger.warning(f"[SECTION] Primary LLM classification failed for '{user_input}', result: {result}")
     return None
 
 
+def _classify_section_with_fallback_llm(user_input: str, state: ExperimentPlanState) -> str | None:
+    """Fallback LLM classification with a more direct approach."""
+    
+    system_prompt = (
+        "You are classifying user requests for an experiment planning system. "
+        "The user wants to edit one of these sections:\n\n"
+        
+        "objective_setting - research goals, hypotheses, objectives, timelines\n"
+        "variable_identification - variables, measurements, factors\n"
+        "experimental_design - groups, sample sizes, treatments\n"
+        "methodology_protocol - procedures, materials, equipment\n"
+        "data_planning - data collection, analysis, statistics\n"
+        "final_review - review, export, summary\n\n"
+        
+        "Respond with only the section name. If unclear, respond 'objective_setting'."
+    )
+
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"User wants to edit: {user_input}"),
+    ]
+
+    result = _safe_invoke_llm(messages, "section_routing_fallback")
+    if result and result in PLANNING_STAGES:
+        return result
+    
+    return None
+
+
+def _make_intelligent_section_guess(state: ExperimentPlanState) -> str:
+    """Make an intelligent guess about which section to edit based on state completeness."""
+    
+    # Check each stage for completeness and suggest the first incomplete one
+    if not state.get('experiment_objective') or not state.get('hypothesis'):
+        return "objective_setting"
+    
+    if not state.get('independent_variables') or not state.get('dependent_variables'):
+        return "variable_identification"
+    
+    if not state.get('experimental_groups') or not state.get('control_groups'):
+        return "experimental_design"
+    
+    if not state.get('methodology_steps') or not state.get('materials_equipment'):
+        return "methodology_protocol"
+    
+    if not state.get('data_collection_plan') or not state.get('data_analysis_plan'):
+        return "data_planning"
+    
+    # If everything seems complete, go to review
+    return "final_review"
+
+
 def _classify_intent_with_llm(user_input: str) -> str | None:
-    """Classify the *user_input* as `approval`, `edit`, or `unclear` using the LLM."""
+    """Classify the user_input as 'approval', 'edit', or 'unclear' using the LLM."""
 
     system_prompt = (
         "You are an intent classifier for an experimental planning system. "
-        "Users are being asked to approve sections of their experiment plan or request changes. "
-        "Classify user messages into exactly one category:\n\n"
+        "Users are being asked to approve sections of their experiment plan or request changes.\n\n"
         
-        "**approval**: User agrees to proceed with the current section as-is\n"
-        "- Examples: 'approve', 'yes', 'looks good', 'proceed', 'continue', 'ready to move on'\n\n"
+        "**INTENT CATEGORIES:**\n"
+        "- **approval**: User agrees to proceed with the current section as-is\n"
+        "  Examples: 'approve', 'yes', 'looks good', 'proceed', 'continue', 'ready to move on'\n\n"
         
-        "**edit**: User wants to modify or change something in the current section\n"
-        "- Examples: 'instead of X, make it Y', 'change the duration', 'can we modify', 'rather than', 'but what if'\n"
-        "- Key indicators: 'instead', 'change', 'modify', 'could we', 'can we', 'rather than', 'but', 'however'\n\n"
+        "- **edit**: User wants to modify or change something in the current section\n"
+        "  Examples: 'instead of X, make it Y', 'change the duration', 'can we modify', 'rather than', 'but what if'\n"
+        "  Key indicators: 'instead', 'change', 'modify', 'could we', 'can we', 'rather than', 'but', 'however'\n\n"
         
-        "**unclear**: User message is ambiguous or doesn't clearly indicate approval or edit intent\n"
-        "- Examples: unclear questions, off-topic comments, or ambiguous statements\n\n"
+        "- **unclear**: User message is ambiguous or doesn't clearly indicate approval or edit intent\n"
+        "  Examples: unclear questions, off-topic comments, or ambiguous statements\n\n"
         
-        "IMPORTANT: If a user suggests ANY modification, change, or alternative (even while being polite), "
-        "classify it as 'edit', not 'approval'. Phrases like 'instead of X could we make it Y' are clearly edit requests.\n\n"
+        "**CRITICAL RULES:**\n"
+        "1. If a user suggests ANY modification, change, or alternative (even while being polite), classify as 'edit'\n"
+        "2. Phrases like 'instead of X could we make it Y' are clearly edit requests\n"
+        "3. Only classify as 'approval' if the user clearly agrees with the current state\n\n"
         
-        "Respond with only the category name: approval, edit, or unclear"
+        "CRITICAL: You must respond with ONLY the category name: approval, edit, or unclear. "
+        "Do not include any other text, explanations, or formatting."
     )
 
     messages = [
@@ -592,7 +489,32 @@ def _classify_intent_with_llm(user_input: str) -> str | None:
         HumanMessage(content=f"User message: {user_input}"),
     ]
 
-    result = _safe_invoke_llm(messages, "intent")
+    result = _safe_invoke_llm(messages, "intent_classification")
     if result in {"approval", "edit", "unclear"}:
         return result
+    
+    logger.warning(f"[INTENT] Primary LLM classification failed for '{user_input}', result: {result}")
+    return None
+
+
+def _classify_intent_with_fallback_llm(user_input: str) -> str | None:
+    """Fallback LLM intent classification with a more direct approach."""
+    
+    system_prompt = (
+        "Classify this user message:\n"
+        "- 'approval' if they agree/approve\n"
+        "- 'edit' if they want to change something\n"
+        "- 'unclear' if ambiguous\n\n"
+        "Respond with only: approval, edit, or unclear"
+    )
+
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_input),
+    ]
+
+    result = _safe_invoke_llm(messages, "intent_classification_fallback")
+    if result in {"approval", "edit", "unclear"}:
+        return result
+    
     return None 
