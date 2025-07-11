@@ -84,7 +84,7 @@ export default function Home() {
 
   // Show normal app view when experiments exist
   return (
-    <div className="h-screen bg-background dark overflow-hidden flex flex-col">
+    <div className="h-full bg-background dark overflow-hidden flex flex-col">
       <Title 
         experiments={experiments}
         selectedExperiment={currentExperiment}
