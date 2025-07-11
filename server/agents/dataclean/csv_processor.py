@@ -378,19 +378,15 @@ class CSVDirectProcessor:
         """Generate greeting response with data overview."""
         rows, cols = analysis.data_shape
         
-        response = f"Hello! I can see you have a dataset with {rows} rows and {cols} columns."
+        response = f"Hello! Your dataset is ready ({rows}×{cols})."
         
         if analysis.quality_issues:
-            response += f"\n\nI've identified {len(analysis.quality_issues)} potential issues:"
-            for issue in analysis.quality_issues[:3]:  # Show first 3 issues
-                response += f"\n• {issue}"
+            response += f" ({len(analysis.quality_issues)} issues detected)"
         
-        if analysis.suggestions:
-            response += f"\n\nI can help you with:"
-            for suggestion in analysis.suggestions[:3]:  # Show first 3 suggestions
-                response += f"\n• {suggestion}"
-        
-        response += "\n\nWhat would you like to do with your data?"
+        response += "\n\n**Tell me to:**"
+        response += "\n• \"analyze data quality\" • \"clean the data\" • \"describe columns\""
+        response += "\n• \"add/delete rows\" • \"fix missing values\""
+        response += "\n\nWhat first?"
         
         return response
     
