@@ -331,7 +331,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         if (csv && csv.trim()) {
           const csvWelcomeMessage: Message = {
             id: (Date.now() + 1).toString(),
-            content: `I can see you have dataset loaded!\n\nI'm ready to help you with:\n• Data quality analysis\n• Cleaning and fixing issues\n• Removing duplicates\n• Handling missing values\n• Data transformation`,
+            content: `Hello! Your dataset is ready.\n\n**Tell me to:**\n• "analyze data quality" • "clean the data" • "describe columns"\n• "add/delete rows" • "fix missing values"\n\nWhat first?`,
             sender: "ai",
             timestamp: new Date(),
             mode: "execute",
