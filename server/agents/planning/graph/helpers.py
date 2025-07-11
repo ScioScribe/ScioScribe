@@ -57,17 +57,10 @@ def determine_section_to_edit(user_input: str, state: ExperimentPlanState) -> st
     Raises:
         RuntimeError: If LLM classification fails completely
     """
-    logger.info(f"[SECTION] Determining section to edit for: '{user_input}'")
     
     # Get current stage for context
     current_stage = state.get("current_stage", "objective_setting")
-    logger.info(f"[SECTION] Current stage: {current_stage}")
     
-    # 🔍 DEBUG LOG 5: Section determination process
-    logger.info(f"🔍 DEBUG 5 - SECTION DETERMINATION:")
-    logger.info(f"   Input to classify: '{user_input}'")
-    logger.info(f"   Current stage: '{current_stage}'")
-    logger.info(f"   State experiment_id: {state.get('experiment_id', 'not set')}")
     
     # Check what sections are incomplete for context
     incomplete_sections = []
@@ -82,44 +75,26 @@ def determine_section_to_edit(user_input: str, state: ExperimentPlanState) -> st
     if not state.get('data_collection_plan') or not state.get('data_analysis_plan'):
         incomplete_sections.append('data_planning')
     
-    logger.info(f"   Incomplete sections: {incomplete_sections}")
-    logger.info(f"   Available sections: {PLANNING_STAGES}")
     
     # Use LLM-based classification with enhanced error handling
     llm_section = _classify_section_with_llm(user_input, state)
     
-    logger.info(f"🔍 DEBUG 5a - PRIMARY LLM CLASSIFICATION:")
-    logger.info(f"   LLM Result: '{llm_section}'")
-    logger.info(f"   Result Type: {type(llm_section)}")
-    logger.info(f"   Is Valid Stage: {llm_section in PLANNING_STAGES if llm_section else False}")
     
     if llm_section and llm_section in PLANNING_STAGES:
-        logger.info(f"[SECTION] ✅ LLM classified '{user_input}' -> {llm_section}")
-        logger.info(f"🔍 DEBUG 5b - PRIMARY SUCCESS: Using LLM result '{llm_section}'")
         return llm_section
     
     # If LLM classification fails, try with a more direct approach
     logger.warning(f"[SECTION] ⚠️ Primary LLM classification failed (result: {llm_section}), trying fallback approach")
     fallback_section = _classify_section_with_fallback_llm(user_input, state)
     
-    logger.info(f"🔍 DEBUG 5c - FALLBACK LLM CLASSIFICATION:")
-    logger.info(f"   Fallback Result: '{fallback_section}'")
-    logger.info(f"   Result Type: {type(fallback_section)}")
-    logger.info(f"   Is Valid Stage: {fallback_section in PLANNING_STAGES if fallback_section else False}")
     
     if fallback_section and fallback_section in PLANNING_STAGES:
-        logger.info(f"[SECTION] ✅ Fallback LLM classified '{user_input}' -> {fallback_section}")
-        logger.info(f"🔍 DEBUG 5d - FALLBACK SUCCESS: Using fallback result '{fallback_section}'")
         return fallback_section
     
     # If both approaches fail, make an intelligent guess based on state
     intelligent_guess = _make_intelligent_section_guess(state, user_input)
     logger.warning(f"[SECTION] ⚠️ LLM classification failed completely, using intelligent guess: {intelligent_guess}")
     
-    logger.info(f"🔍 DEBUG 5e - INTELLIGENT GUESS:")
-    logger.info(f"   Guess Result: '{intelligent_guess}'")
-    logger.info(f"   Guess Logic: Based on incomplete sections and current stage")
-    logger.info(f"   Final Decision: '{intelligent_guess}'")
     
     return intelligent_guess
 
@@ -171,13 +146,11 @@ def extract_user_intent(user_input: str) -> str:
     Raises:
         RuntimeError: If LLM classification fails completely
     """
-    logger.info(f"[INTENT] Classifying user input: '{user_input}'")
     
     # Use LLM-based intent classification
     llm_intent = _classify_intent_with_llm(user_input)
     
     if llm_intent and llm_intent in {"approval", "edit", "unclear"}:
-        logger.info(f"[INTENT] ✅ LLM classified '{user_input}' -> {llm_intent}")
         return llm_intent
     
     # If primary classification fails, try with a more direct approach
@@ -185,7 +158,6 @@ def extract_user_intent(user_input: str) -> str:
     fallback_intent = _classify_intent_with_fallback_llm(user_input)
     
     if fallback_intent and fallback_intent in {"approval", "edit", "unclear"}:
-        logger.info(f"[INTENT] ✅ Fallback LLM classified '{user_input}' -> {fallback_intent}")
         return fallback_intent
     
     # If both approaches fail, default to 'unclear' as the safest option
@@ -316,13 +288,11 @@ def _safe_invoke_llm(messages: list, agent_type: str, max_retries: int = 2) -> s
     """
     for attempt in range(max_retries + 1):
         try:
-            logger.info(f"[LLM] Invoking classification LLM for {agent_type} (attempt {attempt + 1}/{max_retries + 1})")
             manager = get_llm_manager()
             llm = manager.create_llm(agent_type=agent_type, temperature=0.0, max_tokens=64)
             response = manager.invoke_llm(llm, messages, agent_type)
             
             result = response.strip().lower()
-            logger.info(f"[LLM] Raw response for {agent_type}: '{result}'")
             return result
             
         except (LLMConfigError, Exception) as e:
@@ -348,7 +318,6 @@ def _classify_section_with_llm(user_input: str, state: ExperimentPlanState) -> s
     # Step 2: Map the change to the correct section based on current state
     section_mapping = _map_change_to_section(change_analysis, state, user_input)
     
-    logger.info(f"[LLM] Two-step classification: '{user_input}' -> Change: '{change_analysis}' -> Section: '{section_mapping}'")
     
     return section_mapping
 
@@ -387,7 +356,6 @@ def _extract_change_intent(user_input: str) -> str | None:
     
     if result:
         result = result.strip()
-        logger.info(f"[LLM] Change intent extracted: '{result}'")
         return result
     
     return None
@@ -445,7 +413,6 @@ def _map_change_to_section(change_intent: str, state: ExperimentPlanState, origi
     
     if result:
         result = result.strip().lower()
-        logger.info(f"[LLM] Section mapping result: '{result}'")
         
         # Validate result
         if result in PLANNING_STAGES:
@@ -454,7 +421,6 @@ def _map_change_to_section(change_intent: str, state: ExperimentPlanState, origi
         # Try to find partial match
         for stage in PLANNING_STAGES:
             if stage in result or result in stage:
-                logger.info(f"[LLM] Found partial match: '{result}' -> '{stage}'")
                 return stage
     
     logger.warning(f"[LLM] Section mapping failed for change: '{change_intent}'")
@@ -596,7 +562,6 @@ def _classify_section_with_fallback_llm(user_input: str, state: ExperimentPlanSt
         # Check for partial matches
         for stage in PLANNING_STAGES:
             if stage in result or result in stage:
-                logger.info(f"[SECTION] Fallback found partial match: '{result}' -> '{stage}'")
                 return stage
     
     logger.warning(f"[SECTION] Fallback LLM classification failed for '{user_input}', result: {result}")
@@ -641,7 +606,6 @@ def _make_intelligent_section_guess(state: ExperimentPlanState, user_input: str)
     best_score = stage_scores[best_stage]
     
     if best_score > 0:
-        logger.info(f"[SECTION] Keyword-based guess: '{user_input}' -> {best_stage} (score: {best_score})")
         return best_stage
     
     # If no keywords match, check state completeness and prefer current stage or next incomplete stage
@@ -665,16 +629,13 @@ def _make_intelligent_section_guess(state: ExperimentPlanState, user_input: str)
     
     # Prefer current stage if it's incomplete
     if current_stage in incomplete_stages:
-        logger.info(f"[SECTION] Intelligent guess: using current incomplete stage '{current_stage}'")
         return current_stage
     
     # Otherwise, use the first incomplete stage
     if incomplete_stages:
-        logger.info(f"[SECTION] Intelligent guess: using first incomplete stage '{incomplete_stages[0]}'")
         return incomplete_stages[0]
     
     # If everything seems complete, default to current stage
-    logger.info(f"[SECTION] Intelligent guess: defaulting to current stage '{current_stage}'")
     return current_stage
 
 

@@ -125,7 +125,6 @@ def _get_or_create_graph_components(session_id: str) -> Dict[str, Any]:
     """Get or create graph components for a session."""
     if session_id not in _active_graphs:
         # Use an in-memory checkpointer for each session
-        logger.info(f"Using MemorySaver for session {session_id}")
         checkpointer = MemorySaver()
         
         # Create graph
@@ -325,7 +324,6 @@ async def start_hitl_planning_session(request: StartHITLPlanningRequest):
         is_interrupted = await _is_graph_interrupted(session_id)
         current_stage = await _get_current_stage_from_graph(session_id)
         
-        logger.info(f"Started HITL planning session {session_id}, interrupted: {is_interrupted}, stage: {current_stage}")
         
         return HITLSessionResponse(
             session_id=session_id,
@@ -352,7 +350,6 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
     await websocket.accept()
     _active_connections[session_id] = websocket
     
-    logger.info(f"WebSocket connection established for session {session_id}")
     
     try:
         # Send initial session status
@@ -366,7 +363,6 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
             # Check if session is already complete
             is_complete = await _is_graph_complete(session_id)
             if is_complete:
-                logger.info(f"Session {session_id} is already complete")
                 await _send_completion_message(websocket, session_id, current_state)
                 return
             
@@ -383,7 +379,6 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
                 message_data = await websocket.receive_text()
                 message = json.loads(message_data)
                 
-                logger.info(f"Received WebSocket message: {message}")
                 
                 # Route message based on type
                 if message.get("type") == "user_message":
@@ -398,7 +393,6 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
                     })
                 elif message.get("type") == "close_session":
                     # Handle explicit session closure request from frontend
-                    logger.info(f"Received close_session request for {session_id}")
                     await _send_websocket_message(websocket, {
                         "type": "session_closed",
                         "data": {"message": "Session closed by user request"},
@@ -424,10 +418,7 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
                     websocket.application_state != WebSocketState.CONNECTED
                     or websocket.client_state != WebSocketState.CONNECTED
                 ):
-                    logger.info(
-                        "WebSocket no longer connected; ending session loop to avoid log spam."
-                    )
-                    break
+                        break
 
                 # Attempt to relay the error to the client (will be silently
                 # skipped if the socket is indeed closed).
@@ -443,7 +434,6 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
         # Clean up connection
         if session_id in _active_connections:
             del _active_connections[session_id]
-        logger.info(f"Cleaned up WebSocket connection for session {session_id}")
 
 
 # WebSocket helper functions
@@ -550,7 +540,6 @@ async def _handle_user_message(websocket: WebSocket, session_id: str, message: D
             await _send_error_message(websocket, session_id, "Empty user message")
             return
             
-        logger.info(f"Processing user message for session {session_id}: {user_input}")
         
         graph_components = _get_or_create_graph_components(session_id)
         graph = graph_components["graph"]
@@ -568,27 +557,13 @@ async def _handle_user_message(websocket: WebSocket, session_id: str, message: D
 
         is_interrupted = await _is_graph_interrupted(session_id)
         
-        # 🔍 DEBUG LOG 1: Critical intent classification and routing decisions
-        logger.info(f"🔍 DEBUG 1 - USER MESSAGE ANALYSIS:")
-        logger.info(f"   Session ID: {session_id}")
-        logger.info(f"   User Input: '{user_input}'")
-        logger.info(f"   Current State: {current_state.get('current_stage', 'unknown')}")
-        logger.info(f"   Is Interrupted: {is_interrupted}")
-        logger.info(f"   Chat History Length: {len(current_state.get('chat_history', []))}")
-        logger.info(f"   Return to Stage: {current_state.get('return_to_stage', 'not set')}")
 
         if is_interrupted:
             # Decide whether this looks like approval or an edit request
             intent = extract_user_intent(user_input)
             
-            # 🔍 DEBUG LOG 2: Intent classification results
-            logger.info(f"🔍 DEBUG 2 - INTENT CLASSIFICATION:")
-            logger.info(f"   Raw Intent Result: '{intent}'")
-            logger.info(f"   Intent Type: {type(intent)}")
-            logger.info(f"   Is Valid Intent: {intent in ['approval', 'edit', 'unclear']}")
 
             if intent == "approval":
-                logger.info(f"🔍 DEBUG 2a - APPROVAL FLOW: Re-routing as approval_response")
                 # Re-route as an approval_response = True so normal flow continues
                 await _handle_approval_response(
                     websocket,
@@ -610,27 +585,15 @@ async def _handle_user_message(websocket: WebSocket, session_id: str, message: D
                 if not original_stage:
                     original_stage = current_state.get("current_stage", "objective_setting")
                 
-                # 🔍 DEBUG LOG 3: Edit routing decisions
-                logger.info(f"🔍 DEBUG 3 - EDIT ROUTING:")
-                logger.info(f"   Original Stage: '{original_stage}'")
-                logger.info(f"   Target Section: '{target_section}'")
-                logger.info(f"   Section Determination Valid: {target_section in PLANNING_STAGES}")
-                logger.info(f"   Same Stage Edit: {target_section == original_stage}")
-                logger.info(f"   Available Stages: {PLANNING_STAGES}")
                 
-                logger.info(f"[EDIT] 🔄 User at '{original_stage}', routing edit to '{target_section}'")
                 
                 # Validate the routing decision
                 if target_section == original_stage:
-                    logger.info(f"[EDIT] Edit targets current stage, no routing needed")
-                    logger.info(f"🔍 DEBUG 3a - SAME STAGE EDIT: Processing in current location")
                     # Process edit in current stage without routing - let LangGraph handle it
                     updated_state = add_chat_message(current_state, "user", user_input)
                     await graph.aupdate_state(config, updated_state)
                     
-                    # 🔍 CRITICAL FIX: We need to invoke LangGraph to continue execution
-                    # This will trigger the agent to process the edit in the current stage
-                    logger.info(f"🔍 DEBUG 3a2 - INVOKING LANGGRAPH TO CONTINUE SAME-STAGE EDIT")
+                    # Continue execution to process the edit in the current stage
                     await _process_planning_execution(websocket, session_id, updated_state, graph, config)
                     return
                 
@@ -640,12 +603,6 @@ async def _handle_user_message(websocket: WebSocket, session_id: str, message: D
                 # STORE THE RETURN STAGE IN STATE
                 routed_state["return_to_stage"] = original_stage
                 
-                # 🔍 DEBUG LOG 4: Return stage storage
-                logger.info(f"🔍 DEBUG 4 - RETURN STAGE STORAGE:")
-                logger.info(f"   Stored return_to_stage: '{original_stage}'")
-                logger.info(f"   Current stage after routing: '{routed_state.get('current_stage', 'unknown')}'")
-                logger.info(f"   State keys: {list(routed_state.keys())}")
-                logger.info(f"   Return stage in state: {routed_state.get('return_to_stage', 'NOT FOUND')}")
                 
                 # Add the user's actual edit request to chat history (not a generic message)
                 routed_state = add_chat_message(routed_state, "user", user_input)
@@ -658,22 +615,14 @@ async def _handle_user_message(websocket: WebSocket, session_id: str, message: D
                     f"After this edit, we'll return to the {original_stage.replace('_', ' ')} stage."
                 )
 
-                logger.info(f"[EDIT] ✅ Successfully routed to {target_section}, will return to {original_stage}")
                 await graph.aupdate_state(config, routed_state)
 
-                # 🔍 CRITICAL FIX: We need to invoke LangGraph to continue execution after state update
-                # This will trigger the agent to process the edit and then handle return routing
-                logger.info(f"🔍 DEBUG 4a - INVOKING LANGGRAPH TO CONTINUE EDIT EXECUTION")
-                logger.info(f"   State updated with return_to_stage: '{routed_state.get('return_to_stage')}'")
-                logger.info(f"   Now calling _process_planning_execution to trigger LangGraph execution")
-                
                 # Continue processing - this will trigger the agent to process the edit
                 # and then LangGraph's conditional edges will handle the return routing
                 await _process_planning_execution(websocket, session_id, routed_state, graph, config)
                 return  # exit original handler
             
             else:
-                logger.info(f"🔍 DEBUG 2b - UNCLEAR INTENT: Asking for clarification")
                 # Intent is unclear - ask for clarification
                 await _send_websocket_message(websocket, {
                     "type": "planning_update",
@@ -699,7 +648,6 @@ async def _handle_user_message(websocket: WebSocket, session_id: str, message: D
         # Normal (non-interrupted) flow
         # ------------------------------------------------------------
 
-        logger.info(f"🔍 DEBUG 1b - NORMAL FLOW: Processing non-interrupted message")
         updated_state = add_chat_message(current_state, "user", user_input)
         await graph.aupdate_state(config, updated_state)
 
@@ -718,7 +666,6 @@ async def _handle_approval_response(websocket: WebSocket, session_id: str, messa
         approved = approval_data.get("approved", False)
         feedback = approval_data.get("feedback", "")
         
-        logger.info(f"Processing approval response for session {session_id}: approved={approved}")
         
         graph_components = _get_or_create_graph_components(session_id)
         graph = graph_components["graph"]
@@ -764,14 +711,12 @@ async def _process_planning_execution(websocket: WebSocket, session_id: str, sta
         # Execute graph and stream updates
         if resume_from_approval:
             # Resume from interrupt
-            logger.info("Resuming planning execution from interrupt")
             async for event in graph.astream(None, config, stream_mode="values"):
                 if event is not None:
                     final_state = event
                     await _send_planning_update(websocket, session_id, final_state)
         else:
             # Continue with normal processing
-            logger.info("Starting new planning execution")
             async for event in graph.astream(state, config, stream_mode="values"):
                 if event is not None:
                     final_state = event
@@ -780,7 +725,6 @@ async def _process_planning_execution(websocket: WebSocket, session_id: str, sta
         # Check if graph has completed (reached END state)
         is_complete = await _is_graph_complete(session_id)
         if is_complete:
-            logger.info(f"🎯 Graph completed for session {session_id}")
             await _send_completion_message(websocket, session_id, final_state)
             return  # Exit the function as session is complete
 
@@ -789,7 +733,6 @@ async def _process_planning_execution(websocket: WebSocket, session_id: str, sta
         if is_interrupted:
             current_stage = await _get_current_stage_from_graph(session_id)
             await _send_approval_request(websocket, session_id, {"stage": current_stage, "status": "waiting"})
-            logger.info(f"Interrupted at stage: {current_stage}")
                 
     except Exception as e:
         logger.error(f"Error in planning execution: {e}")
@@ -851,7 +794,6 @@ async def close_planning_session(session_id: str):
         if session_id in _active_connections:
             del _active_connections[session_id]
         
-        logger.info(f"Manually closed planning session {session_id}")
         
         return {
             "session_id": session_id,

@@ -41,24 +41,12 @@ def objective_completion_check(state: ExperimentPlanState) -> Literal["continue"
         return_to_stage = state.get('return_to_stage')
         current_stage = state.get('current_stage', 'unknown')
         
-        # 🔍 DEBUG LOG 9: Completion check analysis
-        logger.info(f"🔍 DEBUG 9 - OBJECTIVE COMPLETION CHECK:")
-        logger.info(f"   Current stage: '{current_stage}'")
-        logger.info(f"   Return to stage: '{return_to_stage}'")
-        logger.info(f"   Is edit operation: {return_to_stage is not None}")
-        logger.info(f"   Is different stage edit: {return_to_stage and return_to_stage != 'objective_setting'}")
         
         # Log current objective content
         objective = state.get('experiment_objective')
         hypothesis = state.get('hypothesis')
         research_query = state.get('research_query', '')
         
-        logger.info(f"   Objective present: {bool(objective)}")
-        logger.info(f"   Hypothesis present: {bool(hypothesis)}")
-        logger.info(f"   Research query present: {bool(research_query)}")
-        if objective:
-            logger.info(f"   Objective length: {len(str(objective))}")
-            logger.info(f"   Objective preview: '{str(objective)[:100]}...'")
         
         if return_to_stage and return_to_stage != "objective_setting":
             # Use the validate_objective_completeness function with 0-100 scoring
@@ -67,20 +55,11 @@ def objective_completion_check(state: ExperimentPlanState) -> Literal["continue"
             validation_results = validate_objective_completeness(objective, hypothesis, research_query)
             score = validation_results.get('score', 0)
             
-            logger.info(f"🔍 DEBUG 9a - EDIT COMPLETION VALIDATION:")
-            logger.info(f"   Validation score: {score}")
-            logger.info(f"   Validation results: {validation_results}")
-            logger.info(f"   Score threshold for edit: 70")
-            logger.info(f"   Edit complete: {score >= 70}")
             
             # If edit is complete enough (≥70 for edits), return to original stage
             if score >= 70:
-                logger.info(f"Objective edit complete (score: {score}), returning to {return_to_stage}")
-                logger.info(f"🔍 DEBUG 9b - RETURNING TO ORIGINAL: '{return_to_stage}'")
                 return "return_to_original"
             else:
-                logger.info(f"Objective edit needs more work (score: {score}, need ≥70)")
-                logger.info(f"🔍 DEBUG 9c - EDIT RETRY: Score too low, staying in objective")
                 return "retry"
         
         # Normal flow - use higher threshold for continuing to next stage
@@ -89,19 +68,11 @@ def objective_completion_check(state: ExperimentPlanState) -> Literal["continue"
         validation_results = validate_objective_completeness(objective, hypothesis, research_query)
         score = validation_results.get('score', 0)
         
-        logger.info(f"🔍 DEBUG 9d - NORMAL FLOW VALIDATION:")
-        logger.info(f"   Validation score: {score}")
-        logger.info(f"   Score threshold for continue: 80")
-        logger.info(f"   Can continue: {score >= 80}")
         
         # Only continue if score is ≥80 as requested
         if score >= 80:
-            logger.info(f"Objective completion check: CONTINUE (score: {score})")
-            logger.info(f"🔍 DEBUG 9e - CONTINUE TO NEXT: Moving to variable identification")
             return "continue"
         else:
-            logger.info(f"Objective completion check: RETRY (score: {score})")
-            logger.info(f"🔍 DEBUG 9f - NORMAL RETRY: Score too low, staying in objective")
             return "retry"
     
     return safe_conditional_check(
@@ -137,10 +108,8 @@ def variable_completion_check(state: ExperimentPlanState) -> Literal["continue",
             
             # For edits, use more lenient criteria (at least some variables defined)
             if independent_vars and dependent_vars:
-                logger.info(f"Variable edit complete, returning to {return_to_stage}")
                 return "return_to_original"
             else:
-                logger.info("Variable edit needs more work")
                 return "retry"
         
         # Normal flow - use stricter criteria for continuing to next stage
@@ -154,10 +123,8 @@ def variable_completion_check(state: ExperimentPlanState) -> Literal["continue",
             if (len(independent_vars) >= 1 and 
                 len(dependent_vars) >= 1 and 
                 len(control_vars) >= 1):
-                logger.info("Variable completion check: PASS")
                 return "continue"
         
-        logger.info("Variable completion check: RETRY")
         return "retry"
     
     return safe_conditional_check(
@@ -192,10 +159,8 @@ def design_completion_check(state: ExperimentPlanState) -> Literal["continue", "
             
             # For edits, use more lenient criteria
             if experimental_groups and control_groups:
-                logger.info(f"Design edit complete, returning to {return_to_stage}")
                 return "return_to_original"
             else:
-                logger.info("Design edit needs more work")
                 return "retry"
         
         # Normal flow - use stricter criteria
@@ -209,10 +174,8 @@ def design_completion_check(state: ExperimentPlanState) -> Literal["continue", "
             if (len(experimental_groups) >= 1 and 
                 len(control_groups) >= 1 and 
                 isinstance(sample_size, dict) and sample_size):
-                logger.info("Design completion check: PASS")
                 return "continue"
         
-        logger.info("Design completion check: RETRY")
         return "retry"
     
     return safe_conditional_check(
@@ -247,10 +210,8 @@ def methodology_completion_check(state: ExperimentPlanState) -> Literal["continu
             
             # For edits, use more lenient criteria
             if methodology_steps and materials_equipment:
-                logger.info(f"Methodology edit complete, returning to {return_to_stage}")
                 return "return_to_original"
             else:
-                logger.info("Methodology edit needs more work")
                 return "retry"
         
         # Normal flow - use stricter criteria
@@ -262,10 +223,8 @@ def methodology_completion_check(state: ExperimentPlanState) -> Literal["continu
             # Additional validation for methodology structure
             if (len(methodology_steps) >= 3 and  # At least 3 steps for meaningful protocol
                 len(materials_equipment) >= 1):
-                logger.info("Methodology completion check: PASS")
                 return "continue"
         
-        logger.info("Methodology completion check: RETRY")
         return "retry"
     
     return safe_conditional_check(
@@ -300,10 +259,8 @@ def data_completion_check(state: ExperimentPlanState) -> Literal["continue", "re
             
             # For edits, use more lenient criteria
             if data_collection_plan and data_analysis_plan:
-                logger.info(f"Data planning edit complete, returning to {return_to_stage}")
                 return "return_to_original"
             else:
-                logger.info("Data planning edit needs more work")
                 return "retry"
         
         # Normal flow - use stricter criteria
@@ -315,10 +272,8 @@ def data_completion_check(state: ExperimentPlanState) -> Literal["continue", "re
             # Additional validation for data planning structure
             if (isinstance(data_collection_plan, dict) and data_collection_plan and
                 isinstance(data_analysis_plan, dict) and data_analysis_plan):
-                logger.info("Data planning completion check: PASS")
                 return "continue"
         
-        logger.info("Data planning completion check: RETRY")
         return "retry"
     
     return safe_conditional_check(
@@ -350,13 +305,10 @@ def review_completion_check(state: ExperimentPlanState) -> Literal["complete", "
         user_intent = extract_user_intent(user_input)
         
         # Log the decision process for debugging
-        logger.info(f"Review completion check - User input: '{user_input}' -> Intent: {user_intent}")
         
         if user_intent == "approval":
-            logger.info("Review completion check: COMPLETE - User approved the plan")
             return "complete"
         elif user_intent == "edit":
-            logger.info("Review completion check: EDIT_SECTION - User wants to make changes")
             return "edit_section"
         else:
             # For unclear intent, check if this is the first time in review
@@ -365,17 +317,14 @@ def review_completion_check(state: ExperimentPlanState) -> Literal["complete", "
             
             if len(review_messages) <= 1:
                 # First time in review, likely needs user input
-                logger.info("Review completion check: EDIT_SECTION - First time in review, waiting for user decision")
                 return "edit_section"
             else:
                 # Multiple review interactions, be more permissive for completion
                 # Check for any positive indicators
                 positive_indicators = ["good", "ok", "fine", "ready", "done", "thanks"]
                 if any(indicator in user_input.lower() for indicator in positive_indicators):
-                    logger.info("Review completion check: COMPLETE - Positive indicators detected")
                     return "complete"
                 else:
-                    logger.info("Review completion check: EDIT_SECTION - Unclear intent, defaulting to edit")
                     return "edit_section"
     
     return safe_conditional_check(
@@ -407,7 +356,6 @@ def route_to_section(state: ExperimentPlanState) -> str:
         stage_routing_map = get_stage_routing_map()
         
         routing_key = stage_routing_map.get(section, "objective")
-        logger.info(f"Routing to section: {routing_key}")
         
         return routing_key
     

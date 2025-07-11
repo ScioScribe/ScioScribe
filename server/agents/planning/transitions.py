@@ -288,17 +288,9 @@ def transition_to_stage(
     """
     current_stage = state.get("current_stage", "unknown")
     
-    # 🔍 DEBUG LOG 8: Stage transition analysis
-    logger.info(f"🔍 DEBUG 8 - STAGE TRANSITION:")
-    logger.info(f"   From stage: '{current_stage}'")
-    logger.info(f"   To stage: '{target_stage}'")
-    logger.info(f"   Force transition: {force}")
-    logger.info(f"   Target stage valid: {target_stage in PLANNING_STAGES}")
-    logger.info(f"   Available stages: {PLANNING_STAGES}")
     
     # Check if there's a return_to_stage that should be preserved
     return_to_stage = state.get('return_to_stage')
-    logger.info(f"   Return to stage before transition: '{return_to_stage}'")
     
     # Preserve ALL critical state before making changes
     critical_state_backup = {
@@ -318,48 +310,29 @@ def transition_to_stage(
         'methodology_steps': bool(state.get('methodology_steps')),
         'data_collection_plan': bool(state.get('data_collection_plan'))
     }
-    logger.info(f"   State completeness: {state_completeness}")
     
     # Validate the transition
     try:
         validate_stage_transition(state, target_stage, force)
-        logger.info(f"🔍 DEBUG 8a - TRANSITION VALIDATION: PASSED")
     except Exception as e:
-        logger.error(f"🔍 DEBUG 8a - TRANSITION VALIDATION: FAILED - {str(e)}")
         if not force:
             raise
-        logger.info(f"🔍 DEBUG 8a - FORCING TRANSITION despite validation failure")
     
     # Update stage (LangGraph manages completion tracking via checkpoints)
     old_stage = state.get("current_stage")
     state["current_stage"] = target_stage
     
-    # 🔍 CRITICAL: Preserve ALL critical state that might be lost
-    logger.info(f"🔍 DEBUG 8b - PRESERVING CRITICAL STATE:")
     
     for key, value in critical_state_backup.items():
         if value is not None:  # Only restore non-None values
             if key not in state or state[key] != value:
                 state[key] = value
-                logger.info(f"   Preserved/restored {key}: '{value}' (type: {type(value).__name__})")
-            else:
-                logger.info(f"   {key} already preserved: '{value}'")
-        else:
-            logger.info(f"   {key} was None, not preserving")
     
     # Special handling for return_to_stage - this is critical for edit flows
     if return_to_stage:
         state["return_to_stage"] = return_to_stage
-        logger.info(f"🔍 DEBUG 8b - EXPLICITLY PRESERVED RETURN STAGE: '{return_to_stage}'")
     
-    logger.info(f"🔍 DEBUG 8c - TRANSITION COMPLETE:")
-    logger.info(f"   Old stage: '{old_stage}'")
-    logger.info(f"   New stage: '{state.get('current_stage')}'")
-    logger.info(f"   Return stage preserved: {state.get('return_to_stage', 'not set')}")
-    logger.info(f"   Transition successful: {state.get('current_stage') == target_stage}")
-    logger.info(f"   Critical state intact: {all(state.get(k) == v for k, v in critical_state_backup.items() if v is not None)}")
     
-    logger.info(f"Transitioned from {current_stage} to {target_stage}")
     
     return state
 
