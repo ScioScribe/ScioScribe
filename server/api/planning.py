@@ -190,7 +190,7 @@ async def _is_graph_interrupted(session_id: str) -> bool:
 
 
 async def _get_current_stage_from_graph(session_id: str) -> Optional[str]:
-    """Get the current stage from the graph state."""
+    """Get the current stage from the graph state - this should return the stage that was just completed and needs approval."""
     try:
         graph_components = _get_or_create_graph_components(session_id)
         graph = graph_components["graph"]
@@ -200,19 +200,23 @@ async def _get_current_stage_from_graph(session_id: str) -> Optional[str]:
         
         if state_snapshot and state_snapshot.next:
             next_nodes = [str(node) for node in state_snapshot.next]
-            # Map agent nodes to stage names
-            node_to_stage = {
-                "objective_agent": "objective_setting",
-                "variable_agent": "variable_identification",
-                "design_agent": "experimental_design",
-                "methodology_agent": "methodology_protocol",
-                "data_agent": "data_planning",
-                "review_agent": "final_review"
+            # Map next agent nodes to the stage that was just completed
+            # When variable_agent is next, it means objective_setting was just completed
+            next_to_completed_stage = {
+                "variable_agent": "objective_setting",
+                "design_agent": "variable_identification", 
+                "methodology_agent": "experimental_design",
+                "data_agent": "methodology_protocol",
+                "review_agent": "data_planning",
+                "__end__": "final_review"
             }
             
             for node in next_nodes:
-                if node in node_to_stage:
-                    return node_to_stage[node]
+                if node in next_to_completed_stage:
+                    return next_to_completed_stage[node]
+                # Handle END state
+                if node == "__end__":
+                    return "final_review"
         
         return None
     except Exception as e:
@@ -511,9 +515,19 @@ async def _send_planning_update(websocket: WebSocket, session_id: str, state: Ex
 async def _send_approval_request(websocket: WebSocket, session_id: str, approval_data: Dict[str, Any]):
     """Send approval request to frontend."""
     try:
+        # Create display message for completed stage
+        current_stage = approval_data.get("stage", "")
+        stage_display = current_stage.replace("_", " ").title()
+        
+        # Add display message to show what stage was completed
+        enhanced_approval_data = {
+            **approval_data,
+            "display_message": f"Review completed {stage_display} work"
+        }
+        
         await _send_websocket_message(websocket, {
             "type": "approval_request",
-            "data": approval_data,
+            "data": enhanced_approval_data,
             "session_id": session_id
         })
     except Exception as e:
