@@ -539,6 +539,733 @@ class DataQualityAgent:
                 "analysis_confidence": 0.0
             }
     
+    async def detect_row_operations(self, user_message: str, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Detect if the user wants to add or delete rows from the dataset.
+        
+        Args:
+            user_message: User's natural language message
+            df: Current DataFrame
+            
+        Returns:
+            Dictionary containing row operation detection results
+        """
+        try:
+            logger.info(f"Detecting row operations in message: {user_message}")
+            
+            # Generate context about the current data
+            data_context = {
+                'shape': df.shape,
+                'columns': list(df.columns),
+                'sample_data': df.head(3).to_dict('records') if not df.empty else []
+            }
+            
+            prompt = f"""
+            Analyze this user message to detect if they want to add or delete rows from their dataset.
+            
+            User Message: "{user_message}"
+            
+            Current Dataset Context:
+            - Shape: {data_context['shape']} (rows, columns)
+            - Columns: {data_context['columns']}
+            - Sample Data: {json.dumps(data_context['sample_data'], indent=2)}
+            
+            Look for intentions to:
+            1. Add new rows (e.g., "add a row", "insert a new entry", "create a new record")
+            2. Delete rows (e.g., "remove rows", "delete entries", "drop records")
+            
+            Respond with JSON:
+            {{
+                "operation_detected": true/false,
+                "operation_type": "add_row|delete_row|none",
+                "confidence": 0.0-1.0,
+                "intent_description": "Brief description of what the user wants to do"
+            }}
+            """
+            
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a data manipulation expert. Analyze user messages to detect row operations. Respond only with valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=500
+            )
+            
+            content = response.choices[0].message.content.strip()
+            if content.startswith('```json'):
+                content = content[7:-3]
+            elif content.startswith('```'):
+                content = content[3:-3]
+            
+            detection_result = json.loads(content)
+            logger.info(f"Row operation detection result: {detection_result}")
+            
+            return detection_result
+            
+        except Exception as e:
+            logger.error(f"Error detecting row operations: {str(e)}")
+            return {
+                "operation_detected": False,
+                "operation_type": "none",
+                "confidence": 0.0,
+                "intent_description": "Error analyzing message"
+            }
+    
+    async def parse_row_operation_details(self, user_message: str, operation_type: str, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Parse specific details about the row operation the user wants to perform.
+        
+        Args:
+            user_message: User's natural language message
+            operation_type: Type of operation (add_row or delete_row)
+            df: Current DataFrame
+            
+        Returns:
+            Dictionary containing parsed operation details
+        """
+        try:
+            logger.info(f"Parsing details for {operation_type} operation")
+            
+            data_context = {
+                'columns': list(df.columns),
+                'dtypes': df.dtypes.astype(str).to_dict(),
+                'sample_data': df.head(3).to_dict('records') if not df.empty else []
+            }
+            
+            if operation_type == "add_row":
+                prompt = f"""
+                Parse the details for adding a new row to the dataset.
+                
+                User Message: "{user_message}"
+                
+                Dataset Context:
+                - Columns: {data_context['columns']}
+                - Data Types: {data_context['dtypes']}
+                - Sample Data: {json.dumps(data_context['sample_data'], indent=2)}
+                
+                Extract:
+                1. Specific column values to set
+                2. Any columns that should be left empty/null
+                3. Any patterns or references to existing data
+                
+                Respond with JSON:
+                {{
+                    "success": true/false,
+                    "row_data": {{"column_name": "value", ...}},
+                    "missing_columns": ["column1", "column2"],
+                    "operation_description": "Description of the row to be added",
+                    "confidence": 0.0-1.0
+                }}
+                """
+                
+            else:  # delete_row
+                prompt = f"""
+                Parse the details for deleting rows from the dataset.
+                
+                User Message: "{user_message}"
+                
+                Dataset Context:
+                - Columns: {data_context['columns']}
+                - Data Types: {data_context['dtypes']}
+                - Sample Data: {json.dumps(data_context['sample_data'], indent=2)}
+                
+                Extract:
+                1. Specific conditions for row deletion
+                2. Row indices if specified
+                3. Column-value criteria
+                
+                Respond with JSON:
+                {{
+                    "success": true/false,
+                    "deletion_criteria": {{"column": "value", ...}},
+                    "row_indices": [1, 2, 3] or null,
+                    "operation_description": "Description of rows to be deleted",
+                    "confidence": 0.0-1.0
+                }}
+                """
+            
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a data manipulation expert. Parse row operation details accurately. Respond only with valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=800
+            )
+            
+            content = response.choices[0].message.content.strip()
+            if content.startswith('```json'):
+                content = content[7:-3]
+            elif content.startswith('```'):
+                content = content[3:-3]
+            
+            parsed_details = json.loads(content)
+            logger.info(f"Parsed row operation details: {parsed_details}")
+            
+            return parsed_details
+            
+        except Exception as e:
+            logger.error(f"Error parsing row operation details: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "operation_description": "Failed to parse operation details",
+                "confidence": 0.0
+            }
+    
+    async def validate_row_operation(self, operation_type: str, operation_details: Dict[str, Any], df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Validate that the requested row operation is valid for the current dataset.
+        
+        Args:
+            operation_type: Type of operation (add_row or delete_row)
+            operation_details: Parsed operation details
+            df: Current DataFrame
+            
+        Returns:
+            Dictionary containing validation results
+        """
+        try:
+            logger.info(f"Validating {operation_type} operation")
+            
+            if operation_type == "add_row":
+                return self._validate_add_row(operation_details, df)
+            else:  # delete_row
+                return self._validate_delete_row(operation_details, df)
+                
+        except Exception as e:
+            logger.error(f"Error validating row operation: {str(e)}")
+            return {
+                "valid": False,
+                "error": str(e),
+                "warnings": [],
+                "preview": None
+            }
+    
+    def _validate_add_row(self, operation_details: Dict[str, Any], df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Validate add row operation with intelligent recommendations.
+        
+        Args:
+            operation_details: Parsed operation details
+            df: Current DataFrame
+            
+        Returns:
+            Validation results with helpful recommendations
+        """
+        warnings = []
+        recommendations = []
+        
+        if not operation_details.get("success", False):
+            return {
+                "valid": False,
+                "error": "Failed to parse row data",
+                "warnings": [],
+                "recommendations": ["Please specify the data more clearly, for example: 'Add a row with Name=John, Age=30'"],
+                "preview": None
+            }
+        
+        row_data = operation_details.get("row_data", {})
+        
+        # Enhanced column validation with intelligent suggestions
+        unknown_columns = set(row_data.keys()) - set(df.columns)
+        corrected_row_data = {}
+        
+        if unknown_columns:
+            for unknown_col in unknown_columns:
+                # Try to find similar column names
+                suggestion = self._suggest_column_correction(unknown_col, df.columns)
+                if suggestion:
+                    corrected_row_data[suggestion] = row_data[unknown_col]
+                    recommendations.append(f"Did you mean '{suggestion}' instead of '{unknown_col}'? I'll use '{suggestion}'.")
+                else:
+                    available_cols = "', '".join(df.columns)
+                    recommendations.append(f"Column '{unknown_col}' doesn't exist. Available columns: '{available_cols}'")
+            
+            # Use corrected columns
+            for known_col, value in row_data.items():
+                if known_col not in unknown_columns:
+                    corrected_row_data[known_col] = value
+                    
+            row_data = corrected_row_data
+        
+        # Check for missing columns and provide helpful guidance
+        missing_columns = set(df.columns) - set(row_data.keys())
+        if missing_columns:
+            # Provide intelligent suggestions for missing values
+            missing_suggestions = self._suggest_missing_value_defaults(missing_columns, df)
+            if missing_suggestions:
+                recommendations.extend(missing_suggestions)
+            else:
+                warnings.append(f"Missing values for columns: {list(missing_columns)} (will be set to empty)")
+        
+        # Data type validation and suggestions
+        type_warnings = self._validate_data_types(row_data, df)
+        if type_warnings:
+            recommendations.extend(type_warnings)
+        
+        # Create preview of new row
+        new_row_preview = {}
+        for col in df.columns:
+            if col in row_data:
+                new_row_preview[col] = row_data[col]
+            else:
+                new_row_preview[col] = None
+        
+        return {
+            "valid": True,
+            "warnings": warnings,
+            "recommendations": recommendations,
+            "preview": new_row_preview,
+            "row_data": row_data
+        }
+    
+    def _validate_delete_row(self, operation_details: Dict[str, Any], df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Validate delete row operation with intelligent recommendations.
+        
+        Args:
+            operation_details: Parsed operation details
+            df: Current DataFrame
+            
+        Returns:
+            Validation results with helpful recommendations
+        """
+        warnings = []
+        recommendations = []
+        
+        if not operation_details.get("success", False):
+            return {
+                "valid": False,
+                "error": "Failed to parse deletion criteria",
+                "warnings": [],
+                "recommendations": ["Please specify what to delete more clearly, for example: 'Delete the row where Name is John Doe'"],
+                "preview": None
+            }
+        
+        deletion_criteria = operation_details.get("deletion_criteria", {})
+        row_indices = operation_details.get("row_indices")
+        
+        # Validate row indices if provided
+        if row_indices:
+            invalid_indices = [i for i in row_indices if i < 0 or i >= len(df)]
+            if invalid_indices:
+                recommendations.append(f"Row indices {invalid_indices} are invalid. Valid range: 0-{len(df)-1}")
+                recommendations.append(f"Current data has {len(df)} rows. You can delete rows 0 through {len(df)-1}")
+                return {
+                    "valid": False,
+                    "error": f"Invalid row indices: {invalid_indices}",
+                    "warnings": [],
+                    "recommendations": recommendations,
+                    "preview": None
+                }
+            
+            rows_to_delete = df.iloc[row_indices]
+            
+        elif deletion_criteria:
+            # Enhanced criteria validation with intelligent suggestions
+            corrected_criteria = {}
+            rows_to_delete = None
+            
+            for col, value in deletion_criteria.items():
+                if col not in df.columns:
+                    # Try to find similar column names
+                    suggestion = self._suggest_column_correction(col, df.columns)
+                    if suggestion:
+                        corrected_criteria[suggestion] = value
+                        recommendations.append(f"Did you mean '{suggestion}' instead of '{col}'? I'll search in '{suggestion}'.")
+                    else:
+                        available_cols = "', '".join(df.columns)
+                        recommendations.append(f"Column '{col}' doesn't exist. Available columns: '{available_cols}'")
+                        return {
+                            "valid": False,
+                            "error": f"Column '{col}' not found",
+                            "warnings": [],
+                            "recommendations": recommendations,
+                            "preview": None
+                        }
+                else:
+                    corrected_criteria[col] = value
+            
+            # Find rows matching corrected criteria
+            mask = pd.Series([True] * len(df))
+            for col, value in corrected_criteria.items():
+                # Case-insensitive matching for string values
+                if df[col].dtype == 'object':
+                    # Try exact match first
+                    exact_match = df[col] == value
+                    if not exact_match.any():
+                        # Try case-insensitive match
+                        case_insensitive_match = df[col].astype(str).str.lower() == str(value).lower()
+                        if case_insensitive_match.any():
+                            mask = mask & case_insensitive_match
+                            recommendations.append(f"Found case-insensitive match for '{value}' in column '{col}'")
+                        else:
+                            # Suggest similar values ONLY for categorical/text data
+                            similar_values = self._suggest_similar_values(value, df[col].dropna().unique())
+                            if similar_values:
+                                recommendations.append(f"No exact match for '{value}' in '{col}'. Did you mean: {', '.join(similar_values[:3])}?")
+                            else:
+                                available_values = df[col].dropna().unique()[:5]
+                                recommendations.append(f"No match for '{value}' in '{col}'. Available values include: {', '.join(map(str, available_values))}{'...' if len(df[col].unique()) > 5 else ''}")
+                            
+                            return {
+                                "valid": False,
+                                "error": f"No matching rows found for {col}='{value}'",
+                                "warnings": [],
+                                "recommendations": recommendations,
+                                "preview": None
+                            }
+                    else:
+                        mask = mask & exact_match
+                else:
+                    # Enhanced handling for NUMERICAL columns
+                    try:
+                        numeric_value = float(value)
+                        numeric_match = df[col] == numeric_value
+                        if not numeric_match.any():
+                            # For numerical data, provide range/statistical information instead of specific values
+                            col_min = df[col].min()
+                            col_max = df[col].max()
+                            col_mean = df[col].mean()
+                            
+                            recommendations.append(f"No rows found with {col}={value}")
+                            recommendations.append(f"📊 {col} range in your data: {col_min} to {col_max} (average: {col_mean:.1f})")
+                            
+                            # Check if the value is within a reasonable range
+                            if col_min <= numeric_value <= col_max * 2:  # Allow up to 2x max as reasonable
+                                recommendations.append(f"✅ {col}={value} is a reasonable value and can be used for adding new rows")
+                            else:
+                                recommendations.append(f"⚠️  {col}={value} is outside the typical range of your data")
+                            
+                            return {
+                                "valid": False,
+                                "error": f"No matching rows found for {col}={value}",
+                                "warnings": [],
+                                "recommendations": recommendations,
+                                "preview": None
+                            }
+                        mask = mask & numeric_match
+                    except (ValueError, TypeError):
+                        recommendations.append(f"'{value}' is not a valid number for column '{col}'")
+                        recommendations.append(f"📊 {col} should contain numerical values like: {', '.join(map(str, df[col].dropna().unique()[:3]))}")
+                        return {
+                            "valid": False,
+                            "error": f"Invalid numerical value for {col}='{value}'",
+                            "warnings": [],
+                            "recommendations": recommendations,
+                            "preview": None
+                        }
+            
+            rows_to_delete = df[mask]
+            
+            if rows_to_delete.empty:
+                recommendations.append("No rows match your deletion criteria.")
+                recommendations.append("Try checking the exact values in your data or using different criteria.")
+        
+        else:
+            return {
+                "valid": False,
+                "error": "No deletion criteria or row indices provided",
+                "warnings": [],
+                "recommendations": ["Please specify what to delete, for example: 'Delete the row where Name is John' or 'Delete row at index 0'"],
+                "preview": None
+            }
+        
+        # Create preview
+        preview = {
+            "rows_to_delete": rows_to_delete.head(5).to_dict('records') if not rows_to_delete.empty else [],
+            "total_rows_to_delete": len(rows_to_delete),
+            "remaining_rows": len(df) - len(rows_to_delete)
+        }
+        
+        # Add helpful information about what will be deleted
+        if len(rows_to_delete) > 0:
+            if len(rows_to_delete) == 1:
+                recommendations.append(f"This will delete 1 row from your data.")
+            else:
+                recommendations.append(f"This will delete {len(rows_to_delete)} rows from your data.")
+        
+        return {
+            "valid": True,
+            "warnings": warnings,
+            "recommendations": recommendations,
+            "preview": preview,
+            "deletion_criteria": corrected_criteria if 'corrected_criteria' in locals() else deletion_criteria,
+            "row_indices": row_indices
+        }
+    
+    def _suggest_column_correction(self, wrong_column: str, available_columns: List[str]) -> Optional[str]:
+        """
+        Suggest a correction for a mistyped column name using fuzzy matching.
+        
+        Args:
+            wrong_column: The incorrect column name
+            available_columns: List of available column names
+            
+        Returns:
+            Best matching column name or None
+        """
+        from difflib import SequenceMatcher
+        
+        wrong_column_lower = wrong_column.lower()
+        best_match = None
+        best_ratio = 0.0
+        
+        for col in available_columns:
+            # Calculate similarity ratio
+            ratio = SequenceMatcher(None, wrong_column_lower, col.lower()).ratio()
+            
+            # Also check if wrong_column is contained in col or vice versa
+            if wrong_column_lower in col.lower() or col.lower() in wrong_column_lower:
+                ratio = max(ratio, 0.8)
+            
+            if ratio > best_ratio and ratio > 0.6:  # Threshold for similarity
+                best_ratio = ratio
+                best_match = col
+        
+        return best_match
+    
+    def _suggest_similar_values(self, wrong_value: str, available_values: List[Any]) -> List[str]:
+        """
+        Suggest similar values for a mistyped value.
+        
+        Args:
+            wrong_value: The incorrect value
+            available_values: List of available values
+            
+        Returns:
+            List of similar values
+        """
+        from difflib import SequenceMatcher
+        
+        wrong_value_str = str(wrong_value).lower()
+        suggestions = []
+        
+        for value in available_values:
+            value_str = str(value).lower()
+            ratio = SequenceMatcher(None, wrong_value_str, value_str).ratio()
+            
+            # Also check partial matches
+            if wrong_value_str in value_str or value_str in wrong_value_str:
+                ratio = max(ratio, 0.7)
+            
+            if ratio > 0.6:  # Threshold for similarity
+                suggestions.append((str(value), ratio))
+        
+        # Sort by similarity and return top matches
+        suggestions.sort(key=lambda x: x[1], reverse=True)
+        return [s[0] for s in suggestions[:3]]
+    
+    def _suggest_missing_value_defaults(self, missing_columns: set, df: pd.DataFrame) -> List[str]:
+        """
+        Suggest default values for missing columns with data-type aware recommendations.
+        
+        Args:
+            missing_columns: Set of missing column names
+            df: Current DataFrame
+            
+        Returns:
+            List of suggestions for missing values
+        """
+        suggestions = []
+        
+        for col in missing_columns:
+            col_data = df[col].dropna()
+            
+            if len(col_data) == 0:
+                suggestions.append(f"Column '{col}' has no existing data to suggest a default value.")
+                continue
+            
+            # Enhanced handling for numeric columns
+            if pd.api.types.is_numeric_dtype(col_data):
+                col_min = col_data.min()
+                col_max = col_data.max()
+                mean_val = col_data.mean()
+                median_val = col_data.median()
+                
+                suggestions.append(f"📊 '{col}' statistics: Range {col_min}-{col_max}, Average {mean_val:.1f}, Median {median_val:.1f}")
+                suggestions.append(f"💡 You can use any reasonable number for '{col}' (suggestion: use a value between {col_min} and {col_max})")
+                
+                # Show a few common values as examples, but emphasize flexibility
+                common_values = col_data.mode()
+                if len(common_values) > 0:
+                    suggestions.append(f"📈 Most common {col} values: {', '.join(map(str, common_values[:3]))}")
+            
+            # For categorical/text columns, show actual options
+            else:
+                common_values = col_data.value_counts().head(3)
+                if len(common_values) > 0:
+                    value_list = ', '.join([f"'{val}'" for val in common_values.index])
+                    suggestions.append(f"🏷️  '{col}' available options: {value_list}")
+                    
+                    total_unique = col_data.nunique()
+                    if total_unique > 3:
+                        suggestions.append(f"📝 '{col}' has {total_unique} different values total")
+        
+        return suggestions
+    
+    def _validate_data_types(self, row_data: Dict[str, Any], df: pd.DataFrame) -> List[str]:
+        """
+        Validate data types and suggest corrections.
+        
+        Args:
+            row_data: Row data to validate
+            df: Current DataFrame
+            
+        Returns:
+            List of type-related recommendations
+        """
+        recommendations = []
+        
+        for col, value in row_data.items():
+            if col not in df.columns:
+                continue
+                
+            expected_dtype = df[col].dtype
+            
+            # Check numeric columns
+            if pd.api.types.is_numeric_dtype(expected_dtype):
+                try:
+                    float(value)  # Try to convert to number
+                except (ValueError, TypeError):
+                    # Suggest numeric conversion
+                    recommendations.append(f"'{col}' should be a number, but got '{value}'. Please provide a numeric value.")
+                    
+                    # Try to suggest a numeric interpretation
+                    value_str = str(value).lower()
+                    number_words = {
+                        'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+                        'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
+                        'twenty': 20, 'thirty': 30, 'forty': 40, 'fifty': 50
+                    }
+                    
+                    for word, num in number_words.items():
+                        if word in value_str:
+                            recommendations.append(f"Did you mean {num} for '{col}'?")
+                            break
+            
+            # Check date columns (if column name suggests it's a date)
+            elif 'date' in col.lower() or 'time' in col.lower():
+                # Basic date format validation could be added here
+                pass
+        
+        return recommendations
+    
+    async def execute_row_operation(self, operation_type: str, operation_details: Dict[str, Any], df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Execute the validated row operation on the DataFrame.
+        
+        Args:
+            operation_type: Type of operation (add_row or delete_row)
+            operation_details: Validated operation details
+            df: Current DataFrame
+            
+        Returns:
+            Dictionary containing execution results and modified DataFrame
+        """
+        try:
+            logger.info(f"Executing {operation_type} operation")
+            
+            if operation_type == "add_row":
+                return self._execute_add_row(operation_details, df)
+            else:  # delete_row
+                return self._execute_delete_row(operation_details, df)
+                
+        except Exception as e:
+            logger.error(f"Error executing row operation: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "modified_df": df,
+                "changes_made": []
+            }
+    
+    def _execute_add_row(self, operation_details: Dict[str, Any], df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Execute add row operation.
+        
+        Args:
+            operation_details: Validated operation details
+            df: Current DataFrame
+            
+        Returns:
+            Execution results
+        """
+        row_data = operation_details.get("row_data", {})
+        
+        # Create new row with all columns
+        new_row = {}
+        for col in df.columns:
+            if col in row_data:
+                new_row[col] = row_data[col]
+            else:
+                new_row[col] = None
+        
+        # Add the new row
+        modified_df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        
+        changes_made = [f"Added 1 new row with data: {row_data}"]
+        
+        return {
+            "success": True,
+            "modified_df": modified_df,
+            "changes_made": changes_made,
+            "rows_added": 1,
+            "new_shape": modified_df.shape
+        }
+    
+    def _execute_delete_row(self, operation_details: Dict[str, Any], df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Execute delete row operation.
+        
+        Args:
+            operation_details: Validated operation details
+            df: Current DataFrame
+            
+        Returns:
+            Execution results
+        """
+        deletion_criteria = operation_details.get("deletion_criteria", {})
+        row_indices = operation_details.get("row_indices")
+        
+        if row_indices:
+            # Delete by indices
+            modified_df = df.drop(df.index[row_indices]).reset_index(drop=True)
+            changes_made = [f"Deleted {len(row_indices)} rows by index: {row_indices}"]
+            rows_deleted = len(row_indices)
+            
+        elif deletion_criteria:
+            # Delete by criteria
+            mask = pd.Series([True] * len(df))
+            for col, value in deletion_criteria.items():
+                if col in df.columns:
+                    mask = mask & (df[col] == value)
+            
+            rows_to_delete = df[mask]
+            modified_df = df[~mask].reset_index(drop=True)
+            changes_made = [f"Deleted {len(rows_to_delete)} rows matching criteria: {deletion_criteria}"]
+            rows_deleted = len(rows_to_delete)
+            
+        else:
+            return {
+                "success": False,
+                "error": "No valid deletion criteria provided",
+                "modified_df": df,
+                "changes_made": []
+            }
+        
+        return {
+            "success": True,
+            "modified_df": modified_df,
+            "changes_made": changes_made,
+            "rows_deleted": rows_deleted,
+            "new_shape": modified_df.shape
+        }
+
     def _generate_semantic_data_summary(self, df: pd.DataFrame) -> Dict[str, Any]:
         """
         Generate an enhanced summary focused on semantic understanding.

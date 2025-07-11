@@ -34,6 +34,8 @@ class TransformationAction(str, Enum):
     FILL_MISSING = "fill_missing"
     REMOVE_OUTLIERS = "remove_outliers"
     STANDARDIZE_FORMAT = "standardize_format"
+    ADD_ROW = "add_row"
+    DELETE_ROW = "delete_row"
 
 
 class FileMetadata(BaseModel):

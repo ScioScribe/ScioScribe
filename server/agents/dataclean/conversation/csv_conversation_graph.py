@@ -81,6 +81,7 @@ class CSVConversationGraph:
         graph.add_node("request_approval", self._request_approval)
         graph.add_node("apply_changes", self._apply_changes)
         graph.add_node("compose_response", self._compose_response)
+        graph.add_node("handle_row_operations", self._handle_row_operations)
         
         # Define the flow
         graph.set_entry_point("parse_message")
@@ -95,6 +96,7 @@ class CSVConversationGraph:
                 "greeting": "analyze_csv",
                 "transform": "generate_suggestions",
                 "approval": "apply_changes",
+                "row_operations": "handle_row_operations",
                 "response": "compose_response"
             }
         )
@@ -112,6 +114,7 @@ class CSVConversationGraph:
         
         graph.add_edge("request_approval", "compose_response")
         graph.add_edge("apply_changes", "compose_response")
+        graph.add_edge("handle_row_operations", "compose_response")
         graph.add_edge("compose_response", END)
         
         return graph
@@ -312,6 +315,10 @@ class CSVConversationGraph:
                 state["intent"] = "analyze"
             elif any(word in message for word in ["describe", "overview", "summary", "what's in"]):
                 state["intent"] = "describe"
+            elif any(phrase in message for phrase in ["add a new row", "add new row", "add a row", "add row", "insert row", "create row", "add entry", "add an entry"]):
+                state["intent"] = "add_row"
+            elif any(phrase in message for phrase in ["delete all rows", "delete the row", "delete row", "delete rows where", "remove all rows", "remove the row", "remove row", "remove rows where", "drop row", "drop rows", "delete entry", "remove entry", "delete by index", "delete by position"]):
+                state["intent"] = "delete_row"
             else:
                 state["intent"] = "analyze"  # Default to analysis
             
@@ -479,6 +486,10 @@ class CSVConversationGraph:
                     state["response"] = await self._generate_analysis_response(state)
                 elif state.get("intent") == "describe":
                     state["response"] = await self._generate_description_response(state)
+                elif state.get("intent") == "add_row":
+                    state["response"] = "I've added a new row to your data."
+                elif state.get("intent") == "delete_row":
+                    state["response"] = "I've deleted a row from your data."
                 else:
                     state["response"] = "I'm here to help with your data cleaning needs."
             
@@ -490,6 +501,140 @@ class CSVConversationGraph:
             state["response"] = f"I encountered an error: {str(e)}"
             return state
     
+    async def _handle_row_operations(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle row addition and deletion operations."""
+        try:
+            user_message = state["user_message"]
+            session_id = state["session_id"]
+            
+            # Get current DataFrame
+            cleaned_df = await self.data_store.get_dataframe(session_id)
+            if cleaned_df is not None:
+                current_df = cleaned_df
+            else:
+                current_df = self.csv_processor._parse_csv_string(state["current_csv"])
+                
+            if current_df is None:
+                state["response"] = "I couldn't parse your CSV data. Please ensure it's properly formatted."
+                return state
+            
+            # Use quality agent to detect and handle row operations
+            if not self.quality_agent:
+                state["response"] = "Row operations are not available - AI agent not configured."
+                return state
+            
+            # Step 1: Detect if this is a row operation
+            detection_result = await self.quality_agent.detect_row_operations(user_message, current_df)
+            
+            if not detection_result.get("operation_detected", False):
+                state["response"] = "I couldn't detect a row operation in your message. Please be more specific about what you'd like to add or delete."
+                return state
+            
+            operation_type = detection_result.get("operation_type", "none")
+            
+            if operation_type == "none":
+                state["response"] = "I couldn't understand the specific row operation you want to perform."
+                return state
+            
+            # Step 2: Parse operation details
+            operation_details = await self.quality_agent.parse_row_operation_details(
+                user_message, operation_type, current_df
+            )
+            
+            if not operation_details.get("success", False):
+                state["response"] = f"I couldn't parse the {operation_type} operation details. Please provide more specific information."
+                return state
+            
+            # Step 3: Validate the operation
+            validation_result = await self.quality_agent.validate_row_operation(
+                operation_type, operation_details, current_df
+            )
+            
+            if not validation_result.get("valid", False):
+                error_msg = validation_result.get("error", "Unknown validation error")
+                recommendations = validation_result.get("recommendations", [])
+                
+                # Build helpful error response with recommendations
+                response_msg = f"I couldn't {operation_type.replace('_', ' ')} because: {error_msg}"
+                
+                if recommendations:
+                    response_msg += "\n\n💡 Here are some suggestions:"
+                    for i, rec in enumerate(recommendations[:3], 1):  # Show top 3 recommendations
+                        response_msg += f"\n{i}. {rec}"
+                
+                state["response"] = response_msg
+                return state
+            
+            # Step 4: Execute the operation
+            execution_result = await self.quality_agent.execute_row_operation(
+                operation_type, validation_result, current_df
+            )
+            
+            if not execution_result.get("success", False):
+                error_msg = execution_result.get("error", "Unknown execution error")
+                state["response"] = f"Failed to execute {operation_type}: {error_msg}"
+                return state
+            
+            # Step 5: Update state with modified data
+            modified_df = execution_result.get("modified_df")
+            if modified_df is not None:
+                # Convert back to CSV string
+                modified_csv = self.csv_processor._dataframe_to_csv_string(modified_df)
+                state["current_csv"] = modified_csv
+                
+                # Save to data store
+                await self.data_store.save_dataframe(session_id, modified_df)
+                
+                # Save to database for persistence
+                try:
+                    await self._save_cleaned_data_to_database(session_id, modified_csv)
+                    logger.info(f"Saved row operation result to database for session {session_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to save row operation result to database: {str(e)}")
+                
+                # Update transformation history
+                changes_made = execution_result.get("changes_made", [])
+                applied_transformations = state.get("applied_transformations", [])
+                applied_transformations.extend(changes_made)
+                state["applied_transformations"] = applied_transformations
+                
+                # Generate success response
+                if operation_type == "add_row":
+                    rows_added = execution_result.get("rows_added", 0)
+                    new_shape = execution_result.get("new_shape", (0, 0))
+                    state["response"] = f"✅ Successfully added {rows_added} row. Your dataset now has {new_shape[0]} rows and {new_shape[1]} columns."
+                elif operation_type == "delete_row":
+                    rows_deleted = execution_result.get("rows_deleted", 0)
+                    new_shape = execution_result.get("new_shape", (0, 0))
+                    state["response"] = f"✅ Successfully deleted {rows_deleted} row(s). Your dataset now has {new_shape[0]} rows and {new_shape[1]} columns."
+                
+                # Include change details
+                if changes_made:
+                    state["response"] += f"\n\n📝 Changes made: {'; '.join(changes_made)}"
+                
+                # Include helpful recommendations from validation
+                recommendations = validation_result.get("recommendations", [])
+                if recommendations:
+                    state["response"] += f"\n\n💡 Notes:"
+                    for rec in recommendations[:3]:  # Show top 3 recommendations
+                        state["response"] += f"\n• {rec}"
+                
+                # Include warnings if any
+                warnings = validation_result.get("warnings", [])
+                if warnings:
+                    state["response"] += f"\n\n⚠️ Warnings: {'; '.join(warnings)}"
+                
+            else:
+                state["response"] = f"The {operation_type} operation completed but no data was modified."
+            
+            logger.info(f"Handled {operation_type} operation for session {session_id}")
+            return state
+            
+        except Exception as e:
+            logger.error(f"Error handling row operations: {str(e)}")
+            state["response"] = f"I encountered an error while handling the row operation: {str(e)}"
+            return state
+
     # Routing Functions
     
     def _route_after_intent(self, state: Dict[str, Any]) -> str:
@@ -505,6 +650,8 @@ class CSVConversationGraph:
             return "response"  # Greetings should go directly to response
         elif intent == "rejection":
             return "response"
+        elif intent in ["add_row", "delete_row"]:
+            return "row_operations"
         else:
             return "response"
     
