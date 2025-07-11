@@ -9,7 +9,6 @@ import { websocketManager } from "@/utils/streaming-connection-manager"
 import type { 
   Message, 
   MessageHandlerContext, 
-  ApprovalResponse, 
   WebSocketMessage 
 } from "@/types/chat-types"
 
@@ -46,7 +45,7 @@ function safeUpdateSession(
  * @param context Context containing state and handlers
  */
 export async function handlePlanningMessage(message: string, context: MessageHandlerContext): Promise<void> {
-  const { setMessages, getPlanningSession, setPlanningSession } = context
+  const { setMessages, getPlanningSession } = context
   
   console.log("🎯 Handling planning message with WebSocket:", message)
   
@@ -72,41 +71,14 @@ export async function handlePlanningMessage(message: string, context: MessageHan
       throw new Error("Connection lost. Please wait for reconnection.")
     }
     
-    // Check if we're waiting for approval and parse user response
+    // When waiting for approval, send all messages as regular user messages
+    // Let the backend's sophisticated LLM-based intent detection handle everything
     if (planningSession.is_waiting_for_approval && planningSession.pending_approval) {
-      console.log("🔍 Parsing approval response for message:", message)
-      const approvalResponse = parseApprovalResponse(message)
-      console.log("📋 Approval response result:", approvalResponse)
+      console.log("🔍 Sending message during approval state - let backend handle intent:", message)
       
-      if (approvalResponse.isApprovalResponse) {
-        console.log("✅ Processing approval response:", approvalResponse.approved ? "APPROVED" : "REJECTED")
-        
-        // Add approval response indicator
-        const approvalResponseMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: approvalResponse.approved ? "✅ Moving forward..." : "❌ Let's revise this section.",
-          sender: "ai",
-          timestamp: new Date(),
-          mode: "plan",
-          response_type: "confirmation"
-        }
-        
-        console.log("📝 Adding approval confirmation message")
-        setMessages((prev) => [...prev, approvalResponseMessage])
-        
-        // Send approval response via WebSocket
-        await sendApprovalResponse(planningSession.session_id, approvalResponse)
-        
-        // Clear approval state after sending response (preserve session continuity)
-        console.log("🔄 Clearing approval state after sending WebSocket response")
-        safeUpdateSession(setPlanningSession, {
-          is_waiting_for_approval: false,
-          pending_approval: undefined,
-          last_activity: new Date()
-        }, "approval_response_processed")
-        
-        return // Exit early for approval responses
-      }
+      // Don't process as approval here - send as regular user message
+      // The backend will determine if it's approval, edit request, or unclear
+      // This bypasses frontend logic and lets backend LLM handle intent detection
     }
     
     console.log("📤 Sending user message via WebSocket to session:", planningSession.session_id)
@@ -121,7 +93,7 @@ export async function handlePlanningMessage(message: string, context: MessageHan
     
     const errorMessage: Message = {
       id: (Date.now() + 1).toString(),
-      content: `❌ ${error instanceof Error ? error.message : 'Something went wrong. Please try again.'}`,
+      content: error instanceof Error ? error.message : JSON.stringify(error),
       sender: "ai",
       timestamp: new Date(),
       mode: "plan",
@@ -153,28 +125,6 @@ async function sendUserMessage(sessionId: string, message: string): Promise<void
   }
 }
 
-/**
- * Sends an approval response via WebSocket
- * @param sessionId Session ID to send response to
- * @param approvalResponse Approval response data
- */
-async function sendApprovalResponse(sessionId: string, approvalResponse: ApprovalResponse): Promise<void> {
-  const approvalMessage: WebSocketMessage = {
-    type: "approval_response",
-    data: {
-      approved: approvalResponse.approved,
-      feedback: approvalResponse.feedback || ""
-    },
-    session_id: sessionId
-  }
-  
-  console.log("📤 Sending approval response via WebSocket:", approvalMessage)
-  
-  const sent = websocketManager.sendMessage(sessionId, approvalMessage)
-  if (!sent) {
-    throw new Error("Failed to send approval response via WebSocket")
-  }
-}
 
 /**
  * Handles WebSocket messages from the planning session
@@ -214,85 +164,6 @@ export function handlePlanningWebSocketMessage(message: WebSocketMessage, contex
   }
 }
 
-/**
- * Parses approval responses from user input
- * @param message User input message
- * @returns Parsed approval response
- */
-export function parseApprovalResponse(message: string): ApprovalResponse {
-  const lowerMessage = message.toLowerCase().trim()
-  
-  // Strong approval keywords - these clearly indicate approval
-  const strongApprovalKeywords = ["approve", "approved", "yes", "proceed", "continue", "accept", "go ahead", "looks good", "perfect", "ready"]
-  
-  // Strong rejection keywords - these clearly indicate rejection
-  const strongRejectionKeywords = ["reject", "rejected", "no", "stop", "cancel", "decline", "refuse", "deny"]
-  
-  // Edit/change keywords - these indicate user wants to make changes
-  const editKeywords = ["instead", "change", "modify", "update", "revise", "make it", "could we", "can we", "rather than", "but", "however", "actually"]
-  
-  // Check for strong approval indicators
-  const hasStrongApproval = strongApprovalKeywords.some(keyword => lowerMessage.includes(keyword))
-  const hasStrongRejection = strongRejectionKeywords.some(keyword => lowerMessage.includes(keyword))
-  const hasEditIntent = editKeywords.some(keyword => lowerMessage.includes(keyword))
-  
-  // Clear approval (no conflicting signals)
-  if (hasStrongApproval && !hasStrongRejection && !hasEditIntent) {
-    return {
-      isApprovalResponse: true,
-      approved: true,
-      feedback: message.length > 20 ? message : undefined
-    }
-  }
-  
-  // Clear rejection (no conflicting signals)
-  if (hasStrongRejection && !hasStrongApproval && !hasEditIntent) {
-    return {
-      isApprovalResponse: true,
-      approved: false,
-      feedback: message
-    }
-  }
-  
-  // Edit intent detected - this is NOT an approval response
-  if (hasEditIntent) {
-    return {
-      isApprovalResponse: false,
-      approved: false
-    }
-  }
-  
-  // Short responses that might be approvals
-  if (lowerMessage.length <= 10) {
-    const shortApprovals = ["ok", "okay", "sure", "fine", "good", "great", "yep", "yeah"]
-    const shortRejections = ["no", "nope", "nah", "stop"]
-    
-    if (shortApprovals.some(word => lowerMessage === word)) {
-      return {
-        isApprovalResponse: true,
-        approved: true,
-        feedback: undefined
-      }
-    }
-    
-    if (shortRejections.some(word => lowerMessage === word)) {
-      return {
-        isApprovalResponse: true,
-        approved: false,
-        feedback: message
-      }
-    }
-  }
-  
-  // 🚨 REMOVED THE BROKEN FALLBACK LOGIC 🚨
-  // Previously: any message > 3 chars was treated as implicit approval
-  // Now: when in doubt, don't assume it's an approval response
-  
-  return {
-    isApprovalResponse: false,
-    approved: false
-  }
-}
 
 /**
  * Handles planning update events from WebSocket
@@ -332,35 +203,36 @@ function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHan
     const messageContent = latestAiMessage.content as string
     console.log("💬 Checking if message should be added to chat:", messageContent.substring(0, 100))
     
-    // Extract only the most relevant part of the message for better readability
-    const cleanedContent = extractRelevantContent(messageContent, currentStage)
+    // Use raw message content from backend
+    const cleanedContent = messageContent
     
-    // Check if this message has already been displayed to prevent duplicates
+    // Create message with raw backend content
+    const updateMessage: Message = {
+      id: (Date.now() + Math.random()).toString(),
+      content: cleanedContent,
+      sender: "ai",
+      timestamp: new Date(),
+      mode: "plan",
+      response_type: "text"
+    }
+    
+    console.log("➕ Adding agent message to chat")
     setMessages((prev) => {
-      // Check if a message with similar content already exists in recent messages
-      const recentMessages = prev.slice(-5) // Check last 5 messages
+      // Simple deduplication: avoid exact duplicates within recent messages
+      // This preserves raw content while preventing backend agent re-execution spam
+      const recentMessages = prev.slice(-3) // Check last 3 messages
       const isDuplicate = recentMessages.some(msg => 
         msg.sender === "ai" && 
         msg.content === cleanedContent &&
-        msg.mode === "plan"
+        msg.mode === "plan" &&
+        (Date.now() - new Date(msg.timestamp).getTime()) < 30000 // Within 30 seconds
       )
       
       if (isDuplicate) {
-        console.log("⏭️ Skipping duplicate message - already displayed")
+        console.log("⏭️ Skipping recent duplicate message from backend")
         return prev
       }
       
-      // Create clean chat message with ONLY the relevant agent response
-      const updateMessage: Message = {
-        id: (Date.now() + Math.random()).toString(),
-        content: cleanedContent,
-        sender: "ai",
-        timestamp: new Date(),
-        mode: "plan",
-        response_type: "text"
-      }
-      
-      console.log("➕ Adding clean agent message to chat")
       return [...prev, updateMessage]
     })
   }
@@ -372,140 +244,6 @@ function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHan
   }, "planning_update")
 }
 
-/**
- * Extracts the most relevant content from agent messages for better readability
- * @param content Original message content
- * @param stage Current planning stage
- * @returns Cleaned and condensed message content
- */
-function extractRelevantContent(content: string, stage: string): string {
-  // Remove excessive formatting and focus on key information
-  const cleaned = content
-    .replace(/\*\*([^*]+)\*\*/g, '$1') // Remove bold formatting
-    .replace(/\n{3,}/g, '\n\n') // Reduce multiple newlines
-    .trim()
-  
-  // Stage-specific content extraction
-  switch (stage) {
-    case 'objective_setting':
-      return extractObjectiveContent(cleaned)
-    case 'variable_identification':
-      return extractVariableContent(cleaned)
-    case 'experimental_design':
-      return extractDesignContent(cleaned)
-    case 'methodology_protocol':
-      return extractMethodologyContent(cleaned)
-    case 'data_planning':
-      return extractDataPlanningContent(cleaned)
-    case 'final_review':
-      return extractFinalReviewContent(cleaned)
-    default:
-      return getStageUpdateSummary(stage, cleaned.substring(0, 150))
-  }
-}
-
-/**
- * Stage-specific content extraction functions
- */
-function extractObjectiveContent(content: string): string {
-  const lines = content.split('\n').filter(line => line.trim())
-  const objective = lines.find(line => line.toLowerCase().includes('objective:') || line.toLowerCase().includes('research question:'))
-  const hypothesis = lines.find(line => line.toLowerCase().includes('hypothesis:'))
-  
-  const parts = []
-  if (objective) parts.push(objective.trim())
-  if (hypothesis) parts.push(hypothesis.trim())
-  
-  return parts.length > 0 ? parts.join('\n') : '🎯 Setting research objectives...'
-}
-
-function extractVariableContent(content: string): string {
-  const lines = content.split('\n').filter(line => line.trim())
-  const variables = lines.filter(line => 
-    line.includes('Independent:') || 
-    line.includes('Dependent:') || 
-    line.includes('Control:') ||
-    line.includes('variable')
-  ).slice(0, 3)
-  
-  return variables.length > 0 ? variables.join('\n') : '🔍 Identifying experimental variables...'
-}
-
-function extractDesignContent(content: string): string {
-  const lines = content.split('\n').filter(line => line.trim())
-  const design = lines.filter(line => 
-    line.includes('group') || 
-    line.includes('sample size') || 
-    line.includes('replicate') ||
-    line.includes('control')
-  ).slice(0, 3)
-  
-  return design.length > 0 ? design.join('\n') : '⚗️ Designing experimental groups...'
-}
-
-function extractMethodologyContent(content: string): string {
-  const lines = content.split('\n').filter(line => line.trim())
-  const methodology = lines.filter(line => 
-    line.includes('Step') || 
-    line.includes('protocol') || 
-    line.includes('procedure') ||
-    line.includes('equipment')
-  ).slice(0, 3)
-  
-  return methodology.length > 0 ? methodology.join('\n') : '📋 Developing methodology...'
-}
-
-function extractDataPlanningContent(content: string): string {
-  const lines = content.split('\n').filter(line => line.trim())
-  const dataPlan = lines.filter(line => 
-    line.includes('data collection') || 
-    line.includes('analysis') || 
-    line.includes('statistical') ||
-    line.includes('visualization')
-  ).slice(0, 3)
-  
-  return dataPlan.length > 0 ? dataPlan.join('\n') : '📊 Planning data collection and analysis...'
-}
-
-function extractFinalReviewContent(content: string): string {
-  const lines = content.split('\n').filter(line => line.trim())
-  const review = lines.filter(line => 
-    line.includes('complete') || 
-    line.includes('review') || 
-    line.includes('ready') ||
-    line.includes('final')
-  ).slice(0, 2)
-  
-  return review.length > 0 ? review.join('\n') : '✅ Finalizing experiment plan...'
-}
-
-/**
- * Generates a concise stage-based summary for planning updates
- * @param stage Current planning stage
- * @param originalContent Original message snippet
- * @returns Concise stage summary
- */
-function getStageUpdateSummary(stage: string, originalContent: string): string {
-  const stageNames: Record<string, string> = {
-    'objective_setting': '🎯 Defining research objectives',
-    'variable_identification': '🔍 Identifying variables',
-    'experimental_design': '⚗️ Designing experiment structure',
-    'methodology_protocol': '📋 Creating methodology',
-    'data_planning': '📊 Planning data collection',
-    'final_review': '✅ Final review'
-  }
-  
-  const stageName = stageNames[stage] || `📝 ${stage.replace('_', ' ')}`
-  
-  // Extract first meaningful sentence
-  const firstSentence = originalContent.split('.')[0]?.trim()
-  
-  if (firstSentence && firstSentence.length > 10) {
-    return `${stageName}: ${firstSentence}.`
-  }
-  
-  return stageName
-}
 
 /**
  * Handles approval request events from WebSocket
@@ -517,29 +255,17 @@ function handlePlanningApprovalRequest(data: Record<string, unknown>, context: M
   
   console.log("⚠️ Planning approval request from WebSocket:", data)
   
-  const stageNames: Record<string, string> = {
-    'objective_setting': 'Research Objectives',
-    'variable_identification': 'Variables',
-    'experimental_design': 'Experimental Design',
-    'methodology_protocol': 'Methodology',
-    'data_planning': 'Data Collection Plan',
-    'final_review': 'Final Plan'
-  }
-  
-  const stage = data.stage as string || "Unknown"
-  const stageName = stageNames[stage] || stage.replace('_', ' ')
-  
-  const approvalMessage: Message = {
+  const rawMessage: Message = {
     id: (Date.now() + Math.random()).toString(),
-    content: `Ready to proceed with ${stageName}?\n\nType "approve" to continue or provide feedback.`,
+    content: JSON.stringify(data),
     sender: "ai",
     timestamp: new Date(),
     mode: "plan",
     response_type: "approval"
   }
   
-  console.log("➕ Adding approval message to chat from WebSocket")
-  setMessages((prev) => [...prev, approvalMessage])
+  console.log("➕ Adding raw approval message to chat from WebSocket")
+  setMessages((prev) => [...prev, rawMessage])
   
   // Update session state (preserve session continuity)
   safeUpdateSession(setPlanningSession, {
@@ -559,26 +285,17 @@ function handlePlanningError(data: Record<string, unknown>, context: MessageHand
   
   console.log("❌ Planning error from WebSocket:", data)
   
-  const errorMsg = data.message as string || "Unknown error occurred"
-  // Simplify technical error messages
-  const simplifiedError = errorMsg
-    .replace(/WebSocket/gi, 'connection')
-    .replace(/session_id/gi, 'session')
-    .replace(/null|undefined/gi, 'missing')
-    .replace(/connection not established/gi, 'Unable to connect')
-    .replace(/failed to/gi, 'Could not')
-  
-  const errorMessage: Message = {
+  const rawMessage: Message = {
     id: (Date.now() + Math.random()).toString(),
-    content: `⚠️ ${simplifiedError}`,
+    content: data.message as string || JSON.stringify(data),
     sender: "ai",
     timestamp: new Date(),
     mode: "plan",
     response_type: "error"
   }
   
-  console.log("➕ Adding error message to chat from WebSocket")
-  setMessages((prev) => [...prev, errorMessage])
+  console.log("➕ Adding raw error message to chat from WebSocket")
+  setMessages((prev) => [...prev, rawMessage])
 }
 
 /**
