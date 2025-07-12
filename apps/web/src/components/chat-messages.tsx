@@ -153,6 +153,27 @@ export function ChatMessages({
 
   return (
     <div className="flex-1 flex flex-col min-h-0 relative">
+      {/* AI Chat Header */}
+      <div className="flex-shrink-0 px-4 pt-4 pb-3 border-b border-border/50">
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 rounded-lg bg-indigo-100 dark:bg-indigo-900/30">
+            <svg className="h-4 w-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+          </div>
+          <h3 className="text-sm font-semibold text-foreground">AI Chat</h3>
+          <div className="flex items-center gap-1 ml-2">
+            <div className={`w-2 h-2 rounded-full ${
+              selectedMode === "analysis" ? "bg-purple-500" :
+              selectedMode === "plan" ? "bg-blue-500" :
+              selectedMode === "execute" ? "bg-green-500" :
+              "bg-gray-400"
+            }`} />
+            <span className="text-xs text-muted-foreground capitalize">{selectedMode}</span>
+          </div>
+        </div>
+      </div>
+
       {/* Connection Status Bar */}
       <ConnectionStatusBar 
         isConnected={isConnected}

@@ -39,7 +39,7 @@ export function ExperimentView() {
   // Load experiments on component mount
   useEffect(() => {
     loadExperiments()
-  }, [])
+  }, [loadExperiments])
 
   // Handle experiment creation from dropdown
   const handleExperimentCreated = async () => {
@@ -76,7 +76,7 @@ export function ExperimentView() {
 
   // Show normal app view when experiments exist
   return (
-    <div className="h-full bg-background dark overflow-hidden flex flex-col">
+    <div className="h-screen bg-background dark overflow-hidden flex flex-col">
       <Title 
         experiments={experiments}
         selectedExperiment={currentExperiment}
@@ -86,18 +86,26 @@ export function ExperimentView() {
         experimentTitle={experimentTitle}
         onTitleChange={updateExperimentTitleWithSave}
       />
-      <div className="flex-1 grid gap-4 px-4 pb-4" style={{ gridTemplateColumns: "1.7fr 2fr 1fr" }}>
-        {/* Left Column */}
-        <div className="h-[95vh]">
-          <TextEditor value={editorText} onChange={updateEditorTextWithSave} />
+      
+      {/* Enhanced main layout with better spacing and flexible ratios */}
+      <div className="flex-1 grid gap-6 px-6 pb-6 pt-2 min-h-0 overflow-hidden" style={{ 
+        gridTemplateColumns: "1.6fr 2.2fr 1.2fr",
+        gridTemplateRows: "1fr",
+        minHeight: "0"
+      }}>
+        {/* Left Column - Plan Editor */}
+        <div className="flex flex-col min-h-0 rounded-xl bg-gradient-to-b from-background to-muted/20 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden">
+          <div className="flex-1 min-h-0">
+            <TextEditor value={editorText} onChange={updateEditorTextWithSave} />
+          </div>
         </div>
 
-        {/* Middle Section - Upper and Lower Boxes */}
-        <div className="flex flex-col gap-4 h-full">
-          <div className="h-[47vh] min-h-0">
+        {/* Middle Column - Data Table and Visualization */}
+        <div className="flex flex-col gap-6 min-h-0 overflow-hidden">
+          <div className="flex-1 min-h-0 rounded-xl bg-gradient-to-br from-background to-accent/10 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden">
             <DataTableViewer csvData={csvData} />
           </div>
-          <div className="h-[47vh] min-h-0">
+          <div className="flex-1 min-h-0 rounded-xl bg-gradient-to-br from-background to-accent/10 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden">
             <GraphViewer 
               htmlContent={visualizationHtml}
               onRefresh={refreshVisualization}
@@ -105,15 +113,17 @@ export function ExperimentView() {
           </div>
         </div>
 
-        {/* AI Chat */}
-        <div className="h-[95vh]">
-          <AiChat 
-            plan={editorText}
-            csv={csvData}
-            editorText={editorText} 
-            onPlanChange={updateEditorTextWithSave}
-            onVisualizationGenerated={updateVisualizationHtmlWithSave}
-          />
+        {/* Right Column - AI Chat */}
+        <div className="flex flex-col min-h-0 rounded-xl bg-gradient-to-b from-background to-primary/5 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden">
+          <div className="flex-1 min-h-0">
+            <AiChat 
+              plan={editorText}
+              csv={csvData}
+              editorText={editorText} 
+              onPlanChange={updateEditorTextWithSave}
+              onVisualizationGenerated={updateVisualizationHtmlWithSave}
+            />
+          </div>
         </div>
       </div>
     </div>

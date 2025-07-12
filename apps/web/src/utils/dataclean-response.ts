@@ -160,8 +160,8 @@ export function extractCsvFromDatacleanResponse(
     console.warn(`⚠️ No CSV data found in ${context} response:`, {
       responseKeys: response && typeof response === 'object' ? Object.keys(response) : 'not-object',
       hasData: response && typeof response === 'object' && 'data' in response,
-      dataKeys: response && typeof response === 'object' && 'data' in response && typeof (response as any).data === 'object' 
-        ? Object.keys((response as any).data) 
+      dataKeys: response && typeof response === 'object' && 'data' in response && typeof (response as Record<string, unknown>).data === 'object' 
+        ? Object.keys((response as Record<string, unknown>).data as Record<string, unknown>) 
         : 'no-data-object'
     })
     return null

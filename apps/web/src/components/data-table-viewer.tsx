@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect, useCallback, useRef } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table"
 import { Button } from "../components/ui/button"
@@ -356,7 +356,16 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
         
         // Use agent versioning system for CSV updates from generateHeadersFromPlan
         try {
-          await updateCsvFromDatacleanResponse(response)
+          // Convert GenerateHeadersResponse to DatacleanResponse format
+          const datacleanResponse = {
+            response_type: "data_preview" as const,
+            message: "Headers generated successfully",
+            data: {
+              csv_data: response.csv_data,
+              headers: response.headers
+            }
+          }
+          await updateCsvFromDatacleanResponse(datacleanResponse)
           console.log("✅ Headers generated with agent versioning")
         } catch (csvError) {
           console.warn("⚠️ Failed to use agent versioning, falling back to direct update:", csvError)
@@ -441,7 +450,16 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
         
         // Use agent versioning system for file uploads
         try {
-          await updateCsvFromDatacleanResponse(response)
+          // Convert ProcessFileCompleteResponse to DatacleanResponse format
+          const datacleanResponse = {
+            response_type: "data_preview" as const,
+            message: "File uploaded successfully",
+            data: {
+              cleaned_data: response.cleaned_data,
+              artifact_id: response.artifact_id
+            }
+          }
+          await updateCsvFromDatacleanResponse(datacleanResponse)
           console.log("✅ File uploaded with agent versioning")
         } catch (csvError) {
           console.warn("⚠️ Failed to use agent versioning for upload, falling back to manual processing:", csvError)
@@ -501,15 +519,17 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
   }
 
   return (
-    <Card className="h-full flex flex-col dark:bg-gray-900 dark:border-gray-800 data-table-viewer w-full">
-      <CardHeader className="flex-shrink-0 pb-2">
+    <Card className="h-full flex flex-col shadow-lg border-0 bg-card/95 backdrop-blur-sm data-table-viewer w-full">
+      <CardHeader className="flex-shrink-0 pb-3 px-4 pt-4 border-b border-border/50">
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-2">
-            <CardTitle className="text-base flex items-center gap-2 dark:text-white">
-              <Upload className="h-4 w-4" />
+            <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground">
+              <div className="p-1.5 rounded-lg bg-green-100 dark:bg-green-900/30">
+                <Upload className="h-4 w-4 text-green-600 dark:text-green-400" />
+              </div>
               Data Table
               {tableData.length > 0 && (
-                <span className="text-xs text-muted-foreground dark:text-gray-400">
+                <span className="text-xs text-muted-foreground/70 font-normal">
                   ({filteredData.length} of {tableData.length} rows)
                 </span>
               )}
@@ -593,7 +613,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                         title: "Changes accepted",
                         description: "AI modifications have been accepted",
                       })
-                    } catch (error) {
+                    } catch {
                       toast({
                         title: "Error",
                         description: "Failed to accept changes",
@@ -620,7 +640,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                         title: "Changes rejected",
                         description: "AI modifications have been reverted",
                       })
-                    } catch (error) {
+                    } catch {
                       toast({
                         title: "Error",
                         description: "Failed to reject changes",
@@ -641,17 +661,17 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
         </div>
       </CardHeader>
 
-      <CardContent className="flex-1 flex flex-col min-h-0 p-0">
-        <div className="flex-1 min-h-0 border-t dark:border-gray-700 overflow-auto max-w-full">
+      <CardContent className="flex-1 flex flex-col min-h-0 p-0 bg-gradient-to-b from-card to-muted/20">
+        <div className="flex-1 min-h-0 border-t border-border/50 overflow-auto max-w-full backdrop-blur-sm">
           {headers.length > 0 ? (
             <div className="w-full overflow-x-auto">
               <Table className="min-w-full">
-              <TableHeader className="sticky top-0 bg-background dark:bg-gray-900">
-                <TableRow className="border-b dark:border-gray-700">
+              <TableHeader className="sticky top-0 bg-background/95 backdrop-blur-sm">
+                <TableRow className="border-b border-border/50">
                   {headers.map((header) => (
                     <TableHead 
                       key={header} 
-                      className="text-xs font-semibold text-gray-900 dark:text-gray-100 px-3 py-2"
+                      className="text-xs font-semibold text-foreground px-3 py-3"
                     >
                       {header.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
                     </TableHead>
@@ -659,13 +679,13 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredData.map((row, rowIndex) => {
+                {filteredData.map((row) => {
                   const rowChangeClass = getRowClassName(row)
                   return (
                     <TableRow 
                       key={row.id} 
                       className={cn(
-                        "border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800",
+                        "border-b border-border/30 hover:bg-muted/50 transition-colors",
                         highlightRows.has(row.id) && "bg-green-50 dark:bg-green-900/40",
                         rowChangeClass
                       )}
@@ -676,7 +696,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                           <TableCell 
                             key={`${row.id}-${header}`} 
                             className={cn(
-                              "text-xs px-3 py-2 dark:text-gray-300",
+                              "text-xs px-3 py-2 text-foreground/90",
                               cellChangeClass
                             )}
                           >
@@ -694,7 +714,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                 
                 {/* Add Row Button */}
                 {headers.length > 0 && (
-                  <TableRow className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">
+                  <TableRow className="border-b border-border/30 hover:bg-muted/30 transition-colors">
                     <TableCell 
                       colSpan={headers.length} 
                       className="text-center py-3"
@@ -703,7 +723,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                         variant="ghost"
                         size="sm"
                         onClick={handleAddRow}
-                        className="h-6 px-3 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                        className="h-6 px-3 text-xs text-muted-foreground hover:text-foreground transition-colors"
                       >
                         <Plus className="h-3 w-3 mr-1" />
                         Add Row

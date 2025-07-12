@@ -28,31 +28,7 @@ export interface CsvDiffResult {
   headers: string[]
 }
 
-/**
- * Parse CSV string into array of objects
- */
-function parseCsv(csvData: string): Record<string, string>[] {
-  if (!csvData.trim()) return []
-  
-  const lines = csvData.trim().split('\n')
-  if (lines.length < 2) return []
-  
-  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''))
-  const rows: Record<string, string>[] = []
-  
-  for (let i = 1; i < lines.length; i++) {
-    const values = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''))
-    const row: Record<string, string> = {}
-    
-    headers.forEach((header, index) => {
-      row[header] = values[index] || ''
-    })
-    
-    rows.push(row)
-  }
-  
-  return rows
-}
+
 
 /**
  * Create a unique key for a row based on its content
@@ -160,7 +136,7 @@ export function calculateCsvDiff(currentCsv: string, previousCsv: string): CsvDi
   })
   
   // Find removed rows
-  previousRows.forEach((previousRow, previousIndex) => {
+  previousRows.forEach((previousRow) => {
     const key = createRowKey(previousRow, headers)
     
     if (!currentRowMap.has(key)) {
@@ -192,7 +168,7 @@ export function calculateCsvDiff(currentCsv: string, previousCsv: string): CsvDi
  */
 export function getRowIdsByType(diffs: Map<string, RowDiff>, changeType: ChangeType): string[] {
   return Array.from(diffs.entries())
-    .filter(([_, diff]) => diff.changeType === changeType)
+    .filter(([, diff]) => diff.changeType === changeType)
     .map(([rowId]) => rowId)
 }
 

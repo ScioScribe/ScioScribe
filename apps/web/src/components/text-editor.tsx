@@ -51,30 +51,32 @@ export function TextEditor({ value, onChange }: TextEditorProps) {
   }
 
   return (
-    <Card className="h-full flex flex-col dark:bg-gray-900 dark:border-gray-800">
-      <CardHeader className="flex-shrink-0 pb-2">
-        <CardTitle className="text-base flex items-center gap-2 dark:text-white">
-          <FileText className="h-4 w-4" />
+    <Card className="h-full flex flex-col shadow-lg border-0 bg-card/95 backdrop-blur-sm">
+      <CardHeader className="flex-shrink-0 pb-3 px-4 pt-4 border-b border-border/50">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground">
+          <div className="p-1.5 rounded-lg bg-blue-100 dark:bg-blue-900/30">
+            <FileText className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          </div>
           Plan
         </CardTitle>
       </CardHeader>
 
-      <CardContent className="flex-1 flex min-h-0 p-0">
+      <CardContent className="flex-1 flex min-h-0 p-0 bg-gradient-to-b from-card to-muted/20">
         {/* Line Numbers */}
         <div
           ref={lineNumbersRef}
-          className="flex-shrink-0 w-12 bg-gray-50 dark:bg-gray-800 border-r dark:border-gray-700 overflow-hidden"
+          className="flex-shrink-0 w-12 bg-muted/40 border-r border-border/50 overflow-hidden backdrop-blur-sm"
           style={{
             fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
             fontSize: "12px",
             lineHeight: "18px",
           }}
         >
-          <div className="py-2 px-2 text-right">
+          <div className="py-3 px-2 text-right">
             {generateLineNumbers().map((lineNum) => (
               <div
                 key={lineNum}
-                className="text-gray-400 dark:text-gray-500 select-none"
+                className="text-muted-foreground/60 select-none hover:text-muted-foreground transition-colors"
                 style={{ height: "18px", lineHeight: "18px" }}
               >
                 {lineNum}
@@ -90,8 +92,8 @@ export function TextEditor({ value, onChange }: TextEditorProps) {
             value={content}
             onChange={handleContentChange}
             onScroll={handleScroll}
-            placeholder="Start coding..."
-            className="h-full w-full resize-none border-0 focus-visible:ring-0 rounded-none bg-transparent dark:bg-gray-900 dark:text-gray-100 p-2"
+            placeholder="Start writing your experiment plan..."
+            className="h-full w-full resize-none border-0 focus-visible:ring-0 rounded-none bg-transparent text-foreground placeholder:text-muted-foreground/50 p-3 transition-all duration-200 focus:bg-background/50"
             style={{
               fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
               fontSize: "12px",

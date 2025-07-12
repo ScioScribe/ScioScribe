@@ -19,9 +19,9 @@ export * from './database'
 
 // Re-export specific functions with more descriptive names for common use cases
 export {
-  cleanData as cleanDataset,
-  validateDataFormat as validateData,
-  getCleaningOptions as getDataCleaningOptions,
+  startConversation as startDataCleaningSession,
+  sendConversationMessage as sendDataCleaningMessage,
+  uploadCsvFile as uploadCsvData,
 } from './dataclean'
 
 export {

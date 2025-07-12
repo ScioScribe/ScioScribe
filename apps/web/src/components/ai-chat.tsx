@@ -335,11 +335,11 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         }
         
         // Session initialization already sent the user's message, so process the response
-        const response = sessionResponse.response as any
-        if (response && response.response_message) {
+        const response = sessionResponse.response
+        if (response && response.message) {
           const responseMessage: Message = {
             id: (Date.now() + 2).toString(),
-            content: response.response_message,
+            content: response.message,
             sender: "ai",
             timestamp: new Date(),
             mode: "execute",
@@ -605,7 +605,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
   }, []) // Remove all dependencies to prevent recreation
 
   return (
-    <Card className="h-full flex flex-col bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-800">
+    <Card className="h-full flex flex-col shadow-lg border-0 bg-card/95 backdrop-blur-sm">
       {/* Chat Messages */}
       <ChatMessages
         messages={messages}
