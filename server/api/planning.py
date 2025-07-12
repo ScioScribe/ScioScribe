@@ -722,19 +722,21 @@ async def _process_planning_execution(websocket: WebSocket, session_id: str, sta
     try:
         final_state = state
         
-        # Execute graph and stream updates
+        # Execute graph and send only final result
         if resume_from_approval:
             # Resume from interrupt
             async for event in graph.astream(None, config, stream_mode="values"):
                 if event is not None:
                     final_state = event
-                    await _send_planning_update(websocket, session_id, final_state)
+            # Send only the final state update
+            await _send_planning_update(websocket, session_id, final_state)
         else:
             # Continue with normal processing
             async for event in graph.astream(state, config, stream_mode="values"):
                 if event is not None:
                     final_state = event
-                    await _send_planning_update(websocket, session_id, final_state)
+            # Send only the final state update
+            await _send_planning_update(websocket, session_id, final_state)
 
         # Check if graph has completed (reached END state)
         is_complete = await _is_graph_complete(session_id)

@@ -102,7 +102,7 @@ class ObjectiveAgent(BaseAgent):
             state['experiment_objective'] = response.experiment_objective
             state['hypothesis'] = response.hypothesis
             
-            agent_response_text = f"Great, I've updated the plan:\n\n**Objective:** {response.experiment_objective}\n\n**Hypothesis:** {response.hypothesis}"
+            agent_response_text = f"Updated the plan:\n\n**Objective:** {response.experiment_objective}\n\n**Hypothesis:** {response.hypothesis}"
             self.logger.info("Successfully updated state with structured LLM output.")
             
         except Exception as e:

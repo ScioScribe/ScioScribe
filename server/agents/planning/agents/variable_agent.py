@@ -150,7 +150,7 @@ class VariableAgent(BaseAgent):
 
     def _create_variable_summary(self, state: ExperimentPlanState) -> str:
         """Create a formatted summary of the variable definitions."""
-        summary_parts = ["Great! I've updated the variable definitions in the plan:\n"]
+        summary_parts = ["Updated the variable definitions:\n"]
         
         # Independent variables
         independent_vars = state.get('independent_variables', [])
