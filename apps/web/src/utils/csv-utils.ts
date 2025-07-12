@@ -39,11 +39,25 @@ export function getCurrentCsvData(): string {
  * @returns CSV string
  */
 export function convertTableToCSV(data: Array<Record<string, string>>, headers: string[]): string {
-  if (!headers.length || !data.length) return ""
+  if (!headers.length) {
+    return ""
+  }
+  
+  // If no data, return just headers
+  if (!data.length) {
+    return headers.join(',') + '\n'
+  }
   
   const csvHeaders = headers.join(',')
   const csvRows = data.map(row => 
-    headers.map(header => `"${(row[header] || '').replace(/"/g, '""')}"`).join(',')
+    headers.map(header => {
+      const value = row[header] || ''
+      // Only quote if value contains comma, newline, or quotes
+      if (value.includes(',') || value.includes('\n') || value.includes('"')) {
+        return `"${value.replace(/"/g, '""')}"`
+      }
+      return value
+    }).join(',')
   )
   
   return [csvHeaders, ...csvRows].join('\n')
@@ -78,8 +92,8 @@ export function parseCSVString(csvString: string): { headers: string[], data: Ar
     })
     
     return { headers, data }
-  } catch (error) {
-    console.error("❌ Error parsing CSV string:", error)
+  } catch {
+    console.error("❌ Error parsing CSV string")
     return { headers: [], data: [] }
   }
 }
@@ -99,7 +113,7 @@ export function isValidCSV(csvString: string): boolean {
     
     const headerCount = lines[0].split(',').length
     return headerCount > 0 && lines.slice(1).every(line => line.split(',').length === headerCount)
-  } catch (error) {
+  } catch {
     return false
   }
 }
@@ -127,4 +141,26 @@ export function getCsvDataWithFallbacks(contextCsv?: string): string {
   
   console.warn("⚠️ No valid CSV data available from any source")
   return ""
+}
+
+/**
+ * Parses headers from a CSV string
+ * 
+ * @param csv CSV string to extract headers from
+ * @returns Array of header names
+ */
+export function parseHeadersFromCsv(csv: string): string[] {
+  try {
+    if (!csv.trim()) return []
+    
+    const lines = csv.trim().split('\n')
+    if (lines.length === 0) return []
+    
+    // Get first line and parse headers
+    const headerLine = lines[0]
+    return headerLine.split(',').map(h => h.trim().replace(/^"|"$/g, ''))
+  } catch (error) {
+    console.error("❌ Error parsing headers from CSV:", error)
+    return []
+  }
 } 

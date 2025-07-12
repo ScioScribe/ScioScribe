@@ -54,8 +54,6 @@ async function sendDatacleanMessage(sessionId: string, message: string, context:
   try {
     console.log("📤 Sending dataclean message:", message)
     
-    const datacleanSession = context.getDatacleanSession()
-    
     // Get CSV data from experiment store for the CSV conversation endpoint
     const csvData = await getCsvDataFromExperimentStore(context)
     
@@ -134,6 +132,23 @@ async function processDatacleanResponse(response: DatacleanResponse, context: Me
   console.log("🔄 PROCESSING DATACLEAN RESPONSE:", JSON.stringify(response, null, 2))
   
   try {
+    // If the backend sent back a cleaned CSV (either wrapped in `data` or top-level),
+    // push it into the experiment store immediately so the DataTableViewer refreshes.
+    const cleanedCsv =
+      (response.data && (response.data as Record<string, unknown>).cleaned_csv as string | undefined) ||
+      (response as unknown as Record<string, unknown>).cleaned_csv as string | undefined
+
+    if (cleanedCsv && typeof cleanedCsv === 'string' && cleanedCsv.trim()) {
+      // We reuse the existing helper that expects a Dataclean-style envelope.
+      // Passing { data: cleanedCsv } is enough for it to store the string.
+      try {
+        await updateCsvFromDatacleanResponse({ data: cleanedCsv } as unknown as Record<string, unknown>)
+        console.log("💾 Synced cleaned CSV to experiment store (length:", cleanedCsv.length, ")")
+      } catch (csvSyncErr) {
+        console.warn("⚠️ Failed to sync cleaned CSV:", csvSyncErr)
+      }
+    }
+    
     // Create base message structure
     const baseMessage = {
       id: (Date.now() + Math.random()).toString(),
@@ -147,7 +162,7 @@ async function processDatacleanResponse(response: DatacleanResponse, context: Me
       case "text": {
         const textMessage: Message = {
           ...baseMessage,
-          content: `🧹 **Data Cleaning Response**\n\n${response.message}`,
+          content: response.message,
           response_type: "text"
         }
         setMessages((prev) => [...prev, textMessage])

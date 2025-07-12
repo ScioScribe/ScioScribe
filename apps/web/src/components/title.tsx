@@ -14,16 +14,22 @@ interface TitleProps {
   selectedExperiment?: Experiment | null
   onExperimentSelect?: (experiment: Experiment) => void
   onExperimentCreated?: () => void
+  onExperimentDelete?: (experimentId: string) => Promise<void>
   experimentTitle?: string
   onTitleChange?: (title: string) => void
 }
 
-export function Title({ experiments = [], selectedExperiment, onExperimentSelect, onExperimentCreated, experimentTitle, onTitleChange }: TitleProps) {
+export function Title({ experiments = [], selectedExperiment, onExperimentSelect, onExperimentCreated, onExperimentDelete, experimentTitle, onTitleChange }: TitleProps) {
   const [isSaving, setIsSaving] = useState(false)
   const [isSaved, setIsSaved] = useState(false)
   
   // Get current experiment data from the store
-  const { currentExperiment, editorText, csvData, visualizationHtml } = useExperimentStore()
+  const { currentExperiment, editorText, csvData, visualizationHtml, setCurrentExperiment } = useExperimentStore()
+
+  const handleScioScribeClick = () => {
+    // Clear current experiment to show home page
+    setCurrentExperiment(null)
+  }
 
   const handleSave = async () => {
     if (!currentExperiment) {
@@ -74,10 +80,11 @@ export function Title({ experiments = [], selectedExperiment, onExperimentSelect
         <div className="flex items-center gap-2">
           <FileText className="h-5 w-5 text-blue-500" />
           <h1
-            className="text-lg font-bold text-gray-900 dark:text-white"
+            className="text-lg font-bold text-gray-900 dark:text-white cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
             style={{
               fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
             }}
+            onClick={handleScioScribeClick}
           >
             ScioScribe
           </h1>
@@ -127,6 +134,7 @@ export function Title({ experiments = [], selectedExperiment, onExperimentSelect
           selectedExperiment={selectedExperiment || null}
           onExperimentSelect={onExperimentSelect}
           onExperimentCreated={onExperimentCreated}
+          onExperimentDelete={onExperimentDelete}
         />
       </div>
     </div>

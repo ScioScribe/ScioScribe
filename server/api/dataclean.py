@@ -39,7 +39,10 @@ from agents.dataclean.models import (
     CSVProcessingResponse,
     CSVTransformationRequest,
     CSVConversationState,
-    CSVAnalysisResult
+    CSVAnalysisResult,
+    # Header generation models
+    GenerateHeadersRequest,
+    GenerateHeadersResponse
 )
 from agents.dataclean.file_processor import FileProcessingAgent
 from agents.dataclean.quality_agent import DataQualityAgent
@@ -51,8 +54,12 @@ from config import get_openai_client, validate_openai_config
 
 import logging
 import json
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket, WebSocketDisconnect, HTTPException, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+from database import get_db
+from datetime import datetime
+from starlette.websockets import WebSocketState
 
 # Set up module logger
 logger = logging.getLogger(__name__)
@@ -136,9 +143,17 @@ class ConversationMessageResponseModel(BaseModel):
 
 # === Helper functions for WebSocket communication ===
 async def _send_ws_message(websocket: WebSocket, payload: Dict[str, Any]):
-    """Serialize and send a dictionary payload via WebSocket."""
+    """Safely serialize and send a payload via WebSocket, skipping if closed."""
     try:
-        await websocket.send_text(json.dumps(payload))
+        if (
+            websocket.application_state == WebSocketState.CONNECTED
+            and websocket.client_state == WebSocketState.CONNECTED
+        ):
+            await websocket.send_text(json.dumps(payload))
+        else:
+            logger.debug("WebSocket not connected; skipping send of %s", payload.get("type"))
+    except RuntimeError as exc:
+        logger.warning("WebSocket send after close: %s", exc)
     except Exception as exc:
         logger.error(f"Failed to send WebSocket message: {exc}")
 
@@ -273,6 +288,13 @@ async def websocket_conversation_session(websocket: WebSocket, session_id: str):
                 logger.error(f"JSON decode error: {exc}")
             except Exception as exc:
                 logger.error(f"Unhandled WebSocket error: {exc}")
+                if (
+                    websocket.application_state != WebSocketState.CONNECTED
+                    or websocket.client_state != WebSocketState.CONNECTED
+                ):
+                    logger.info("WebSocket closed; ending dataclean loop for session %s", session_id)
+                    break
+
                 await _send_error_message(websocket, session_id, f"Server error: {str(exc)}")
     finally:
         # Clean up stored connection
@@ -326,6 +348,13 @@ async def websocket_csv_conversation(websocket: WebSocket, session_id: str):
                 logger.error(f"JSON decode error: {exc}")
             except Exception as exc:
                 logger.error(f"Unhandled CSV WebSocket error: {exc}")
+                if (
+                    websocket.application_state != WebSocketState.CONNECTED
+                    or websocket.client_state != WebSocketState.CONNECTED
+                ):
+                    logger.info("WebSocket closed; ending CSV loop for session %s", session_id)
+                    break
+
                 await _send_error_message(websocket, session_id, f"Server error: {str(exc)}")
                 
     finally:
@@ -1894,4 +1923,272 @@ async def process_image_background(artifact_id: str, image_path: str):
         # Clean up temporary file
         if os.path.exists(image_path):
             os.remove(image_path)
-            print(f"Cleaned up temporary image file: {image_path}") 
+            print(f"Cleaned up temporary image file: {image_path}")
+
+
+@router.post("/csv-conversation/save-cleaned-data")
+async def save_cleaned_data(
+    session_id: str,
+    cleaned_csv: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Save cleaned CSV data to the database for persistent storage.
+    
+    This endpoint stores the cleaned CSV data so it can be retrieved later
+    for validation, download, or further analysis.
+    """
+    try:
+        from database import Experiment
+        
+        # Create or update experiment with cleaned CSV data
+        experiment = db.query(Experiment).filter(Experiment.id == session_id).first()
+        
+        if not experiment:
+            # Create new experiment record for this session
+            experiment = Experiment(
+                id=session_id,
+                title=f"Cleaned Data Session {session_id}",
+                description="Data cleaning session with applied transformations",
+                csv_data=cleaned_csv
+            )
+            db.add(experiment)
+        else:
+            # Update existing experiment with cleaned data
+            experiment.csv_data = cleaned_csv
+            experiment.updated_at = datetime.now()
+        
+        db.commit()
+        db.refresh(experiment)
+        
+        logger.info(f"Saved cleaned CSV data for session {session_id}")
+        
+        return {
+            "success": True,
+            "session_id": session_id,
+            "message": "Cleaned data saved successfully",
+            "experiment_id": experiment.id
+        }
+        
+    except Exception as e:
+        logger.error(f"Error saving cleaned data for session {session_id}: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save cleaned data: {str(e)}"
+        )
+
+
+@router.get("/csv-conversation/get-cleaned-data/{session_id}")
+async def get_cleaned_data(
+    session_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Retrieve cleaned CSV data from the database.
+    
+    Returns the cleaned CSV data for the specified session if it exists.
+    """
+    try:
+        from database import Experiment
+        
+        # Query experiment by session ID
+        experiment = db.query(Experiment).filter(Experiment.id == session_id).first()
+        
+        if not experiment or not experiment.csv_data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No cleaned data found for session {session_id}"
+            )
+        
+        logger.info(f"Retrieved cleaned CSV data for session {session_id}")
+        
+        return {
+            "success": True,
+            "session_id": session_id,
+            "cleaned_csv": experiment.csv_data,
+            "last_updated": experiment.updated_at.isoformat() if experiment.updated_at else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving cleaned data for session {session_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve cleaned data: {str(e)}"
+        )
+
+
+@router.get("/csv-conversation/download-cleaned-data/{session_id}")
+async def download_cleaned_data(
+    session_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Download cleaned CSV data as a file.
+    
+    Returns the cleaned CSV data as a downloadable file attachment.
+    """
+    try:
+        from database import Experiment
+        from fastapi.responses import Response
+        
+        # Query experiment by session ID
+        experiment = db.query(Experiment).filter(Experiment.id == session_id).first()
+        
+        if not experiment or not experiment.csv_data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No cleaned data found for session {session_id}"
+            )
+        
+        logger.info(f"Downloading cleaned CSV data for session {session_id}")
+        
+        # Return CSV as downloadable file
+        headers = {
+            "Content-Disposition": f"attachment; filename=cleaned_data_{session_id}.csv"
+        }
+        
+        return Response(
+            content=experiment.csv_data,
+            media_type="text/csv",
+            headers=headers
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading cleaned data for session {session_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to download cleaned data: {str(e)}"
+        )
+
+
+# === Header Generation Endpoint ===
+
+@router.post("/generate-headers-from-plan", response_model=GenerateHeadersResponse)
+async def generate_headers_from_plan(request: GenerateHeadersRequest) -> GenerateHeadersResponse:
+    """
+    Generate CSV headers from experimental plan using AI.
+    
+    Args:
+        request: Contains experimental plan text and optional experiment ID
+        
+    Returns:
+        Generated headers and CSV header row
+    """
+    try:
+        # Verify OpenAI client is configured
+        openai_client = get_openai_client()
+        if not openai_client:
+            raise HTTPException(
+                status_code=500, 
+                detail="OpenAI client not configured. Please check API key settings."
+            )
+        
+        # Validate input
+        if not request.plan or not request.plan.strip():
+            return GenerateHeadersResponse(
+                success=False,
+                error_message="Experimental plan cannot be empty"
+            )
+        
+        # Craft system prompt for header generation
+        system_prompt = (
+            "Given the following experimental plan, identify only the essential column headers needed for data collection. "
+            "Return a single comma-separated line with concise, descriptive column names. "
+            "Focus on the core measurements and variables mentioned in the plan. "
+            "Limit to 6-10 columns maximum. Do NOT include derived metrics or analysis columns."
+        )
+        
+        # Call OpenAI API (using async client)
+        response = await openai_client.chat.completions.create(
+            model="gpt-4.1",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Experimental plan:\n\n{request.plan}"}
+            ],
+            max_tokens=200,
+            temperature=0.3
+        )
+        
+        # Parse the response
+        headers_line = response.choices[0].message.content.strip()
+        
+        # Sanity check the response
+        if not headers_line:
+            return GenerateHeadersResponse(
+                success=False,
+                error_message="AI generated empty response"
+            )
+        
+        # Parse headers and validate
+        headers = [h.strip() for h in headers_line.split(',')]
+        headers = [h for h in headers if h]  # Remove empty headers
+        
+        if len(headers) == 0:
+            return GenerateHeadersResponse(
+                success=False,
+                error_message="No valid headers generated"
+            )
+        
+        if len(headers) > 15:
+            return GenerateHeadersResponse(
+                success=False,
+                error_message="Too many headers generated (limit: 15)"
+            )
+        
+        # Check for control characters
+        for header in headers:
+            if any(ord(c) < 32 and c not in '\t\n\r' for c in header):
+                return GenerateHeadersResponse(
+                    success=False,
+                    error_message="Generated headers contain invalid characters"
+                )
+        
+        # Build CSV data (headers only)
+        csv_data = ','.join(headers) + '\n'
+        
+        # If experiment_id provided, update the experiment's CSV data
+        if request.experiment_id:
+            try:
+                # Import here to avoid circular imports
+                from database import get_db, Experiment
+                from sqlalchemy.orm import Session
+                
+                # Get database session
+                db_gen = get_db()
+                db: Session = next(db_gen)
+                
+                try:
+                    # Find and update experiment
+                    experiment = db.query(Experiment).filter(Experiment.id == request.experiment_id).first()
+                    if experiment:
+                        experiment.csv_data = csv_data
+                        experiment.updated_at = datetime.now()
+                        db.commit()
+                        print(f"Updated experiment {request.experiment_id} with generated headers")
+                    else:
+                        print(f"Experiment {request.experiment_id} not found, skipping database update")
+                finally:
+                    db.close()
+            except Exception as e:
+                print(f"Failed to update experiment database: {str(e)}")
+                # Don't fail the whole request if database update fails
+        
+        return GenerateHeadersResponse(
+            success=True,
+            headers=headers,
+            csv_data=csv_data
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error generating headers: {str(e)}")
+        return GenerateHeadersResponse(
+            success=False,
+            error_message=f"Failed to generate headers: {str(e)}"
+        ) 

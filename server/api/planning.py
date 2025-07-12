@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from langgraph.checkpoint.memory import MemorySaver
+from starlette.websockets import WebSocketState
 
 from agents.planning.graph.graph_builder import (
     create_planning_graph,
@@ -28,6 +29,8 @@ from agents.planning.serialization import (
 )
 from agents.planning.factory import create_new_experiment_state, add_chat_message
 from config import validate_openai_config
+from agents.planning.graph.helpers import extract_user_intent, determine_section_to_edit
+from agents.planning.transitions import transition_to_stage
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +125,6 @@ def _get_or_create_graph_components(session_id: str) -> Dict[str, Any]:
     """Get or create graph components for a session."""
     if session_id not in _active_graphs:
         # Use an in-memory checkpointer for each session
-        logger.info(f"Using MemorySaver for session {session_id}")
         checkpointer = MemorySaver()
         
         # Create graph
@@ -179,7 +181,17 @@ async def _is_graph_interrupted(session_id: str) -> bool:
             next_nodes = [str(node) for node in state_snapshot.next]
             # These are the nodes we interrupt before
             interrupt_nodes = ["variable_agent", "design_agent", "methodology_agent", "data_agent", "review_agent"]
-            return any(node in interrupt_nodes for node in next_nodes)
+            is_interrupted = any(node in interrupt_nodes for node in next_nodes)
+            
+            # NEW: Check if we should skip interrupt due to edit mode
+            if is_interrupted and state_snapshot.values:
+                from agents.planning.graph.helpers import should_skip_interrupt_for_edit_mode
+                should_skip = should_skip_interrupt_for_edit_mode(state_snapshot.values)
+                if should_skip:
+                    logger.info(f"Skipping interrupt for session {session_id} due to edit mode")
+                    return False
+            
+            return is_interrupted
         
         return False
     except Exception as e:
@@ -188,7 +200,7 @@ async def _is_graph_interrupted(session_id: str) -> bool:
 
 
 async def _get_current_stage_from_graph(session_id: str) -> Optional[str]:
-    """Get the current stage from the graph state."""
+    """Get the current stage from the graph state - this should return the stage that was just completed and needs approval."""
     try:
         graph_components = _get_or_create_graph_components(session_id)
         graph = graph_components["graph"]
@@ -198,19 +210,23 @@ async def _get_current_stage_from_graph(session_id: str) -> Optional[str]:
         
         if state_snapshot and state_snapshot.next:
             next_nodes = [str(node) for node in state_snapshot.next]
-            # Map agent nodes to stage names
-            node_to_stage = {
-                "objective_agent": "objective_setting",
-                "variable_agent": "variable_identification",
-                "design_agent": "experimental_design",
-                "methodology_agent": "methodology_protocol",
-                "data_agent": "data_planning",
-                "review_agent": "final_review"
+            # Map next agent nodes to the stage that was just completed
+            # When variable_agent is next, it means objective_setting was just completed
+            next_to_completed_stage = {
+                "variable_agent": "objective_setting",
+                "design_agent": "variable_identification", 
+                "methodology_agent": "experimental_design",
+                "data_agent": "methodology_protocol",
+                "review_agent": "data_planning",
+                "__end__": "final_review"
             }
             
             for node in next_nodes:
-                if node in node_to_stage:
-                    return node_to_stage[node]
+                if node in next_to_completed_stage:
+                    return next_to_completed_stage[node]
+                # Handle END state
+                if node == "__end__":
+                    return "final_review"
         
         return None
     except Exception as e:
@@ -322,12 +338,11 @@ async def start_hitl_planning_session(request: StartHITLPlanningRequest):
         is_interrupted = await _is_graph_interrupted(session_id)
         current_stage = await _get_current_stage_from_graph(session_id)
         
-        logger.info(f"Started HITL planning session {session_id}, interrupted: {is_interrupted}, stage: {current_stage}")
         
         return HITLSessionResponse(
             session_id=session_id,
             experiment_id=current_state["experiment_id"],
-            current_stage=current_stage or current_state.get("current_stage", "objective_setting"),
+            current_stage=current_state.get("current_stage") or current_stage or "objective_setting",
             is_waiting_for_approval=is_interrupted,
             pending_approval={"stage": current_stage, "status": "waiting"} if is_interrupted else None,
             streaming_enabled=True,
@@ -349,7 +364,6 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
     await websocket.accept()
     _active_connections[session_id] = websocket
     
-    logger.info(f"WebSocket connection established for session {session_id}")
     
     try:
         # Send initial session status
@@ -363,15 +377,15 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
             # Check if session is already complete
             is_complete = await _is_graph_complete(session_id)
             if is_complete:
-                logger.info(f"Session {session_id} is already complete")
                 await _send_completion_message(websocket, session_id, current_state)
                 return
             
             # If graph is interrupted, send approval request
             is_interrupted = await _is_graph_interrupted(session_id)
             if is_interrupted:
-                current_stage = await _get_current_stage_from_graph(session_id)
-                await _send_approval_request(websocket, session_id, {"stage": current_stage, "status": "waiting"})
+                graph_stage = await _get_current_stage_from_graph(session_id)
+                correct_stage = current_state.get("current_stage") or graph_stage or "objective_setting"
+                await _send_approval_request(websocket, session_id, {"stage": correct_stage, "status": "waiting"})
         
         # Listen for messages from frontend
         while True:
@@ -380,7 +394,6 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
                 message_data = await websocket.receive_text()
                 message = json.loads(message_data)
                 
-                logger.info(f"Received WebSocket message: {message}")
                 
                 # Route message based on type
                 if message.get("type") == "user_message":
@@ -395,7 +408,6 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
                     })
                 elif message.get("type") == "close_session":
                     # Handle explicit session closure request from frontend
-                    logger.info(f"Received close_session request for {session_id}")
                     await _send_websocket_message(websocket, {
                         "type": "session_closed",
                         "data": {"message": "Session closed by user request"},
@@ -413,7 +425,21 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
                 await _send_error_message(websocket, session_id, "Invalid JSON format")
             except Exception as e:
                 logger.error(f"Error processing WebSocket message: {e}")
-                await _send_error_message(websocket, session_id, f"Error processing message: {str(e)}")
+
+                # If the connection has already been closed on either side
+                # we should exit the loop and clean-up instead of logging
+                # the same error repeatedly.
+                if (
+                    websocket.application_state != WebSocketState.CONNECTED
+                    or websocket.client_state != WebSocketState.CONNECTED
+                ):
+                        break
+
+                # Attempt to relay the error to the client (will be silently
+                # skipped if the socket is indeed closed).
+                await _send_error_message(
+                    websocket, session_id, f"Error processing message: {str(e)}"
+                )
                 
     except WebSocketDisconnect:
         logger.info(f"WebSocket connection closed for session {session_id}")
@@ -423,16 +449,42 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
         # Clean up connection
         if session_id in _active_connections:
             del _active_connections[session_id]
-        logger.info(f"Cleaned up WebSocket connection for session {session_id}")
 
 
 # WebSocket helper functions
 async def _send_websocket_message(websocket: WebSocket, message: Dict[str, Any]):
-    """Send a message via WebSocket."""
+    """Safely send a message via WebSocket.
+
+    This helper now checks the application/client connection state before
+    attempting to send.  If the socket is already closed (for instance, when
+    the user refreshes the page or the session ends) we silently skip the
+    send to avoid noisy runtime errors like:
+
+        RuntimeError: WebSocket is not connected. Need to call "accept" first.
+
+    or
+
+        RuntimeError: Cannot call "send" once a close message has been sent.
+
+    Any failure to send is therefore downgraded to a warning so the planning
+    graph can continue/terminate gracefully without spamming the logs.
+    """
+
     try:
-        await websocket.send_text(json.dumps(message))
-    except Exception as e:
-        logger.error(f"Failed to send WebSocket message: {e}")
+        # Only attempt to send if the socket is still connected on both sides.
+        if (
+            websocket.application_state == WebSocketState.CONNECTED
+            and websocket.client_state == WebSocketState.CONNECTED
+        ):
+            await websocket.send_text(json.dumps(message))
+        else:
+            # Socket has already been closed – skip sending to prevent errors.
+            logger.debug("WebSocket not connected, skipping send.")
+    except RuntimeError as exc:
+        # Typical Starlette error once a close frame has been sent.
+        logger.warning(f"WebSocket send failed – connection already closed: {exc}")
+    except Exception as exc:
+        logger.error(f"Failed to send WebSocket message: {exc}")
 
 
 async def _send_session_status(websocket: WebSocket, session_id: str):
@@ -445,7 +497,7 @@ async def _send_session_status(websocket: WebSocket, session_id: str):
         status_data = {
             "session_id": session_id,
             "is_active": current_state is not None,
-            "current_stage": current_stage or (current_state.get("current_stage") if current_state else None),
+            "current_stage": (current_state.get("current_stage") if current_state else None) or current_stage,
             "is_waiting_for_approval": is_interrupted
         }
         
@@ -462,6 +514,13 @@ async def _send_planning_update(websocket: WebSocket, session_id: str, state: Ex
     """Send planning state update to frontend."""
     try:
         serialized_state = serialize_state_to_dict(state)
+        
+        # Apply the same stage prioritization logic as API responses
+        # Prioritize state's current_stage over graph-based stage during active operations
+        graph_stage = await _get_current_stage_from_graph(session_id)
+        correct_stage = state.get("current_stage") or graph_stage or "objective_setting"
+        serialized_state["current_stage"] = correct_stage
+        
         await _send_websocket_message(websocket, {
             "type": "planning_update",
             "data": {"state": serialized_state},
@@ -474,9 +533,19 @@ async def _send_planning_update(websocket: WebSocket, session_id: str, state: Ex
 async def _send_approval_request(websocket: WebSocket, session_id: str, approval_data: Dict[str, Any]):
     """Send approval request to frontend."""
     try:
+        # Create display message for completed stage
+        current_stage = approval_data.get("stage", "")
+        stage_display = current_stage.replace("_", " ").title()
+        
+        # Add display message to show what stage was completed
+        enhanced_approval_data = {
+            **approval_data,
+            "display_message": f"Review completed {stage_display} work"
+        }
+        
         await _send_websocket_message(websocket, {
             "type": "approval_request",
-            "data": approval_data,
+            "data": enhanced_approval_data,
             "session_id": session_id
         })
     except Exception as e:
@@ -503,7 +572,6 @@ async def _handle_user_message(websocket: WebSocket, session_id: str, message: D
             await _send_error_message(websocket, session_id, "Empty user message")
             return
             
-        logger.info(f"Processing user message for session {session_id}: {user_input}")
         
         graph_components = _get_or_create_graph_components(session_id)
         graph = graph_components["graph"]
@@ -515,7 +583,112 @@ async def _handle_user_message(websocket: WebSocket, session_id: str, message: D
             await _send_error_message(websocket, session_id, "Session not found")
             return
 
-        # Add user message to state
+        # ------------------------------------------------------------
+        # NEW: Handle messages received while graph is interrupted
+        # ------------------------------------------------------------
+
+        is_interrupted = await _is_graph_interrupted(session_id)
+        
+
+        if is_interrupted:
+            # Decide whether this looks like approval or an edit request
+            intent = extract_user_intent(user_input)
+            
+
+            if intent == "approval":
+                # Re-route as an approval_response = True so normal flow continues
+                await _handle_approval_response(
+                    websocket,
+                    session_id,
+                    {
+                        "type": "approval_response",
+                        "data": {"approved": True, "feedback": ""},
+                        "session_id": session_id,
+                    },
+                )
+                return  # handled
+
+            elif intent == "edit":
+                # SIMPLE APPROACH: Process edit and stay in same approval context
+                target_section = determine_section_to_edit(user_input, current_state)
+                
+                # Add user edit request to chat history
+                updated_state = add_chat_message(current_state, "user", user_input)
+                
+                # Process the edit directly by calling the appropriate agent
+                if target_section == "objective_setting":
+                    from agents.planning.agents.objective_agent import ObjectiveAgent
+                    agent = ObjectiveAgent()
+                elif target_section == "variable_identification":
+                    from agents.planning.agents.variable_agent import VariableAgent
+                    agent = VariableAgent()
+                elif target_section == "experimental_design":
+                    from agents.planning.agents.design_agent import DesignAgent
+                    agent = DesignAgent()
+                elif target_section == "methodology_protocol":
+                    from agents.planning.agents.methodology_agent import MethodologyAgent
+                    agent = MethodologyAgent()
+                elif target_section == "data_planning":
+                    from agents.planning.agents.data_agent import DataAgent
+                    agent = DataAgent()
+                else:
+                    # Fallback to current stage agent
+                    current_stage = current_state.get("current_stage", "objective_setting")
+                    if current_stage == "variable_identification":
+                        from agents.planning.agents.variable_agent import VariableAgent
+                        agent = VariableAgent()
+                    else:
+                        from agents.planning.agents.objective_agent import ObjectiveAgent
+                        agent = ObjectiveAgent()
+                
+                # Execute the agent to process the edit
+                try:
+                    edited_state = agent.execute(updated_state, user_input)
+                    
+                    # Update the graph state with the edited content
+                    await graph.aupdate_state(config, edited_state)
+                    
+                    # Send updated state to frontend - stay in same approval context
+                    await _send_planning_update(websocket, session_id, edited_state)
+                    
+                    # Send the same approval request again with updated content
+                    original_stage = await _get_current_stage_from_graph(session_id)
+                    if not original_stage:
+                        original_stage = current_state.get("current_stage", "objective_setting")
+                    await _send_approval_request(websocket, session_id, {"stage": original_stage, "status": "waiting"})
+                    
+                except Exception as e:
+                    logger.error(f"Error processing edit: {e}")
+                    await _send_error_message(websocket, session_id, f"Error processing edit: {str(e)}")
+                
+                return  # Stay in current approval context
+            
+            else:
+                # Intent is unclear - ask for clarification
+                await _send_websocket_message(websocket, {
+                    "type": "planning_update",
+                    "data": {
+                        "state": serialize_state_to_dict(current_state),
+                        "clarification_needed": True
+                    },
+                    "session_id": session_id
+                })
+                
+                clarification_message = add_chat_message(
+                    current_state,
+                    "assistant",
+                    "I'm not sure if you'd like to approve this section or make changes. "
+                    "Please either say 'approve' to continue, or clearly specify what you'd like to modify."
+                )
+                
+                await graph.aupdate_state(config, clarification_message)
+                await _send_planning_update(websocket, session_id, clarification_message)
+                return
+
+        # ------------------------------------------------------------
+        # Normal (non-interrupted) flow
+        # ------------------------------------------------------------
+
         updated_state = add_chat_message(current_state, "user", user_input)
         await graph.aupdate_state(config, updated_state)
 
@@ -534,7 +707,6 @@ async def _handle_approval_response(websocket: WebSocket, session_id: str, messa
         approved = approval_data.get("approved", False)
         feedback = approval_data.get("feedback", "")
         
-        logger.info(f"Processing approval response for session {session_id}: approved={approved}")
         
         graph_components = _get_or_create_graph_components(session_id)
         graph = graph_components["graph"]
@@ -577,35 +749,34 @@ async def _process_planning_execution(websocket: WebSocket, session_id: str, sta
     try:
         final_state = state
         
-        # Execute graph and stream updates
+        # Execute graph and send only final result
         if resume_from_approval:
             # Resume from interrupt
-            logger.info("Resuming planning execution from interrupt")
             async for event in graph.astream(None, config, stream_mode="values"):
                 if event is not None:
                     final_state = event
-                    await _send_planning_update(websocket, session_id, final_state)
+            # Send only the final state update
+            await _send_planning_update(websocket, session_id, final_state)
         else:
             # Continue with normal processing
-            logger.info("Starting new planning execution")
             async for event in graph.astream(state, config, stream_mode="values"):
                 if event is not None:
                     final_state = event
-                    await _send_planning_update(websocket, session_id, final_state)
+            # Send only the final state update
+            await _send_planning_update(websocket, session_id, final_state)
 
         # Check if graph has completed (reached END state)
         is_complete = await _is_graph_complete(session_id)
         if is_complete:
-            logger.info(f"🎯 Graph completed for session {session_id}")
             await _send_completion_message(websocket, session_id, final_state)
             return  # Exit the function as session is complete
 
         # Check if we're now interrupted at the next stage
         is_interrupted = await _is_graph_interrupted(session_id)
         if is_interrupted:
-            current_stage = await _get_current_stage_from_graph(session_id)
-            await _send_approval_request(websocket, session_id, {"stage": current_stage, "status": "waiting"})
-            logger.info(f"Interrupted at stage: {current_stage}")
+            graph_stage = await _get_current_stage_from_graph(session_id)
+            correct_stage = final_state.get("current_stage") or graph_stage or "objective_setting"
+            await _send_approval_request(websocket, session_id, {"stage": correct_stage, "status": "waiting"})
                 
     except Exception as e:
         logger.error(f"Error in planning execution: {e}")
@@ -628,7 +799,7 @@ async def get_hitl_session_status(session_id: str):
         return HITLSessionResponse(
             session_id=session_id,
             experiment_id=current_state["experiment_id"],
-            current_stage=current_stage or current_state.get("current_stage", "objective_setting"),
+            current_stage=current_state.get("current_stage") or current_stage or "objective_setting",
             is_waiting_for_approval=is_interrupted,
             pending_approval={"stage": current_stage, "status": "waiting"} if is_interrupted else None,
             streaming_enabled=True,
@@ -667,7 +838,6 @@ async def close_planning_session(session_id: str):
         if session_id in _active_connections:
             del _active_connections[session_id]
         
-        logger.info(f"Manually closed planning session {session_id}")
         
         return {
             "session_id": session_id,

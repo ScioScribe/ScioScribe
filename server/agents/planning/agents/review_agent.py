@@ -132,7 +132,7 @@ Adhere strictly to the required output format.
             state['review'] = review_output.dict()
             
             summary_message = self._create_review_summary(state)
-            state = add_chat_message(state, "assistant", summary_message)
+            self.logger.info(f"Review summary created: {summary_message}")
             self.logger.info("Successfully updated state with the final plan review.")
 
         except ValidationError as e:

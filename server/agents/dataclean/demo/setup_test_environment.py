@@ -102,7 +102,7 @@ def create_env_file():
     if not os.path.exists('.env'):
         env_content = """# ScioScribe Configuration
 OPENAI_API_KEY=your-api-key-here
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-4.1
 DEBUG=true
 """
         with open('.env', 'w') as f:

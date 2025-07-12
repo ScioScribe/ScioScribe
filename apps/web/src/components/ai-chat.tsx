@@ -31,8 +31,7 @@ import { ChatSuggestions } from "@/components/chat-suggestions"
 import type { Message, MessageHandlerContext, AiChatProps, WebSocketMessage } from "@/types/chat-types"
 
 export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChatProps) {
-  // Debug: Add render tracking
-  console.log("🔄 AiChat render")
+  
   
   // State management
   const [messages, setMessages] = useState<Message[]>([
@@ -105,7 +104,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     onVisualizationGenerated,
     plan,
     csv
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   ])
 
   // WebSocket message handler for planning
@@ -130,18 +129,12 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       setIsConnected(false)
       
       // Handle different error types
-      const errorWithDetails = error as Event & {
-        sessionId?: string
-        queuedMessages?: number
-        lastError?: string
-      }
-      
       if (error.type === "max_reconnect_attempts") {
         setConnectionStatus("failed")
         
         const maxAttemptsMessage: Message = {
           id: (Date.now() + 1).toString(),
-          content: `❌ **Connection Failed**\n\nCould not reconnect to planning server after multiple attempts.\n\nQueued messages: ${errorWithDetails.queuedMessages || 0}\n\n**Options:**\n• Click the retry button in the connection status bar\n• Refresh the page to start a new session\n• Check your internet connection\n\nYour progress has been saved and can be recovered.`,
+          content: `❌ **Connection Lost**\n\nUnable to reconnect. Please refresh the page to continue.`,
           sender: "ai",
           timestamp: new Date(),
           mode: "plan",
@@ -153,7 +146,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         
         const errorMessage: Message = {
           id: (Date.now() + 1).toString(),
-          content: `❌ **WebSocket Connection Error**\n\nLost connection to planning server.\n\nError: ${error.type || 'Connection failed'}\n\nTrying to reconnect...`,
+          content: `⚠️ Connection interrupted. Attempting to reconnect...`,
           sender: "ai",
           timestamp: new Date(),
           mode: "plan",
@@ -167,11 +160,9 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       setIsConnected(true)
       setConnectionStatus("connected")
       
-      // Use getter to access current session id
-      const currentSession = messageHandlerContext.getPlanningSession()
       const connectionMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: `✅ **WebSocket Connected**\n\nReal-time communication established with planning server.\n\nSession ID: ${currentSession.session_id}\n\nYou can now send messages and receive real-time updates.`,
+        content: `✅ Connected. Ready to continue planning.`,
         sender: "ai",
         timestamp: new Date(),
         mode: "plan",
@@ -187,7 +178,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       if (!event.wasClean) {
         const disconnectMessage: Message = {
           id: (Date.now() + 1).toString(),
-          content: `🔒 **WebSocket Disconnected**\n\nConnection to planning server was lost.\n\nCode: ${event.code}\nReason: ${event.reason || 'Unknown'}\n\nAttempting to reconnect...`,
+          content: `🔒 Connection lost. Attempting to reconnect...`,
           sender: "ai",
           timestamp: new Date(),
           mode: "plan",
@@ -197,7 +188,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       }
     }
   ), [handlePlanningWebSocketMessageWrapper
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   ])
 
   // Mode-specific message handlers
@@ -240,7 +231,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         // Add initial response message
         const initialMessage: Message = {
           id: (Date.now() + 1).toString(),
-          content: `🎯 **Planning Session Started**\n\nSession ID: ${sessionResponse.session_id}\nExperiment ID: ${sessionResponse.experiment_id}\n\nI'm analyzing your research query: "${message}"\n\nEstablishing WebSocket connection for real-time communication...\n\nI'll help you create a comprehensive experiment plan through:\n\n• **Objective Definition** - Clarifying your research goals\n• **Methodology Selection** - Choosing appropriate methods\n• **Variable Identification** - Defining key variables\n• **Data Requirements** - Specifying data needs\n• **Design Validation** - Reviewing the complete plan\n\nConnecting to planning agent...`,
+          content: `🎯 **Planning Your Experiment**\n\nAnalyzing: "${message}"\n\nI'll guide you through creating a comprehensive research plan.`,
           sender: "ai",
           timestamp: new Date(),
           mode: "plan",
@@ -312,26 +303,49 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       if (!datacleanSession.is_active) {
         console.log("🧹 Initializing dataclean session with CSV integration")
         
-        const sessionResponse = await initializeDatacleanSession("demo-user", csv)
+        const sessionResponse = await initializeDatacleanSession("demo-user", csv, message)
+        
+        // Create a temporary context with the new session information
+        const tempContext = {
+          ...messageHandlerContext,
+          getDatacleanSession: () => ({
+            session_id: sessionResponse.session_id,
+            experiment_id: null,
+            is_active: true,
+            is_waiting_for_approval: false,
+            websocket_connection: null,
+            last_activity: new Date()
+          })
+        }
         
         // Enhanced welcome message that mentions CSV data if available
         if (csv && csv.trim()) {
           const csvWelcomeMessage: Message = {
             id: (Date.now() + 1).toString(),
-            content: `🧹 **Data Cleaning Session Started**\n\nSession ID: ${sessionResponse.session_id}\n\n**CSV Data Detected:** I can see you have dataset loaded!\n\nI'm ready to help you with:\n• Data quality analysis\n• Cleaning and fixing issues\n• Removing duplicates\n• Handling missing values\n• Data transformation\n\nProcessing your message: "${message}"\n\nLet me analyze your data...`,
+            content: `Hello! Your dataset is ready.\n\n**Tell me to:**\n• "analyze data quality" \n• "clean the data" \n• "describe columns"\n• "add/delete rows" \n• "fix missing values"\n\nWhat first?`,
             sender: "ai",
             timestamp: new Date(),
             mode: "execute",
             response_type: "text"
           }
           setMessages((prev) => [...prev, csvWelcomeMessage])
-          
-          // Send message with CSV context
-          await handleExecuteMessage(`CSV Data Available. User request: ${message}`, messageHandlerContext)
         } else {
           // Standard welcome without CSV
-          createDatacleanWelcomeMessage(sessionResponse.session_id, sessionResponse.response as unknown as Record<string, unknown>, messageHandlerContext)
-          await handleExecuteMessage(message, messageHandlerContext)
+          createDatacleanWelcomeMessage(sessionResponse.session_id, sessionResponse.response as unknown as Record<string, unknown>, tempContext)
+        }
+        
+        // Session initialization already sent the user's message, so process the response
+        const response = sessionResponse.response as any
+        if (response && response.response_message) {
+          const responseMessage: Message = {
+            id: (Date.now() + 2).toString(),
+            content: response.response_message,
+            sender: "ai",
+            timestamp: new Date(),
+            mode: "execute",
+            response_type: "text"
+          }
+          setMessages((prev) => [...prev, responseMessage])
         }
         
         // Update session activity
@@ -489,7 +503,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       if (success) {
         const retryMessage: Message = {
           id: (Date.now() + 1).toString(),
-          content: `🔄 **Retry Connection**\n\nAttempting to reconnect to planning server...\n\nSession ID: ${currentSession.session_id}\n\nPlease wait while we restore your connection.`,
+          content: `🔄 Reconnecting...`,
           sender: "ai",
           timestamp: new Date(),
           mode: "plan",

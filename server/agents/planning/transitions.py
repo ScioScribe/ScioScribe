@@ -286,15 +286,53 @@ def transition_to_stage(
     Raises:
         TransitionError: If transition is not allowed
     """
-    current_stage = state["current_stage"]
+    current_stage = state.get("current_stage", "unknown")
+    
+    
+    # Check if there's a return_to_stage that should be preserved
+    return_to_stage = state.get('return_to_stage')
+    
+    # Preserve ALL critical state before making changes
+    critical_state_backup = {
+        'return_to_stage': return_to_stage,
+        'edit_context': state.get('edit_context'),
+        'experiment_id': state.get('experiment_id'),
+        'chat_history': state.get('chat_history'),
+        'errors': state.get('errors'),
+    }
+    
+    # Log current state completeness
+    state_completeness = {
+        'experiment_objective': bool(state.get('experiment_objective')),
+        'independent_variables': bool(state.get('independent_variables')),
+        'dependent_variables': bool(state.get('dependent_variables')),
+        'experimental_groups': bool(state.get('experimental_groups')),
+        'methodology_steps': bool(state.get('methodology_steps')),
+        'data_collection_plan': bool(state.get('data_collection_plan'))
+    }
     
     # Validate the transition
-    validate_stage_transition(state, target_stage, force)
+    try:
+        validate_stage_transition(state, target_stage, force)
+    except Exception as e:
+        if not force:
+            raise
     
     # Update stage (LangGraph manages completion tracking via checkpoints)
+    old_stage = state.get("current_stage")
     state["current_stage"] = target_stage
     
-    logger.info(f"Transitioned from {current_stage} to {target_stage}")
+    
+    for key, value in critical_state_backup.items():
+        if value is not None:  # Only restore non-None values
+            if key not in state or state[key] != value:
+                state[key] = value
+    
+    # Special handling for return_to_stage - this is critical for edit flows
+    if return_to_stage:
+        state["return_to_stage"] = return_to_stage
+    
+    
     
     return state
 

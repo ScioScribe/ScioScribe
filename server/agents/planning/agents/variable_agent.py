@@ -63,7 +63,8 @@ class VariableAgent(BaseAgent):
         """
         self.logger.info(f"Processing state for experiment: {state.get('experiment_id')}")
         
-        user_input = self._get_latest_user_input(state)
+        from ..graph.helpers import get_latest_user_input
+        user_input = get_latest_user_input(state)
         chat_history = state.get("chat_history", [])
         
         prompt = ChatPromptTemplate.from_messages([
@@ -105,16 +106,18 @@ class VariableAgent(BaseAgent):
             state['dependent_variables'] = [var.dict() for var in response.dependent_variables]
             state['control_variables'] = [var.dict() for var in response.control_variables]
             
-            agent_response_text = "Thanks! I've updated the variable definitions in the plan."
+            agent_response_text = self._create_variable_summary(state)
             self.logger.info("Successfully updated state with structured variable output.")
             
         except Exception as e:
             self.logger.error(f"Error invoking structured LLM for variables: {e}", exc_info=True)
             agent_response_text = "I had trouble understanding the variable details. Could you please clarify or provide them in a more structured way?"
 
-        updated_state = add_chat_message(state, "assistant", agent_response_text)
+        # Add agent response to chat history so it appears in the AI chat
+        state = add_chat_message(state, "assistant", agent_response_text)
+        self.logger.info(f"Variable agent response: {agent_response_text}")
         
-        return updated_state
+        return state
 
     def validate_stage_requirements(
         self, state: ExperimentPlanState
@@ -145,13 +148,38 @@ class VariableAgent(BaseAgent):
 
         return is_valid, missing_requirements
 
-    def _get_latest_user_input(self, state: ExperimentPlanState) -> str:
-        """Extract the latest user input from chat history."""
-        chat_history = state.get("chat_history", [])
-        for message in reversed(chat_history):
-            if message.get("role") == "user":
-                return message.get("content", "")
-        return ""
+    def _create_variable_summary(self, state: ExperimentPlanState) -> str:
+        """Create a formatted summary of the variable definitions."""
+        summary_parts = ["Updated the variable definitions:\n"]
+        
+        # Independent variables
+        independent_vars = state.get('independent_variables', [])
+        if independent_vars:
+            summary_parts.append("**Independent Variables:**")
+            for var in independent_vars:
+                name = var.get('name', 'Unnamed')
+                description = var.get('description', 'No description')
+                summary_parts.append(f"- **{name}**: {description}")
+        
+        # Dependent variables  
+        dependent_vars = state.get('dependent_variables', [])
+        if dependent_vars:
+            summary_parts.append("\n**Dependent Variables:**")
+            for var in dependent_vars:
+                name = var.get('name', 'Unnamed')
+                description = var.get('description', 'No description')
+                summary_parts.append(f"- **{name}**: {description}")
+        
+        # Control variables
+        control_vars = state.get('control_variables', [])
+        if control_vars:
+            summary_parts.append("\n**Control Variables:**")
+            for var in control_vars:
+                name = var.get('name', 'Unnamed')
+                description = var.get('description', 'No description')
+                summary_parts.append(f"- **{name}**: {description}")
+        
+        return "\n".join(summary_parts)
 
     def generate_questions(self, state: ExperimentPlanState) -> List[str]:
         """

@@ -21,7 +21,7 @@ from .helpers import (
 logger = logging.getLogger(__name__)
 
 
-def objective_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+def objective_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
     """
     Check if objective setting is complete with error handling.
     
@@ -33,25 +33,47 @@ def objective_completion_check(state: ExperimentPlanState) -> Literal["continue"
         state: Current experiment plan state
         
     Returns:
-        "continue" if objectives are complete, "retry" if more work needed
+        "continue" if objectives are complete, "retry" if more work needed,
+        "return_to_original" if this was an edit and should return to original stage
     """
-    def _check_objective_completion(state: ExperimentPlanState) -> Literal["continue", "retry"]:
-        # Use the validate_objective_completeness function with 0-100 scoring
-        from ..prompts.objective_prompts import validate_objective_completeness
+    def _check_objective_completion(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
+        # Check if this was an edit operation that should return to original stage
+        return_to_stage = state.get('return_to_stage')
+        current_stage = state.get('current_stage', 'unknown')
         
+        
+        # Log current objective content
         objective = state.get('experiment_objective')
         hypothesis = state.get('hypothesis')
         research_query = state.get('research_query', '')
         
+        
+        if return_to_stage:  # Any edit mode should return to original stage
+            # Use the validate_objective_completeness function with 0-100 scoring
+            from ..prompts.objective_prompts import validate_objective_completeness
+            
+            validation_results = validate_objective_completeness(objective, hypothesis, research_query)
+            score = validation_results.get('score', 0)
+            
+            
+            # If edit is complete enough (≥70 for edits), return to original stage
+            if score >= 70:
+                # NOTE: Edit mode will be cleared in the return_router node
+                return "return_to_original"
+            else:
+                return "retry"
+        
+        # Normal flow - use higher threshold for continuing to next stage
+        from ..prompts.objective_prompts import validate_objective_completeness
+        
         validation_results = validate_objective_completeness(objective, hypothesis, research_query)
         score = validation_results.get('score', 0)
         
+        
         # Only continue if score is ≥80 as requested
         if score >= 80:
-            logger.info(f"Objective completion check: PASS (score: {score})")
             return "continue"
         else:
-            logger.info(f"Objective completion check: RETRY (score: {score}, need ≥80)")
             return "retry"
     
     return safe_conditional_check(
@@ -62,7 +84,7 @@ def objective_completion_check(state: ExperimentPlanState) -> Literal["continue"
     )
 
 
-def variable_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+def variable_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
     """
     Check if variable identification is complete with error handling.
     
@@ -74,9 +96,31 @@ def variable_completion_check(state: ExperimentPlanState) -> Literal["continue",
         state: Current experiment plan state
         
     Returns:
-        "continue" if variables are complete, "retry" if more work needed
+        "continue" if variables are complete, "retry" if more work needed,
+        "return_to_original" if this was an edit and should return to original stage
     """
-    def _check_variable_completion(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+    def _check_variable_completion(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
+        # Check if this was an edit operation that should return to original stage
+        return_to_stage = state.get('return_to_stage')
+        edit_mode = state.get('edit_mode', False)
+        
+        if return_to_stage:  # Any edit mode should return to original stage
+            independent_vars = state.get('independent_variables', [])
+            dependent_vars = state.get('dependent_variables', [])
+            control_vars = state.get('control_variables', [])
+            
+            logger.info(f"[VARIABLE_COMPLETION] Edit mode check - return_to_stage: {return_to_stage}, edit_mode: {edit_mode}")
+            logger.info(f"[VARIABLE_COMPLETION] Variables - indep: {len(independent_vars)}, dep: {len(dependent_vars)}, control: {len(control_vars)}")
+            
+            # For edits, use more lenient criteria (at least some variables defined)
+            if independent_vars and dependent_vars:
+                logger.info(f"[VARIABLE_COMPLETION] ✅ Edit complete, returning to {return_to_stage}")
+                return "return_to_original"
+            else:
+                logger.info(f"[VARIABLE_COMPLETION] ❌ Edit not complete, retrying")
+                return "retry"
+        
+        # Normal flow - use stricter criteria for continuing to next stage
         independent_vars = state.get('independent_variables', [])
         dependent_vars = state.get('dependent_variables', [])
         control_vars = state.get('control_variables', [])
@@ -87,10 +131,8 @@ def variable_completion_check(state: ExperimentPlanState) -> Literal["continue",
             if (len(independent_vars) >= 1 and 
                 len(dependent_vars) >= 1 and 
                 len(control_vars) >= 1):
-                logger.info("Variable completion check: PASS")
                 return "continue"
         
-        logger.info("Variable completion check: RETRY")
         return "retry"
     
     return safe_conditional_check(
@@ -101,7 +143,7 @@ def variable_completion_check(state: ExperimentPlanState) -> Literal["continue",
     )
 
 
-def design_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+def design_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
     """
     Check if experimental design is complete with error handling.
     
@@ -113,9 +155,24 @@ def design_completion_check(state: ExperimentPlanState) -> Literal["continue", "
         state: Current experiment plan state
         
     Returns:
-        "continue" if design is complete, "retry" if more work needed
+        "continue" if design is complete, "retry" if more work needed,
+        "return_to_original" if this was an edit and should return to original stage
     """
-    def _check_design_completion(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+    def _check_design_completion(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
+        # Check if this was an edit operation that should return to original stage
+        return_to_stage = state.get('return_to_stage')
+        if return_to_stage:  # Any edit mode should return to original stage
+            experimental_groups = state.get('experimental_groups', [])
+            control_groups = state.get('control_groups', [])
+            
+            # For edits, use more lenient criteria
+            if experimental_groups and control_groups:
+                # NOTE: Edit mode will be cleared in the return_router node
+                return "return_to_original"
+            else:
+                return "retry"
+        
+        # Normal flow - use stricter criteria
         experimental_groups = state.get('experimental_groups', [])
         control_groups = state.get('control_groups', [])
         sample_size = state.get('sample_size', {})
@@ -126,10 +183,8 @@ def design_completion_check(state: ExperimentPlanState) -> Literal["continue", "
             if (len(experimental_groups) >= 1 and 
                 len(control_groups) >= 1 and 
                 isinstance(sample_size, dict) and sample_size):
-                logger.info("Design completion check: PASS")
                 return "continue"
         
-        logger.info("Design completion check: RETRY")
         return "retry"
     
     return safe_conditional_check(
@@ -140,7 +195,7 @@ def design_completion_check(state: ExperimentPlanState) -> Literal["continue", "
     )
 
 
-def methodology_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+def methodology_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
     """
     Check if methodology and protocol development is complete with error handling.
     
@@ -152,9 +207,24 @@ def methodology_completion_check(state: ExperimentPlanState) -> Literal["continu
         state: Current experiment plan state
         
     Returns:
-        "continue" if methodology is complete, "retry" if more work needed
+        "continue" if methodology is complete, "retry" if more work needed,
+        "return_to_original" if this was an edit and should return to original stage
     """
-    def _check_methodology_completion(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+    def _check_methodology_completion(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
+        # Check if this was an edit operation that should return to original stage
+        return_to_stage = state.get('return_to_stage')
+        if return_to_stage:  # Any edit mode should return to original stage
+            methodology_steps = state.get('methodology_steps', [])
+            materials_equipment = state.get('materials_equipment', [])
+            
+            # For edits, use more lenient criteria
+            if methodology_steps and materials_equipment:
+                # NOTE: Edit mode will be cleared in the return_router node
+                return "return_to_original"
+            else:
+                return "retry"
+        
+        # Normal flow - use stricter criteria
         methodology_steps = state.get('methodology_steps', [])
         materials_equipment = state.get('materials_equipment', [])
         
@@ -163,10 +233,8 @@ def methodology_completion_check(state: ExperimentPlanState) -> Literal["continu
             # Additional validation for methodology structure
             if (len(methodology_steps) >= 3 and  # At least 3 steps for meaningful protocol
                 len(materials_equipment) >= 1):
-                logger.info("Methodology completion check: PASS")
                 return "continue"
         
-        logger.info("Methodology completion check: RETRY")
         return "retry"
     
     return safe_conditional_check(
@@ -177,7 +245,7 @@ def methodology_completion_check(state: ExperimentPlanState) -> Literal["continu
     )
 
 
-def data_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+def data_completion_check(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
     """
     Check if data planning is complete with error handling.
     
@@ -189,9 +257,24 @@ def data_completion_check(state: ExperimentPlanState) -> Literal["continue", "re
         state: Current experiment plan state
         
     Returns:
-        "continue" if data planning is complete, "retry" if more work needed
+        "continue" if data planning is complete, "retry" if more work needed,
+        "return_to_original" if this was an edit and should return to original stage
     """
-    def _check_data_completion(state: ExperimentPlanState) -> Literal["continue", "retry"]:
+    def _check_data_completion(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
+        # Check if this was an edit operation that should return to original stage
+        return_to_stage = state.get('return_to_stage')
+        if return_to_stage:  # Any edit mode should return to original stage
+            data_collection_plan = state.get('data_collection_plan', {})
+            data_analysis_plan = state.get('data_analysis_plan', {})
+            
+            # For edits, use more lenient criteria
+            if data_collection_plan and data_analysis_plan:
+                # NOTE: Edit mode will be cleared in the return_router node
+                return "return_to_original"
+            else:
+                return "retry"
+        
+        # Normal flow - use stricter criteria
         data_collection_plan = state.get('data_collection_plan', {})
         data_analysis_plan = state.get('data_analysis_plan', {})
         
@@ -200,10 +283,8 @@ def data_completion_check(state: ExperimentPlanState) -> Literal["continue", "re
             # Additional validation for data planning structure
             if (isinstance(data_collection_plan, dict) and data_collection_plan and
                 isinstance(data_analysis_plan, dict) and data_analysis_plan):
-                logger.info("Data planning completion check: PASS")
                 return "continue"
         
-        logger.info("Data planning completion check: RETRY")
         return "retry"
     
     return safe_conditional_check(
@@ -235,13 +316,10 @@ def review_completion_check(state: ExperimentPlanState) -> Literal["complete", "
         user_intent = extract_user_intent(user_input)
         
         # Log the decision process for debugging
-        logger.info(f"Review completion check - User input: '{user_input}' -> Intent: {user_intent}")
         
         if user_intent == "approval":
-            logger.info("Review completion check: COMPLETE - User approved the plan")
             return "complete"
         elif user_intent == "edit":
-            logger.info("Review completion check: EDIT_SECTION - User wants to make changes")
             return "edit_section"
         else:
             # For unclear intent, check if this is the first time in review
@@ -250,17 +328,14 @@ def review_completion_check(state: ExperimentPlanState) -> Literal["complete", "
             
             if len(review_messages) <= 1:
                 # First time in review, likely needs user input
-                logger.info("Review completion check: EDIT_SECTION - First time in review, waiting for user decision")
                 return "edit_section"
             else:
                 # Multiple review interactions, be more permissive for completion
                 # Check for any positive indicators
                 positive_indicators = ["good", "ok", "fine", "ready", "done", "thanks"]
                 if any(indicator in user_input.lower() for indicator in positive_indicators):
-                    logger.info("Review completion check: COMPLETE - Positive indicators detected")
                     return "complete"
                 else:
-                    logger.info("Review completion check: EDIT_SECTION - Unclear intent, defaulting to edit")
                     return "edit_section"
     
     return safe_conditional_check(
@@ -292,7 +367,6 @@ def route_to_section(state: ExperimentPlanState) -> str:
         stage_routing_map = get_stage_routing_map()
         
         routing_key = stage_routing_map.get(section, "objective")
-        logger.info(f"Routing to section: {routing_key}")
         
         return routing_key
     
@@ -304,39 +378,7 @@ def route_to_section(state: ExperimentPlanState) -> str:
     )
 
 
-def validate_stage_completion(state: ExperimentPlanState, stage: str) -> bool:
-    """
-    Validate that a specific stage has been completed successfully.
-    
-    This function provides a unified way to check if any planning stage
-    has been completed according to its specific requirements.
-    
-    Args:
-        state: Current experiment plan state
-        stage: Name of the stage to validate
-        
-    Returns:
-        True if stage is complete, False otherwise
-    """
-    stage_validators = {
-        "objective_setting": lambda s: objective_completion_check(s) == "continue",
-        "variable_identification": lambda s: variable_completion_check(s) == "continue",
-        "experimental_design": lambda s: design_completion_check(s) == "continue",
-        "methodology_protocol": lambda s: methodology_completion_check(s) == "continue",
-        "data_planning": lambda s: data_completion_check(s) == "continue",
-        "final_review": lambda s: review_completion_check(s) == "complete"
-    }
-    
-    validator = stage_validators.get(stage)
-    if validator:
-        try:
-            return validator(state)
-        except Exception as e:
-            logger.error(f"Stage validation failed for {stage}: {str(e)}")
-            return False
-    
-    logger.warning(f"No validator found for stage: {stage}")
-    return False
+
 
 
 def get_incomplete_stages(state: ExperimentPlanState) -> list[str]:
@@ -352,6 +394,8 @@ def get_incomplete_stages(state: ExperimentPlanState) -> list[str]:
     Returns:
         List of incomplete stage names
     """
+    from ..validation import validate_stage_completion
+    
     incomplete_stages = []
     
     for stage in PLANNING_STAGES:
@@ -409,6 +453,7 @@ def should_allow_stage_transition(
             return True
         
         # Forward transitions require completion of intermediate stages
+        from ..validation import validate_stage_completion
         for i in range(from_index, to_index):
             stage = PLANNING_STAGES[i]
             if not validate_stage_completion(state, stage):

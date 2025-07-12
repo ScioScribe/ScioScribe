@@ -9,21 +9,36 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ChevronDown, Plus, FlaskRoundIcon as Flask, AlertCircle, Loader2 } from "lucide-react"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
+import { ChevronDown, Plus, FlaskRoundIcon as Flask, AlertCircle, Loader2, Trash } from "lucide-react"
 import { createExperiment, type Experiment } from "@/api/database"
 import { IRIS_EXPERIMENT_PLAN, IRIS_CSV_DATA } from "@/data/placeholder"
+import { useToast } from "@/hooks/use-toast"
 
 interface ExperimentsDropdownProps {
   experiments: Experiment[]
   selectedExperiment: Experiment | null
   onExperimentSelect?: (experiment: Experiment) => void
   onExperimentCreated?: () => void
+  onExperimentDelete?: (experimentId: string) => Promise<void>
 }
 
-export function ExperimentsDropdown({ experiments, selectedExperiment, onExperimentSelect, onExperimentCreated }: ExperimentsDropdownProps) {
+export function ExperimentsDropdown({ experiments, selectedExperiment, onExperimentSelect, onExperimentCreated, onExperimentDelete }: ExperimentsDropdownProps) {
   const [displayTitle, setDisplayTitle] = useState<string>("New Experiment")
   const [error, setError] = useState<string | null>(null)
   const [isCreating, setIsCreating] = useState(false)
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
+  const { toast } = useToast()
 
   // Update display title when selected experiment changes
   useEffect(() => {
@@ -91,6 +106,33 @@ export function ExperimentsDropdown({ experiments, selectedExperiment, onExperim
     }
   }
 
+  const handleDeleteExperiment = async (experimentId: string) => {
+    if (!onExperimentDelete) return
+    
+    setDeletingIds(prev => new Set(prev).add(experimentId))
+    
+    try {
+      await onExperimentDelete(experimentId)
+      toast({
+        title: "Experiment deleted",
+        description: "The experiment has been permanently removed.",
+      })
+    } catch (err) {
+      console.error("Failed to delete experiment:", err)
+      toast({
+        variant: "destructive",
+        title: "Failed to delete experiment",
+        description: err instanceof Error ? err.message : "An unexpected error occurred",
+      })
+    } finally {
+      setDeletingIds(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(experimentId)
+        return newSet
+      })
+    }
+  }
+
   const buttonContent = error ? (
     <>
       <AlertCircle className="h-4 w-4 mr-2 text-red-500" />
@@ -148,16 +190,60 @@ export function ExperimentsDropdown({ experiments, selectedExperiment, onExperim
           experiments.map((experiment) => (
             <DropdownMenuItem
               key={experiment.id}
-              onClick={() => handleExperimentSelect(experiment)}
-              className="text-sm dark:text-gray-300 dark:hover:bg-gray-700 dark:focus:bg-gray-700 cursor-pointer"
+              className="text-sm dark:text-gray-300 dark:hover:bg-gray-700 dark:focus:bg-gray-700 cursor-pointer group p-0"
+              onClick={(e) => {
+                // Prevent dropdown from closing when clicking on experiment row
+                e.preventDefault()
+                handleExperimentSelect(experiment)
+              }}
             >
-              <div className="flex flex-col w-full">
-                <span className="font-medium truncate">
-                  {getExperimentTitle(experiment)}
-                </span>
-                <span className="text-xs text-gray-500 dark:text-gray-400">
-                  {formatDate(experiment.created_at)}
-                </span>
+              <div className="flex items-center justify-between w-full p-2">
+                <div className="flex flex-col flex-1 min-w-0">
+                  <span className="font-medium truncate">
+                    {getExperimentTitle(experiment)}
+                  </span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    {formatDate(experiment.created_at)}
+                  </span>
+                </div>
+                <div className="flex items-center ml-2">
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-100 dark:hover:bg-red-900/20"
+                        disabled={deletingIds.has(experiment.id)}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                        }}
+                      >
+                        {deletingIds.has(experiment.id) ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Trash className="h-3 w-3 text-red-500" />
+                        )}
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Experiment</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Are you sure you want to delete "{getExperimentTitle(experiment)}"? This action cannot be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={() => handleDeleteExperiment(experiment.id)}
+                          className="bg-red-600 hover:bg-red-700"
+                        >
+                          Delete
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
               </div>
             </DropdownMenuItem>
           ))

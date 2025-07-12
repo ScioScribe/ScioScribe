@@ -366,4 +366,37 @@ class ReviewOutput(BaseModel):
                 ],
                 "final_summary": "This experiment aims to determine the effect of varying concentrations of Compound X on A549 lung cancer cell viability. The plan outlines a well-controlled experiment using an MTT assay, with a sample size of 26 per group determined by a power analysis. Data will be analyzed using a one-way ANOVA. Key risks, such as replicate variability, have been identified and mitigated. The expected outcome is a dose-dependent decrease in cell viability."
             }
+        }
+
+
+class StageClassificationOutput(BaseModel):
+    """
+    Structured output for determining which planning stage a user wants to edit.
+    
+    This model ensures reliable classification of user edit requests to the correct
+    planning stage based on context and content analysis.
+    """
+    target_stage: str = Field(
+        ..., 
+        description="The planning stage that best matches the user's edit request. Must be one of: objective_setting, variable_identification, experimental_design, methodology_protocol, data_planning, final_review"
+    )
+    confidence: float = Field(
+        ..., 
+        description="Confidence level in the classification decision, from 0.0 to 1.0",
+        ge=0.0,
+        le=1.0
+    )
+    reasoning: str = Field(
+        ...,
+        description="Brief explanation of why this stage was chosen based on the user's request and current context"
+    )
+    
+    class Config:
+        """Pydantic configuration."""
+        schema_extra = {
+            "example": {
+                "target_stage": "variable_identification",
+                "confidence": 0.95,
+                "reasoning": "User wants to modify dependent variables and control variables, which are core components of the variable identification stage."
+            }
         } 

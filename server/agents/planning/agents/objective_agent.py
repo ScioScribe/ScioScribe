@@ -67,7 +67,8 @@ class ObjectiveAgent(BaseAgent):
         """
         self.logger.info(f"Processing state for experiment: {state.get('experiment_id')}")
         
-        user_input = self._get_latest_user_input(state)
+        from ..graph.helpers import get_latest_user_input
+        user_input = get_latest_user_input(state)
         chat_history = state.get("chat_history", [])
         
         # Create the prompt for the LLM
@@ -101,17 +102,18 @@ class ObjectiveAgent(BaseAgent):
             state['experiment_objective'] = response.experiment_objective
             state['hypothesis'] = response.hypothesis
             
-            agent_response_text = f"Great, I've updated the plan:\n\n**Objective:** {response.experiment_objective}\n\n**Hypothesis:** {response.hypothesis}"
+            agent_response_text = f"Updated the plan:\n\n**Objective:** {response.experiment_objective}\n\n**Hypothesis:** {response.hypothesis}"
             self.logger.info("Successfully updated state with structured LLM output.")
             
         except Exception as e:
             self.logger.error(f"Error invoking structured LLM: {e}", exc_info=True)
             agent_response_text = "I had trouble understanding that. Could you please rephrase your request or provide more specific details about the objective and hypothesis?"
 
-        # Add agent response to chat history
-        updated_state = add_chat_message(state, "assistant", agent_response_text)
+        # Add agent response to chat history so it appears in the AI chat
+        state = add_chat_message(state, "assistant", agent_response_text)
+        self.logger.info(f"Objective agent response: {agent_response_text}")
         
-        return updated_state
+        return state
     
     def validate_stage_requirements(self, state: ExperimentPlanState) -> Tuple[bool, List[str]]:
         """
@@ -148,13 +150,7 @@ class ObjectiveAgent(BaseAgent):
 
         return is_valid, missing_requirements
     
-    def _get_latest_user_input(self, state: ExperimentPlanState) -> str:
-        """Extract the latest user input from chat history."""
-        chat_history = state.get('chat_history', [])
-        for message in reversed(chat_history):
-            if message.get('role') == 'user':
-                return message.get('content', '')
-        return ''
+
 
     def get_objective_summary(self, state: ExperimentPlanState) -> Dict[str, Any]:
         """

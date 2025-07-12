@@ -9,7 +9,6 @@ import { websocketManager } from "@/utils/streaming-connection-manager"
 import type { 
   Message, 
   MessageHandlerContext, 
-  ApprovalResponse, 
   WebSocketMessage 
 } from "@/types/chat-types"
 
@@ -46,7 +45,7 @@ function safeUpdateSession(
  * @param context Context containing state and handlers
  */
 export async function handlePlanningMessage(message: string, context: MessageHandlerContext): Promise<void> {
-  const { setMessages, getPlanningSession, setPlanningSession } = context
+  const { setMessages, getPlanningSession } = context
   
   console.log("🎯 Handling planning message with WebSocket:", message)
   
@@ -63,50 +62,23 @@ export async function handlePlanningMessage(message: string, context: MessageHan
     // Ensure we have a WebSocket connection
     if (!planningSession.session_id) {
       console.error("❌ Session ID is null/undefined when trying to send message")
-      throw new Error("Session ID is null - session may have been reset unexpectedly")
+      throw new Error("Session not initialized. Please refresh the page.")
     }
     
     // Check if WebSocket is connected
     if (!websocketManager.isConnected(planningSession.session_id)) {
       console.error("❌ WebSocket not connected for session:", planningSession.session_id)
-      throw new Error("WebSocket connection not established")
+      throw new Error("Connection lost. Please wait for reconnection.")
     }
     
-    // Check if we're waiting for approval and parse user response
+    // When waiting for approval, send all messages as regular user messages
+    // Let the backend's sophisticated LLM-based intent detection handle everything
     if (planningSession.is_waiting_for_approval && planningSession.pending_approval) {
-      console.log("🔍 Parsing approval response for message:", message)
-      const approvalResponse = parseApprovalResponse(message)
-      console.log("📋 Approval response result:", approvalResponse)
+      console.log("🔍 Sending message during approval state - let backend handle intent:", message)
       
-      if (approvalResponse.isApprovalResponse) {
-        console.log("✅ Processing approval response:", approvalResponse.approved ? "APPROVED" : "REJECTED")
-        
-        // Add approval response indicator
-        const approvalResponseMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: `✅ **Approval Response Detected**\n\nAction: ${approvalResponse.approved ? "APPROVED" : "REJECTED"}\n\nStage: ${planningSession.pending_approval.stage || "Unknown"}\n\nYour response: "${message}"\n\n${approvalResponse.feedback ? `Additional feedback: ${approvalResponse.feedback}\n\n` : ""}Processing your ${approvalResponse.approved ? "approval" : "rejection"}...\n\n⏳ *Waiting for agent to continue...*`,
-          sender: "ai",
-          timestamp: new Date(),
-          mode: "plan",
-          response_type: "confirmation"
-        }
-        
-        console.log("📝 Adding approval confirmation message")
-        setMessages((prev) => [...prev, approvalResponseMessage])
-        
-        // Send approval response via WebSocket
-        await sendApprovalResponse(planningSession.session_id, approvalResponse)
-        
-        // Clear approval state after sending response (preserve session continuity)
-        console.log("🔄 Clearing approval state after sending WebSocket response")
-        safeUpdateSession(setPlanningSession, {
-          is_waiting_for_approval: false,
-          pending_approval: undefined,
-          last_activity: new Date()
-        }, "approval_response_processed")
-        
-        return // Exit early for approval responses
-      }
+      // Don't process as approval here - send as regular user message
+      // The backend will determine if it's approval, edit request, or unclear
+      // This bypasses frontend logic and lets backend LLM handle intent detection
     }
     
     console.log("📤 Sending user message via WebSocket to session:", planningSession.session_id)
@@ -121,7 +93,7 @@ export async function handlePlanningMessage(message: string, context: MessageHan
     
     const errorMessage: Message = {
       id: (Date.now() + 1).toString(),
-      content: `❌ **Planning Session Error**\n\nFailed to continue planning session.\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}\n\n**Troubleshooting:**\n• Check that the backend server is running on localhost:8000\n• Verify the WebSocket connection is established\n• Try refreshing the page and starting a new session\n\nPlease try again or contact support if the problem persists.`,
+      content: error instanceof Error ? error.message : JSON.stringify(error),
       sender: "ai",
       timestamp: new Date(),
       mode: "plan",
@@ -153,28 +125,6 @@ async function sendUserMessage(sessionId: string, message: string): Promise<void
   }
 }
 
-/**
- * Sends an approval response via WebSocket
- * @param sessionId Session ID to send response to
- * @param approvalResponse Approval response data
- */
-async function sendApprovalResponse(sessionId: string, approvalResponse: ApprovalResponse): Promise<void> {
-  const approvalMessage: WebSocketMessage = {
-    type: "approval_response",
-    data: {
-      approved: approvalResponse.approved,
-      feedback: approvalResponse.feedback || ""
-    },
-    session_id: sessionId
-  }
-  
-  console.log("📤 Sending approval response via WebSocket:", approvalMessage)
-  
-  const sent = websocketManager.sendMessage(sessionId, approvalMessage)
-  if (!sent) {
-    throw new Error("Failed to send approval response via WebSocket")
-  }
-}
 
 /**
  * Handles WebSocket messages from the planning session
@@ -214,48 +164,6 @@ export function handlePlanningWebSocketMessage(message: WebSocketMessage, contex
   }
 }
 
-/**
- * Parses approval responses from user input
- * @param message User input message
- * @returns Parsed approval response
- */
-export function parseApprovalResponse(message: string): ApprovalResponse {
-  const lowerMessage = message.toLowerCase().trim()
-  
-  // Check for approval keywords
-  const approvalKeywords = ["approve", "approved", "yes", "ok", "proceed", "continue", "accept", "go ahead"]
-  const rejectionKeywords = ["reject", "rejected", "no", "stop", "cancel", "decline", "refuse", "deny"]
-  
-  const isApproval = approvalKeywords.some(keyword => lowerMessage.includes(keyword))
-  const isRejection = rejectionKeywords.some(keyword => lowerMessage.includes(keyword))
-  
-  if (isApproval && !isRejection) {
-    return {
-      isApprovalResponse: true,
-      approved: true,
-      feedback: message.length > 20 ? message : undefined
-    }
-  } else if (isRejection && !isApproval) {
-    return {
-      isApprovalResponse: true,
-      approved: false,
-      feedback: message
-    }
-  } else if (lowerMessage.length > 3) {
-    // If it's longer than 3 characters but not clearly approval/rejection,
-    // treat as feedback with implicit approval
-    return {
-      isApprovalResponse: true,
-      approved: true,
-      feedback: message
-    }
-  }
-  
-  return {
-    isApprovalResponse: false,
-    approved: false
-  }
-}
 
 /**
  * Handles planning update events from WebSocket
@@ -295,32 +203,36 @@ function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHan
     const messageContent = latestAiMessage.content as string
     console.log("💬 Checking if message should be added to chat:", messageContent.substring(0, 100))
     
-    // Check if this message has already been displayed to prevent duplicates
+    // Use raw message content from backend
+    const cleanedContent = messageContent
+    
+    // Create message with raw backend content
+    const updateMessage: Message = {
+      id: (Date.now() + Math.random()).toString(),
+      content: cleanedContent,
+      sender: "ai",
+      timestamp: new Date(),
+      mode: "plan",
+      response_type: "text"
+    }
+    
+    console.log("➕ Adding agent message to chat")
     setMessages((prev) => {
-      // Check if a message with similar content already exists in recent messages
-      const recentMessages = prev.slice(-5) // Check last 5 messages
+      // Simple deduplication: avoid exact duplicates within recent messages
+      // This preserves raw content while preventing backend agent re-execution spam
+      const recentMessages = prev.slice(-3) // Check last 3 messages
       const isDuplicate = recentMessages.some(msg => 
         msg.sender === "ai" && 
-        msg.content === messageContent &&
-        msg.mode === "plan"
+        msg.content === cleanedContent &&
+        msg.mode === "plan" &&
+        (Date.now() - new Date(msg.timestamp).getTime()) < 30000 // Within 30 seconds
       )
       
       if (isDuplicate) {
-        console.log("⏭️ Skipping duplicate message - already displayed")
+        console.log("⏭️ Skipping recent duplicate message from backend")
         return prev
       }
       
-      // Create clean chat message with ONLY the agent response (no state/reasoning)
-      const updateMessage: Message = {
-        id: (Date.now() + Math.random()).toString(),
-        content: messageContent, // Clean agent response only
-        sender: "ai",
-        timestamp: new Date(),
-        mode: "plan",
-        response_type: "text"
-      }
-      
-      console.log("➕ Adding clean agent message to chat")
       return [...prev, updateMessage]
     })
   }
@@ -332,6 +244,7 @@ function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHan
   }, "planning_update")
 }
 
+
 /**
  * Handles approval request events from WebSocket
  * @param data Approval request data
@@ -342,17 +255,17 @@ function handlePlanningApprovalRequest(data: Record<string, unknown>, context: M
   
   console.log("⚠️ Planning approval request from WebSocket:", data)
   
-  const approvalMessage: Message = {
+  const rawMessage: Message = {
     id: (Date.now() + Math.random()).toString(),
-    content: `⚠️ **Approval Required**\n\nStage: ${data.stage || "Unknown"}\n\nThe planning agent requires your approval to continue.\n\n**Please respond with:**\n• "approve" or "yes" to continue\n• "reject" or "no" to modify the approach\n• Provide specific feedback for adjustments\n\n*Status: ${data.status || "waiting"}*\n\n*Data source: WebSocket real-time update*`,
+    content: (data.display_message as string) || "Review completed work",
     sender: "ai",
     timestamp: new Date(),
     mode: "plan",
     response_type: "approval"
   }
   
-  console.log("➕ Adding approval message to chat from WebSocket")
-  setMessages((prev) => [...prev, approvalMessage])
+  console.log("➕ Adding raw approval message to chat from WebSocket")
+  setMessages((prev) => [...prev, rawMessage])
   
   // Update session state (preserve session continuity)
   safeUpdateSession(setPlanningSession, {
@@ -372,17 +285,17 @@ function handlePlanningError(data: Record<string, unknown>, context: MessageHand
   
   console.log("❌ Planning error from WebSocket:", data)
   
-  const errorMessage: Message = {
+  const rawMessage: Message = {
     id: (Date.now() + Math.random()).toString(),
-    content: `❌ **Planning Error**\n\n${data.message || "Unknown error occurred"}\n\n*Data source: WebSocket real-time update*`,
+    content: data.message as string || JSON.stringify(data),
     sender: "ai",
     timestamp: new Date(),
     mode: "plan",
     response_type: "error"
   }
   
-  console.log("➕ Adding error message to chat from WebSocket")
-  setMessages((prev) => [...prev, errorMessage])
+  console.log("➕ Adding raw error message to chat from WebSocket")
+  setMessages((prev) => [...prev, rawMessage])
 }
 
 /**

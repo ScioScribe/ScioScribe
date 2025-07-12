@@ -379,6 +379,51 @@ def validate_state_structure(state: Dict[str, Any]) -> bool:
     return True
 
 
+def validate_stage_completion(state: ExperimentPlanState, stage: str) -> bool:
+    """
+    Validate that a specific stage has been completed successfully.
+    
+    This function provides a unified way to check if any planning stage
+    has been completed according to its specific requirements.
+    
+    Args:
+        state: Current experiment plan state
+        stage: Name of the stage to validate
+        
+    Returns:
+        True if stage is complete, False otherwise
+    """
+    # Import here to avoid circular imports
+    from .graph.routing import (
+        objective_completion_check,
+        variable_completion_check,
+        design_completion_check,
+        methodology_completion_check,
+        data_completion_check,
+        review_completion_check
+    )
+    
+    stage_validators = {
+        "objective_setting": lambda s: objective_completion_check(s) == "continue",
+        "variable_identification": lambda s: variable_completion_check(s) == "continue",
+        "experimental_design": lambda s: design_completion_check(s) == "continue",
+        "methodology_protocol": lambda s: methodology_completion_check(s) == "continue",
+        "data_planning": lambda s: data_completion_check(s) == "continue",
+        "final_review": lambda s: review_completion_check(s) == "complete"
+    }
+    
+    validator = stage_validators.get(stage)
+    if validator:
+        try:
+            return validator(state)
+        except Exception as e:
+            logger.error(f"Stage validation failed for {stage}: {str(e)}")
+            return False
+    
+    logger.warning(f"No validator found for stage: {stage}")
+    return False
+
+
 def validate_experiment_plan_state(state: ExperimentPlanState) -> bool:
     """Validate a complete ExperimentPlanState.
     

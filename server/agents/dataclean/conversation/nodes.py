@@ -178,7 +178,7 @@ async def processing_router_node(state: ConversationState) -> ConversationState:
                 operation_result = {"status": "error", "message": "AI analysis not available. Please check OpenAI configuration."}
             
         elif intent == Intent.DESCRIBE:
-            operation_result = await _handle_describe_data(state, memory_store)
+            operation_result = await _handle_describe_data(state, memory_store, quality_agent)
             
         elif intent in [Intent.CLEAN, Intent.REMOVE]:
             # These operations require confirmation
@@ -407,8 +407,8 @@ async def _handle_analyze_data(state: ConversationState, quality_agent: DataQual
         return {"status": "error", "message": f"Analysis failed: {str(e)}"}
 
 
-async def _handle_describe_data(state: ConversationState, memory_store: MemoryDataStore) -> Dict[str, Any]:
-    """Handle data description requests using real dataframe info."""
+async def _handle_describe_data(state: ConversationState, memory_store: MemoryDataStore, quality_agent: Optional[DataQualityAgent] = None) -> Dict[str, Any]:
+    """Handle data description requests using real dataframe info with semantic understanding."""
     artifact_id = state.get("artifact_id")
     if not artifact_id:
         return {"status": "error", "message": "No data loaded to describe."}
@@ -434,9 +434,19 @@ async def _handle_describe_data(state: ConversationState, memory_store: MemoryDa
         if len(numeric_columns) > 0:
             description["numeric_stats"] = current_df[numeric_columns].describe().to_dict()
         
+        # Add semantic understanding if quality agent is available
+        semantic_analysis = None
+        if quality_agent:
+            try:
+                semantic_analysis = await quality_agent.understand_data_semantics(current_df)
+            except Exception as e:
+                logger.warning(f"Semantic analysis failed: {str(e)}")
+                semantic_analysis = None
+        
         return {
             "status": "success",
-            "description": description
+            "description": description,
+            "semantic_analysis": semantic_analysis
         }
         
     except Exception as e:
@@ -557,9 +567,36 @@ async def _generate_success_response(operation_result: Dict[str, Any], intent: I
     
     elif intent == Intent.DESCRIBE:
         description = operation_result.get("description", {})
+        semantic_analysis = operation_result.get("semantic_analysis", {})
         shape = description.get("shape", (0, 0))
         columns = len(description.get("columns", []))
-        return f"Your data has {shape[0]} rows and {columns} columns. I've analyzed the structure, data types, and missing values."
+        
+        # Basic description
+        response = f"Your data has {shape[0]} rows and {columns} columns."
+        
+        # Add semantic understanding if available
+        if semantic_analysis and semantic_analysis.get("success"):
+            data_understanding = semantic_analysis.get("data_understanding", "")
+            research_domain = semantic_analysis.get("research_domain", "")
+            
+            if data_understanding:
+                response += f"\n\n🔬 **Data Understanding**: {data_understanding}"
+            
+            if research_domain and research_domain != "General":
+                response += f"\n📊 **Research Domain**: {research_domain}"
+            
+            experimental_design = semantic_analysis.get("experimental_design", "")
+            if experimental_design and experimental_design != "Could not determine":
+                response += f"\n🧪 **Experimental Design**: {experimental_design}"
+            
+            key_variables = semantic_analysis.get("key_variables", [])
+            if key_variables:
+                response += f"\n🔑 **Key Variables**: {len(key_variables)} variables identified"
+                for var in key_variables[:3]:  # Show first 3 variables
+                    response += f"\n   • {var.get('name', 'Unknown')}: {var.get('description', 'No description')}"
+        
+        response += f"\n\nI've also analyzed the technical structure, data types, and missing values."
+        return response
     
     elif intent == Intent.ANALYZE:
         issues_found = operation_result.get("issues_found", 0)

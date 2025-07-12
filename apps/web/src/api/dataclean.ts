@@ -20,6 +20,7 @@ export interface StartConversationRequest {
   artifact_id?: string
   file_path?: string
   csv_data?: string // optional raw CSV string to bootstrap the conversation
+  user_message?: string // optional user message to start the conversation
 }
 
 export interface StartConversationResponse {
@@ -97,7 +98,7 @@ export async function startConversation(request: StartConversationRequest): Prom
     // Use CSV-specific endpoint instead of general conversation endpoint
     const csvRequest = {
       csv_data: request.csv_data || "", // Include CSV if provided
-      user_message: "Hi", // Default greeting message
+      user_message: request.user_message || "Hi", // Use provided message or default greeting
       session_id: request.session_id || `csv-session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       user_id: request.user_id || "demo-user"
     }
@@ -271,8 +272,9 @@ export async function getConversationCapabilities(): Promise<ConversationCapabil
 export interface ProcessFileCompleteResponse {
   success: boolean
   artifact_id: string
-  cleaned_data?: unknown
+  cleaned_data?: unknown // This will be a CSV string when response_format="csv"
   data_shape?: number[]
+  error_message?: string
   [key: string]: unknown // allow additional backend fields without strict typing
 }
 
@@ -319,4 +321,90 @@ export async function uploadCsvFile(csvText: string, experimentId: string = "dem
   }
 
   return await response.json()
+}
+
+/**
+ * Upload any file (CSV, image, PDF) to the dataclean service using the "process-file-complete"
+ * endpoint. This performs end-to-end processing including OCR for images/PDFs.
+ *
+ * @param file - The file to upload
+ * @param experimentId - The experiment ID
+ * @param responseFormat - The format to get back (csv for CSV string)
+ * @returns Promise resolving to the processing response
+ */
+export async function uploadFile(
+  file: File, 
+  experimentId: string = "demo-experiment",
+  responseFormat: string = "csv"
+): Promise<ProcessFileCompleteResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('experiment_id', experimentId)
+  formData.append('response_format', responseFormat)
+  formData.append('auto_apply_suggestions', 'true')
+  formData.append('confidence_threshold', '0.7')
+
+  const response = await fetch(`${BASE_URL}/process-file-complete`, {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ message: response.statusText }))
+    throw new Error(err.message || 'Upload failed')
+  }
+
+  return await response.json()
+}
+
+/**
+ * Header Generation API
+ */
+
+export interface GenerateHeadersRequest {
+  plan: string
+  experiment_id?: string
+}
+
+export interface GenerateHeadersResponse {
+  success: boolean
+  headers: string[]
+  csv_data: string
+  error_message?: string
+}
+
+/**
+ * Generate CSV headers from experimental plan using AI
+ * 
+ * @param plan - The experimental plan text
+ * @param experimentId - Optional experiment ID to immediately persist the CSV
+ * @returns Promise resolving to the generated headers response
+ * @throws Error if the request fails
+ */
+export async function generateHeadersFromPlan(plan: string, experimentId?: string): Promise<GenerateHeadersResponse> {
+  try {
+    const response = await fetch(`${BASE_URL}/generate-headers-from-plan`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        plan,
+        experiment_id: experimentId,
+      }),
+    })
+
+    if (!response.ok) {
+      const errorData: DataCleanError = await response.json()
+      throw new Error(`Failed to generate headers: ${errorData.message}`)
+    }
+
+    const result: GenerateHeadersResponse = await response.json()
+    return result
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error
+    }
+    throw new Error('Unknown error occurred while generating headers')
+  }
 } 
