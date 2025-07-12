@@ -302,6 +302,7 @@ class CSVMessageRequest(BaseModel):
     user_message: str = Field(..., description="User's natural language message")
     session_id: str = Field(..., description="Conversation session identifier")
     user_id: str = Field(default="demo-user", description="User identifier")
+    experiment_id: Optional[str] = Field(None, description="ID of the experiment this data belongs to")
 
 
 class CSVProcessingResponse(BaseModel):

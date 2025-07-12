@@ -35,10 +35,13 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
   // File input ref
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Existing hooks
+  // Existing hooks - Subscribe to store state including csvData for reactivity
   const { 
     currentExperiment, 
     editorText, 
+    csvData: storeCsvData,
+    csvUpdateTimestamp,
+    isAgentUpdating,
     updateExperimentCsvWithSave, 
     updateCsvFromDatacleanResponse,
     highlightRows,
@@ -49,23 +52,40 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
   } = useExperimentStore()
   const { toast } = useToast()
 
+  // Use store data if available (from agent updates), otherwise fall back to prop
+  const effectiveCsvData = storeCsvData || csvData
+  
+  // Force immediate re-render when store data changes (from agent updates)
+  useEffect(() => {
+    if (storeCsvData) {
+      console.log("🚀 Store CSV data updated - forcing immediate DataTableViewer refresh")
+      console.log("🔍 Store CSV preview:", storeCsvData.substring(0, 100))
+      console.log("🔍 CSV update timestamp:", csvUpdateTimestamp)
+    }
+  }, [storeCsvData, csvUpdateTimestamp])
+  
   // Existing useEffect hooks
   useEffect(() => {
-    console.log("📊 DataTableViewer received csvData update:", csvData?.substring(0, 100))
+    console.log("📊 DataTableViewer csvData sources:", {
+      propCsvData: csvData?.substring(0, 50),
+      storeCsvData: storeCsvData?.substring(0, 50),
+      effectiveCsvData: effectiveCsvData?.substring(0, 50),
+      usingStoreData: !!storeCsvData
+    })
     
-    if (csvData) {
+    if (effectiveCsvData) {
       try {
-        // Ensure csvData is a string before parsing
-        if (typeof csvData !== 'string') {
-          console.error("csvData is not a string:", typeof csvData, csvData)
+        // Ensure effectiveCsvData is a string before parsing
+        if (typeof effectiveCsvData !== 'string') {
+          console.error("effectiveCsvData is not a string:", typeof effectiveCsvData, effectiveCsvData)
           setTableData([])
           setHeaders([])
           setFilteredData([])
           return
         }
         
-        const parsedData = parseCSVData(csvData)
-        const csvHeaders = getCSVHeaders(csvData)
+        const parsedData = parseCSVData(effectiveCsvData)
+        const csvHeaders = getCSVHeaders(effectiveCsvData)
         
         console.log("🔍 DEBUG: Parsed CSV data")
         console.log("🔍 Row count:", parsedData.length)
@@ -88,7 +108,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
       setHeaders([])
       setFilteredData([])
     }
-  }, [csvData])
+  }, [effectiveCsvData])
 
   useEffect(() => {
     if (searchTerm) {
@@ -105,16 +125,30 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
 
   // Calculate diff when there are changes to show
   useEffect(() => {
-    if (hasDiff && csvData && previousCsv) {
+    if (hasDiff && effectiveCsvData && previousCsv) {
       try {
         console.log("🔍 DEBUG: Calculating CSV diff...")
-        console.log("🔍 Current CSV preview:", csvData.substring(0, 200))
+        console.log("🔍 Current CSV preview:", effectiveCsvData.substring(0, 200))
         console.log("🔍 Previous CSV preview:", previousCsv.substring(0, 200))
         
-        const diffResult = calculateCsvDiff(csvData, previousCsv)
+        const diffResult = calculateCsvDiff(effectiveCsvData, previousCsv)
         console.log("🔍 DEBUG: Diff calculation complete")
         console.log("🔍 Diff map keys:", Array.from(diffResult.diffs.keys()))
         console.log("🔍 Diff map entries:", Array.from(diffResult.diffs.entries()).map(([k, v]) => `${k}: ${v.changeType}`))
+        
+        // Cross-reference with table data to ensure ID consistency
+        if (tableData.length > 0) {
+          console.log("🔍 DEBUG: Table data row IDs:", tableData.slice(0, 10).map(r => r.id))
+          const missingInDiff = tableData.filter(row => !diffResult.diffs.has(row.id))
+          const extraInDiff = Array.from(diffResult.diffs.keys()).filter(id => !tableData.some(row => row.id === id))
+          
+          if (missingInDiff.length > 0) {
+            console.warn("🔍 WARNING: Table rows missing from diff:", missingInDiff.map(r => r.id))
+          }
+          if (extraInDiff.length > 0) {
+            console.log("🔍 INFO: Extra diff entries (removed rows):", extraInDiff)
+          }
+        }
         
         setCsvDiff(diffResult.diffs)
         setShowDiff(true)
@@ -127,7 +161,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
       setCsvDiff(new Map())
       setShowDiff(false)
     }
-  }, [hasDiff, csvData, previousCsv])
+  }, [hasDiff, effectiveCsvData, previousCsv, tableData])
 
   // Debounce ref for CSV sync
   const csvSyncTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -186,9 +220,9 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
     const changeType = getRowChangeType(row)
     switch (changeType) {
       case 'added':
-        return 'bg-green-100/50 border-l-2 border-green-300'
+        return 'bg-green-50/30 dark:bg-green-900/20 border-l-2 border-green-400/40 dark:border-green-600/50'
       case 'modified':
-        return 'bg-yellow-100/50 border-l-2 border-yellow-300'
+        return 'bg-yellow-50/30 dark:bg-yellow-900/15 border-l-2 border-yellow-400/40 dark:border-yellow-600/40'
       case 'removed':
         return 'bg-red-100/50 border-l-2 border-red-300'
       default:
@@ -220,7 +254,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
     
     // Defensive check: ensure diff exists and has modified status with changed fields
     if (diff?.changeType === 'modified' && diff.changedFields?.includes(fieldName)) {
-      return 'bg-yellow-100/60'
+      return 'bg-yellow-50/40 dark:bg-yellow-900/20'
     }
     
     return ''
@@ -524,17 +558,18 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-2">
             <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground">
-              <div className="p-1.5 rounded-lg bg-green-100 dark:bg-green-900/30">
+              <div className="p-1.5 rounded-lg bg-green-50/40 dark:bg-green-900/25">
                 <Upload className="h-4 w-4 text-green-600 dark:text-green-400" />
               </div>
               Data Table
-              {tableData.length > 0 && (
-                <span className="text-xs text-muted-foreground/70 font-normal">
-                  ({filteredData.length} of {tableData.length} rows)
-                </span>
+              {isAgentUpdating && (
+                <div className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                  Agent updating...
+                </div>
               )}
+              <ChangeSummary />
             </CardTitle>
-            <ChangeSummary />
           </div>
           
           <div className="flex items-center gap-2">
@@ -602,10 +637,9 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
             {showDiff && (
               <>
                 <div className="w-px h-4 bg-muted" />
-                <Button 
-                  variant="secondary" 
-                  size="sm" 
-                  className="h-6 px-2 text-xs"
+                <Button
+                  variant="ghost"
+                  size="icon"
                   onClick={async () => {
                     try {
                       await acceptCsvChanges()
@@ -621,18 +655,15 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                       })
                     }
                   }}
+                  className="text-green-600 hover:bg-green-50/40 dark:hover:bg-green-900/25"
                   title="Accept all AI changes"
                 >
-                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-green-500/20 text-green-600 dark:bg-green-400/20 mr-1">
-                    <Check className="h-3 w-3" />
-                  </span>
-                  Accept
+                  <Check className="h-4 w-4" />
                 </Button>
                 
-                <Button 
-                  variant="secondary" 
-                  size="sm" 
-                  className="h-6 px-2 text-xs"
+                <Button
+                  variant="ghost"
+                  size="icon"
                   onClick={async () => {
                     try {
                       await rejectCsvChanges()
@@ -648,12 +679,10 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                       })
                     }
                   }}
+                  className="text-red-600 hover:bg-red-100 dark:hover:bg-red-900/30"
                   title="Reject all AI changes"
                 >
-                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:bg-red-400/20 mr-1">
-                    <X className="h-3 w-3" />
-                  </span>
-                  Reject
+                  <X className="h-4 w-4" />
                 </Button>
               </>
             )}
@@ -686,7 +715,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                       key={row.id} 
                       className={cn(
                         "border-b border-border/30 hover:bg-muted/50 transition-colors",
-                        highlightRows.has(row.id) && "bg-green-50 dark:bg-green-900/40",
+                        highlightRows.has(row.id) && "bg-green-50/40 dark:bg-green-900/25",
                         rowChangeClass
                       )}
                     >

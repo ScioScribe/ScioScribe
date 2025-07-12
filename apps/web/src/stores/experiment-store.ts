@@ -83,6 +83,7 @@ interface ExperimentState {
   experiments: Experiment[]
   isLoading: boolean
   isCreatingExperiment: boolean
+  isAgentUpdating: boolean  // Loading state for agent CSV updates
   
   // Content state
   experimentTitle: string
@@ -96,6 +97,7 @@ interface ExperimentState {
   previousCsv: string | null
   csvVersion: number
   hasDiff: boolean
+  csvUpdateTimestamp: number  // Force React re-renders on CSV changes
 }
 
 interface ExperimentActions {
@@ -153,6 +155,7 @@ const initialState: ExperimentState = {
   experiments: [],
   isLoading: true,
   isCreatingExperiment: false,
+  isAgentUpdating: false,
   experimentTitle: "Untitled Experiment",
   editorText: IRIS_EXPERIMENT_PLAN,
   csvData: IRIS_CSV_DATA,
@@ -161,6 +164,7 @@ const initialState: ExperimentState = {
   previousCsv: null,
   csvVersion: 0,
   hasDiff: false,
+  csvUpdateTimestamp: Date.now(),
 }
 
 export const useExperimentStore = create<ExperimentStore>((set: SetState, get: GetState) => ({
@@ -183,7 +187,7 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
     set({ editorText }),
   
   setCsvData: (csvData: string) => 
-    set({ csvData }),
+    set({ csvData, csvUpdateTimestamp: Date.now() }),
   
   setVisualizationHtml: (visualizationHtml: string) => 
     set({ visualizationHtml }),
@@ -283,26 +287,122 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
      try {
        console.log("📊 Updating CSV from dataclean data (agent update)")
        
+       // Set loading state for agent update
+       set({ isAgentUpdating: true })
+       
        // Mark this as an agent update by calling the API directly
        const { currentExperiment, experiments, csvVersion } = get()
        if (currentExperiment) {
-         const updatedExperiment = await updateExperimentCsvAPI(
-           currentExperiment.id, 
-           csvData,
-           { 
-             isAgentUpdate: true,
-             expectedVersion: csvVersion
+         let updatedExperiment
+         
+         try {
+           updatedExperiment = await updateExperimentCsvAPI(
+             currentExperiment.id, 
+             csvData,
+             { 
+               isAgentUpdate: true,
+               expectedVersion: null  // Skip version checking for agent updates
+             }
+           )
+         } catch (error: any) {
+           // Handle version conflicts with retry logic
+           if (error.message?.includes('Version conflict') || error.message?.includes('409')) {
+             console.warn("⚠️ Version conflict detected, retrying without version check...")
+             try {
+               updatedExperiment = await updateExperimentCsvAPI(
+                 currentExperiment.id, 
+                 csvData,
+                 { 
+                   isAgentUpdate: true,
+                   expectedVersion: null  // Force no version checking
+                 }
+               )
+               console.log("✅ Retry successful after version conflict")
+             } catch (retryError: any) {
+               console.error("❌ Retry failed after version conflict:", retryError)
+               throw new Error(`Failed to update CSV after retry: ${retryError.message}`)
+             }
+           } else {
+             console.error("❌ Non-conflict error during CSV update:", error)
+             throw error
            }
-         )
+         }
+         
+         // Calculate highlighting for agent changes before updating state
+         const newCsvData = updatedExperiment.csv_data || csvData
+         const previousCsvData = get().csvData  // Get the CSV data before agent update
+         
+         // Compute added/modified rows for highlighting (similar to updateExperimentCsvWithSave)
+         let agentHighlightRows = new Set<string>()
+         try {
+           if (previousCsvData && newCsvData) {
+             const prevLines = previousCsvData.trim().split('\n').slice(1) // Skip header
+             const newLines = newCsvData.trim().split('\n').slice(1)      // Skip header
+             const prevSet = new Set(prevLines)
+             const newSet = new Set(newLines)
+             
+             // Find added rows (in new but not in previous)
+             const addedLines: string[] = []
+             newLines.forEach(line => { if (!prevSet.has(line)) addedLines.push(line) })
+             
+             // Find row IDs for added lines
+             if (addedLines.length > 0) {
+               const headerPlusLines = newCsvData.trim().split('\n')
+               headerPlusLines.slice(1).forEach((line, idx) => {
+                 if (addedLines.includes(line)) {
+                   agentHighlightRows.add((idx + 1).toString()) // 1-based indexing
+                 }
+               })
+             }
+             
+             // For row modifications/deletions, we need to compare by position since we can't easily 
+             // detect modified rows with simple line comparison. For now, focus on additions which 
+             // are the most common agent operations (add row, insert data, etc.)
+             
+             const rowChanges = {
+               previousRows: prevLines.length,
+               newRows: newLines.length,
+               addedLines: addedLines.length,
+               deletedLines: Math.max(0, prevLines.length - newLines.length + addedLines.length), // Approximation
+               highlightedRowIds: Array.from(agentHighlightRows)
+             }
+             
+             console.log("🎯 Agent update highlighting:", rowChanges)
+             
+             // Store the change summary for potential use in UI
+             if (addedLines.length > 0 || rowChanges.deletedLines > 0) {
+               console.log(`✅ Agent operation completed: ${addedLines.length > 0 ? `+${addedLines.length} added` : ''} ${rowChanges.deletedLines > 0 ? `-${rowChanges.deletedLines} deleted` : ''}`)
+             }
+           }
+         } catch (highlightError) {
+           console.warn("⚠️ Error calculating agent highlights:", highlightError)
+         }
+         
+         // Merge with existing highlights
+         const { highlightRows: existingHighlights } = get()
+         const mergedHighlights = new Set([...existingHighlights, ...agentHighlightRows])
          
          // Update state with new experiment data
          set({ 
            currentExperiment: updatedExperiment,
-           csvData: updatedExperiment.csv_data || csvData,
+           csvData: newCsvData,
            previousCsv: updatedExperiment.previous_csv || null,
            csvVersion: updatedExperiment.csv_version,
-           hasDiff: !!updatedExperiment.previous_csv
+           hasDiff: !!updatedExperiment.previous_csv,
+           csvUpdateTimestamp: Date.now(),  // Force React re-render
+           isAgentUpdating: false,  // Clear loading state
+           highlightRows: mergedHighlights  // Add agent highlights
          })
+         
+         // Auto-clear agent highlights after 8 seconds (same as manual updates)
+         if (agentHighlightRows.size > 0) {
+           setTimeout(() => {
+             const current = get().highlightRows
+             agentHighlightRows.forEach(id => current.delete(id))
+             set({ highlightRows: new Set(current) })
+             console.log("🎯 Cleared agent highlights after 8 seconds")
+           }, 8000)
+         }
          
          // Update the experiments array
          const updatedExperiments = experiments.map((exp: Experiment) => 
@@ -314,6 +414,8 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
        console.log("✅ CSV updated from dataclean data")
      } catch (error) {
        console.error("❌ Failed to update CSV from dataclean data:", error)
+       // Clear loading state on error
+       set({ isAgentUpdating: false })
      }
    },
 
@@ -399,6 +501,7 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
       previousCsv: experiment.previous_csv || null,
       csvVersion: experiment.csv_version || 0,
       hasDiff: !!experiment.previous_csv,
+      csvUpdateTimestamp: Date.now(),
     })
   },
   
@@ -483,7 +586,7 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
 
       // Merge with existing highlightRows
       const merged = new Set([...highlightRows, ...addedRowIds])
-      set({ highlightRows: merged, csvData: csv })
+      set({ highlightRows: merged, csvData: csv, csvUpdateTimestamp: Date.now() })
       // Auto-clear highlight after 8s
       if (addedRowIds.size) {
         setTimeout(() => {
@@ -494,7 +597,7 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
       }
     } catch (e) {
       console.warn('Highlight diff error', e)
-      set({ csvData: csv })
+      set({ csvData: csv, csvUpdateTimestamp: Date.now() })
     }
     
     // Auto-save to database if experiment is selected
@@ -504,7 +607,13 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
         const updatedExperiment = await updateExperimentCsvAPI(currentExperiment.id, csv)
         
         // Update the current experiment with the new CSV data
-        set({ currentExperiment: updatedExperiment })
+        set({ 
+          currentExperiment: updatedExperiment,
+          csvVersion: updatedExperiment.csv_version || 0,  // Keep version in sync
+          previousCsv: null,                               // Clear any stale diff
+          hasDiff: false,                                  // No pending agent diff
+          csvUpdateTimestamp: Date.now()                   // Force React re-render
+        })
         
         // Update the experiments array to reflect the new CSV
         const updatedExperiments = experiments.map((exp: Experiment) => 
@@ -592,7 +701,9 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
         currentExperiment: updatedExperiment,
         previousCsv: null,
         hasDiff: false,
-        csvVersion: updatedExperiment.csv_version
+        csvVersion: updatedExperiment.csv_version,
+        csvUpdateTimestamp: Date.now(),
+        highlightRows: new Set()  // Clear all highlights when changes accepted
       })
       
       // Update experiments list
@@ -621,7 +732,9 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
         csvData: updatedExperiment.csv_data || "",
         previousCsv: null,
         hasDiff: false,
-        csvVersion: updatedExperiment.csv_version
+        csvVersion: updatedExperiment.csv_version,
+        csvUpdateTimestamp: Date.now(),
+        highlightRows: new Set()  // Clear all highlights when changes rejected
       })
       
       // Update experiments list

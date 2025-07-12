@@ -54,7 +54,7 @@ function compareRows(current: Record<string, string>, previous: Record<string, s
 
 /**
  * Calculate differences between current and previous CSV data
- * Now uses actual row IDs from parsed data instead of synthetic indices
+ * Uses position-based matching to ensure row IDs align with table rendering
  */
 export function calculateCsvDiff(currentCsv: string, previousCsv: string): CsvDiffResult {
   // Parse both CSVs using the same parsing logic that creates row IDs
@@ -79,68 +79,51 @@ export function calculateCsvDiff(currentCsv: string, previousCsv: string): CsvDi
   const diffs = new Map<string, RowDiff>()
   const stats = { added: 0, removed: 0, modified: 0, unchanged: 0 }
   
-  // Create maps for efficient lookup using content-based keys
-  const previousRowMap = new Map<string, { row: Record<string, string>, index: number }>()
-  previousRows.forEach((row, index) => {
-    const key = createRowKey(row, headers)
-    previousRowMap.set(key, { row, index })
-  })
+  // Position-based comparison: compare rows at the same index first
+  const maxLength = Math.max(currentRows.length, previousRows.length)
   
-  const currentRowMap = new Map<string, { row: Record<string, string>, index: number }>()
-  currentRows.forEach((row, index) => {
-    const key = createRowKey(row, headers)
-    currentRowMap.set(key, { row, index })
-  })
-  
-  // Find added and modified rows - use actual row.id from parsed data
-  currentRows.forEach((currentRow, currentIndex) => {
-    const key = createRowKey(currentRow, headers)
-    const rowId = currentRow.id // Use actual row ID from parsed data instead of synthetic index
+  for (let i = 0; i < maxLength; i++) {
+    const currentRow = currentRows[i]
+    const previousRow = previousRows[i]
     
-    console.log("🔍 DEBUG: Processing row", { rowId, currentIndex, contentKey: key.substring(0, 50) })
-    
-    if (!previousRowMap.has(key)) {
-      // Row is new (added)
+    if (currentRow && previousRow) {
+      // Both rows exist - check if modified
+      const changedFields = compareRows(currentRow, previousRow, headers)
+      const rowId = currentRow.id // Use the current row's ID
+      
+      console.log("🔍 DEBUG: Comparing position", i, "rowId:", rowId, "changes:", changedFields.length)
+      
+      if (changedFields.length > 0) {
+        diffs.set(rowId, {
+          rowIndex: i,
+          changeType: 'modified',
+          currentData: currentRow,
+          previousData: previousRow,
+          changedFields
+        })
+        stats.modified++
+        console.log("🔍 DEBUG: Modified row at position", i, "rowId:", rowId, "fields:", changedFields)
+      } else {
+        diffs.set(rowId, {
+          rowIndex: i,
+          changeType: 'unchanged',
+          currentData: currentRow,
+          previousData: previousRow
+        })
+        stats.unchanged++
+      }
+    } else if (currentRow && !previousRow) {
+      // New row added at the end
+      const rowId = currentRow.id
       diffs.set(rowId, {
-        rowIndex: currentIndex,
+        rowIndex: i,
         changeType: 'added',
         currentData: currentRow
       })
       stats.added++
-      console.log("🔍 DEBUG: Added row", rowId)
-    } else {
-      // Row exists, check if modified
-      const previousEntry = previousRowMap.get(key)!
-      const changedFields = compareRows(currentRow, previousEntry.row, headers)
-      
-      if (changedFields.length > 0) {
-        diffs.set(rowId, {
-          rowIndex: currentIndex,
-          changeType: 'modified',
-          currentData: currentRow,
-          previousData: previousEntry.row,
-          changedFields
-        })
-        stats.modified++
-        console.log("🔍 DEBUG: Modified row", rowId, "fields:", changedFields)
-      } else {
-        diffs.set(rowId, {
-          rowIndex: currentIndex,
-          changeType: 'unchanged',
-          currentData: currentRow,
-          previousData: previousEntry.row
-        })
-        stats.unchanged++
-      }
-    }
-  })
-  
-  // Find removed rows
-  previousRows.forEach((previousRow) => {
-    const key = createRowKey(previousRow, headers)
-    
-    if (!currentRowMap.has(key)) {
-      // Row was removed - use actual row ID with a prefix to avoid conflicts
+      console.log("🔍 DEBUG: Added row at position", i, "rowId:", rowId)
+    } else if (!currentRow && previousRow) {
+      // Row was removed from the end
       const rowId = `removed-${previousRow.id}`
       diffs.set(rowId, {
         rowIndex: -1, // Removed rows don't have a current index
@@ -148,12 +131,60 @@ export function calculateCsvDiff(currentCsv: string, previousCsv: string): CsvDi
         previousData: previousRow
       })
       stats.removed++
-      console.log("🔍 DEBUG: Removed row", rowId)
+      console.log("🔍 DEBUG: Removed row from position", i, "originalId:", previousRow.id)
     }
-  })
+  }
+  
+  // Additional check: handle inserted rows in the middle by comparing with content-based matching
+  // This handles cases where rows are inserted or moved around
+  if (currentRows.length > previousRows.length) {
+    console.log("🔍 DEBUG: Rows were likely inserted, checking for content-based matches")
+    
+    // Create content map of previous rows for fallback matching
+    const previousContentMap = new Map<string, Record<string, string>>()
+    previousRows.forEach(row => {
+      const contentKey = createRowKey(row, headers)
+      previousContentMap.set(contentKey, row)
+    })
+    
+    // Check current rows that weren't handled by position-based matching
+    currentRows.forEach((currentRow, index) => {
+      const rowId = currentRow.id
+      const contentKey = createRowKey(currentRow, headers)
+      
+      // If this row wasn't already processed and matches content from previous CSV
+      if (!diffs.has(rowId) && previousContentMap.has(contentKey)) {
+        // This is likely a moved/reordered row, treat as unchanged unless fields differ
+        const previousRow = previousContentMap.get(contentKey)!
+        const changedFields = compareRows(currentRow, previousRow, headers)
+        
+        if (changedFields.length > 0) {
+          diffs.set(rowId, {
+            rowIndex: index,
+            changeType: 'modified',
+            currentData: currentRow,
+            previousData: previousRow,
+            changedFields
+          })
+          stats.modified++
+          console.log("🔍 DEBUG: Content-matched modified row", rowId, "fields:", changedFields)
+        } else {
+          diffs.set(rowId, {
+            rowIndex: index,
+            changeType: 'unchanged',
+            currentData: currentRow,
+            previousData: previousRow
+          })
+          stats.unchanged++
+          console.log("🔍 DEBUG: Content-matched unchanged row", rowId)
+        }
+      }
+    })
+  }
   
   console.log("🔍 DEBUG calculateCsvDiff complete:")
   console.log("🔍 Final diff map keys:", Array.from(diffs.keys()))
+  console.log("🔍 Row ID to change type mapping:", Array.from(diffs.entries()).map(([id, diff]) => `${id}: ${diff.changeType}`))
   console.log("🔍 Stats:", stats)
   
   return {

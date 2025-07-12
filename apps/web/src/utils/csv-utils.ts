@@ -31,6 +31,25 @@ export function getCurrentCsvData(): string {
 }
 
 /**
+ * Gets the current experiment ID from the experiment store
+ * 
+ * @returns Experiment ID or null if not available
+ */
+export function getCurrentExperimentId(): string | null {
+  try {
+    const store = useExperimentStore.getState()
+    const experimentId = store.currentExperiment?.id || null
+    
+    console.log("🔍 getCurrentExperimentId - Experiment ID:", experimentId)
+    
+    return experimentId
+  } catch (error) {
+    console.error("❌ Error getting current experiment ID:", error)
+    return null
+  }
+}
+
+/**
  * Converts table data to CSV string format
  * Same logic as used in DataTableViewer
  * 
