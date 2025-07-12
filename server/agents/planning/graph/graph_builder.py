@@ -43,6 +43,7 @@ def create_agent_node(agent_class, stage: str):
         # Preserve critical state flags before agent execution
         critical_state = {
             'return_to_stage': state.get('return_to_stage'),
+            'edit_mode': state.get('edit_mode'),
             'experiment_id': state.get('experiment_id'),
             'edit_context': state.get('edit_context'),
             'chat_history': state.get('chat_history', []).copy() if state.get('chat_history') else []
@@ -59,6 +60,10 @@ def create_agent_node(agent_class, stage: str):
         if critical_state['return_to_stage'] and not result.get('return_to_stage'):
             result['return_to_stage'] = critical_state['return_to_stage']
         
+        # Preserve edit mode flag
+        if critical_state['edit_mode'] and not result.get('edit_mode'):
+            result['edit_mode'] = critical_state['edit_mode']
+        
         # Preserve other critical flags
         if critical_state['edit_context'] and not result.get('edit_context'):
             result['edit_context'] = critical_state['edit_context']
@@ -67,10 +72,22 @@ def create_agent_node(agent_class, stage: str):
         if result.get('current_stage') != stage:
             result = transition_to_stage(result, stage)
             
-            # Re-restore return_to_stage after transition (in case transition clears it)
+            # Re-restore return_to_stage and edit_mode after transition (in case transition clears them)
             if critical_state['return_to_stage']:
                 result['return_to_stage'] = critical_state['return_to_stage']
+            if critical_state['edit_mode']:
+                result['edit_mode'] = critical_state['edit_mode']
         
+        
+        # Debug logging for edit mode
+        if result.get('edit_mode'):
+            logger.info(f"[AGENT_NODE] ✅ Agent {stage} completed in edit mode - return_to_stage: {result.get('return_to_stage')}")
+            
+            # If we just returned from an edit (no return_to_stage), clear edit mode
+            if not result.get('return_to_stage'):
+                logger.info(f"[AGENT_NODE] 🔄 Clearing edit mode after returning to original stage")
+                from .helpers import clear_edit_mode
+                result = clear_edit_mode(result)
         
         return result
     
@@ -105,10 +122,12 @@ def create_return_router_node():
         
         if return_to_stage and return_to_stage in PLANNING_STAGES:
             
-            # Clear the return_to_stage flag first
+            # Clear the return_to_stage flag and edit mode
             updated_state = state.copy() if hasattr(state, 'copy') else dict(state)
             updated_state.pop('return_to_stage', None)
             
+            # NOTE: Don't clear edit mode yet - we need it to bypass the interrupt
+            # Edit mode will be cleared after the agent executes
             
             # Add system message about returning
             updated_state = add_chat_message(
@@ -126,9 +145,12 @@ def create_return_router_node():
             # Fallback: if no return stage specified, go to objective_setting
             logger.warning(f"[RETURN] No valid return_to_stage found (was: {return_to_stage}), defaulting to objective_setting")
             
-            # Clear any invalid return_to_stage flag
+            # Clear any invalid return_to_stage flag and edit mode
             updated_state = state.copy() if hasattr(state, 'copy') else dict(state)
             updated_state.pop('return_to_stage', None)
+            
+            # NOTE: Don't clear edit mode yet - we need it to bypass the interrupt
+            # Edit mode will be cleared after the agent executes
             
             # Add system message about fallback
             updated_state = add_chat_message(
