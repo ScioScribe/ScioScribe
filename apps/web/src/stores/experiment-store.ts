@@ -14,8 +14,11 @@ import {
   updateExperimentHtml, 
   updateExperimentTitle as updateExperimentTitleAPI,
   updateExperimentCsv as updateExperimentCsvAPI,
-  deleteExperiment as deleteExperimentAPI 
+  deleteExperiment as deleteExperimentAPI,
+  getExperimentDiff,
+  acceptRejectCsvChanges
 } from '@/api/database'
+import { extractCsvFromDatacleanResponse, validateCsvData } from '@/utils/dataclean-response'
 import { IRIS_CSV_DATA, IRIS_EXPERIMENT_PLAN } from '@/data/placeholder'
 import { convertPlanningStateToText } from '@/handlers/planning-state-handler'
 
@@ -73,36 +76,6 @@ const convertPlanningStateToString = (planningState: PlanningState): string => {
   }
 }
 
-// Array to CSV conversion utility
-const convertArrayToCsv = (data: DatacleanData[]): string => {
-  try {
-    if (!data || data.length === 0) return ""
-    
-    // Get headers from first object
-    const headers = Object.keys(data[0])
-    
-    // Create CSV content
-    let csvContent = headers.join(',') + '\n'
-    
-    // Add data rows
-    data.forEach(row => {
-      const values = headers.map(header => {
-        const value = row[header]
-        // Escape commas and quotes in values
-        if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
-          return `"${value.replace(/"/g, '""')}"`
-        }
-        return value || ''
-      })
-      csvContent += values.join(',') + '\n'
-    })
-    
-    return csvContent
-  } catch (error) {
-    console.error("❌ Error converting array to CSV:", error)
-    return ""
-  }
-}
 
 interface ExperimentState {
   // Core state
@@ -118,6 +91,11 @@ interface ExperimentState {
   visualizationHtml: string
   // Highlight support
   highlightRows: Set<string>
+  
+  // CSV versioning state
+  previousCsv: string | null
+  csvVersion: number
+  hasDiff: boolean
 }
 
 interface ExperimentActions {
@@ -155,6 +133,11 @@ interface ExperimentActions {
   updateCsvFromDatacleanData: (csvData: string) => Promise<void>
   clearHighlightRows: () => void
   
+  // CSV versioning actions
+  loadExperimentDiff: () => Promise<void>
+  acceptCsvChanges: () => Promise<void>
+  rejectCsvChanges: () => Promise<void>
+  
   // Reset actions
   resetState: () => void
 }
@@ -175,6 +158,9 @@ const initialState: ExperimentState = {
   csvData: IRIS_CSV_DATA,
   visualizationHtml: "",
   highlightRows: new Set(),
+  previousCsv: null,
+  csvVersion: 0,
+  hasDiff: false,
 }
 
 export const useExperimentStore = create<ExperimentStore>((set: SetState, get: GetState) => ({
@@ -264,37 +250,66 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
      try {
        console.log("🧹 Updating CSV from dataclean response:", response)
        
-       // Extract CSV data from response
-       let csvData = ""
-       
-       if (response.data) {
-         if (typeof response.data === "string") {
-           csvData = response.data
-         } else if (Array.isArray(response.data)) {
-           // Convert array of objects to CSV
-           csvData = convertArrayToCsv(response.data)
-         } else {
-           console.warn("⚠️ Unexpected data format in dataclean response")
-           csvData = JSON.stringify(response.data, null, 2)
-         }
-       }
+       // Extract CSV data using standardized utility
+       const csvData = extractCsvFromDatacleanResponse(response, 'dataclean-response')
        
        if (csvData) {
+         // Validate CSV data before processing
+         const validation = validateCsvData(csvData)
+         if (!validation.isValid) {
+           console.error("❌ Invalid CSV data:", validation.error)
+           throw new Error(`Invalid CSV data: ${validation.error}`)
+         }
+         
+         console.log("📊 CSV validation passed:", {
+           rowCount: validation.rowCount,
+           columnCount: validation.columnCount
+         })
+         
+         // Use the agent update function to properly handle versioning
          await get().updateCsvFromDatacleanData(csvData)
+       } else {
+         console.warn("⚠️ No CSV data found in dataclean response")
        }
        
        console.log("✅ CSV updated from dataclean response")
      } catch (error) {
        console.error("❌ Failed to update CSV from dataclean response:", error)
+       throw error
      }
    },
    
    updateCsvFromDatacleanData: async (csvData: string) => {
      try {
-       console.log("📊 Updating CSV from dataclean data")
+       console.log("📊 Updating CSV from dataclean data (agent update)")
        
-       // Use the new updateExperimentCsvWithSave action
-       await get().updateExperimentCsvWithSave(csvData)
+       // Mark this as an agent update by calling the API directly
+       const { currentExperiment, experiments, csvVersion } = get()
+       if (currentExperiment) {
+         const updatedExperiment = await updateExperimentCsvAPI(
+           currentExperiment.id, 
+           csvData,
+           { 
+             isAgentUpdate: true,
+             expectedVersion: csvVersion
+           }
+         )
+         
+         // Update state with new experiment data
+         set({ 
+           currentExperiment: updatedExperiment,
+           csvData: updatedExperiment.csv_data || csvData,
+           previousCsv: updatedExperiment.previous_csv || null,
+           csvVersion: updatedExperiment.csv_version,
+           hasDiff: !!updatedExperiment.previous_csv
+         })
+         
+         // Update the experiments array
+         const updatedExperiments = experiments.map((exp: Experiment) => 
+           exp.id === currentExperiment.id ? updatedExperiment : exp
+         )
+         set({ experiments: updatedExperiments })
+       }
        
        console.log("✅ CSV updated from dataclean data")
      } catch (error) {
@@ -381,6 +396,9 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
       editorText: experiment.experimental_plan || IRIS_EXPERIMENT_PLAN,
       csvData: experiment.csv_data || IRIS_CSV_DATA,
       visualizationHtml: experiment.visualization_html || "",
+      previousCsv: experiment.previous_csv || null,
+      csvVersion: experiment.csv_version || 0,
+      hasDiff: !!experiment.previous_csv,
     })
   },
   
@@ -538,6 +556,83 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
       console.log("✅ Experiment removed successfully")
     } catch (error) {
       console.error("❌ Failed to remove experiment:", error)
+      throw error
+    }
+  },
+  
+  // CSV versioning actions
+  loadExperimentDiff: async () => {
+    try {
+      const { currentExperiment } = get()
+      if (!currentExperiment) return
+      
+      const diff = await getExperimentDiff(currentExperiment.id)
+      
+      if (diff.has_diff) {
+        set({
+          previousCsv: diff.previous_csv || null,
+          csvVersion: diff.csv_version || 0,
+          hasDiff: true
+        })
+      }
+    } catch (error) {
+      console.error("Failed to load experiment diff:", error)
+    }
+  },
+  
+  acceptCsvChanges: async () => {
+    try {
+      const { currentExperiment, experiments } = get()
+      if (!currentExperiment) return
+      
+      const updatedExperiment = await acceptRejectCsvChanges(currentExperiment.id, 'accept')
+      
+      // Update state
+      set({
+        currentExperiment: updatedExperiment,
+        previousCsv: null,
+        hasDiff: false,
+        csvVersion: updatedExperiment.csv_version
+      })
+      
+      // Update experiments list
+      const updatedExperiments = experiments.map((exp: Experiment) => 
+        exp.id === currentExperiment.id ? updatedExperiment : exp
+      )
+      set({ experiments: updatedExperiments })
+      
+      console.log("✅ CSV changes accepted")
+    } catch (error) {
+      console.error("Failed to accept CSV changes:", error)
+      throw error
+    }
+  },
+  
+  rejectCsvChanges: async () => {
+    try {
+      const { currentExperiment, experiments } = get()
+      if (!currentExperiment) return
+      
+      const updatedExperiment = await acceptRejectCsvChanges(currentExperiment.id, 'reject')
+      
+      // Update state with reverted CSV
+      set({
+        currentExperiment: updatedExperiment,
+        csvData: updatedExperiment.csv_data || "",
+        previousCsv: null,
+        hasDiff: false,
+        csvVersion: updatedExperiment.csv_version
+      })
+      
+      // Update experiments list
+      const updatedExperiments = experiments.map((exp: Experiment) => 
+        exp.id === currentExperiment.id ? updatedExperiment : exp
+      )
+      set({ experiments: updatedExperiments })
+      
+      console.log("✅ CSV changes rejected")
+    } catch (error) {
+      console.error("Failed to reject CSV changes:", error)
       throw error
     }
   },
