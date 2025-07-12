@@ -300,8 +300,12 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
          visualization_html: ""
        })
        
-       // Reload experiments and select the new one
-       await get().loadExperiments()
+       // Add the new experiment to the experiments array instead of reloading all
+       const { experiments } = get()
+       const updatedExperiments = [newExperiment, ...experiments]
+       set({ experiments: updatedExperiments })
+       
+       // Select the new experiment
        get().selectExperiment(newExperiment)
      } catch (error) {
        console.error("Failed to create experiment:", error)

@@ -39,7 +39,7 @@ export function ExperimentView() {
   // Load experiments on component mount
   useEffect(() => {
     loadExperiments()
-  }, [loadExperiments])
+  }, [])
 
   // Show loading state
   if (isLoading) {
@@ -52,10 +52,16 @@ export function ExperimentView() {
 
   // Show home page when no experiments exist or no current experiment selected
   if (experiments.length === 0 || !currentExperiment) {
-    return <HomePage onNavigateToExperiment={async () => {
-      await createFirstExperiment()
-      // No need to navigate - component will re-render with the new experiment
-    }} />
+    return <HomePage 
+      onNavigateToExperiment={async () => {
+        await createFirstExperiment()
+        // No need to navigate - component will re-render with the new experiment
+      }}
+      onExperimentSelect={(experiment) => {
+        selectExperiment(experiment)
+        // Component will re-render with the selected experiment
+      }}
+    />
   }
 
   // Show normal app view when experiments exist
@@ -65,7 +71,6 @@ export function ExperimentView() {
         experiments={experiments}
         selectedExperiment={currentExperiment}
         onExperimentSelect={selectExperiment}
-        onExperimentCreated={loadExperiments}
         onExperimentDelete={removeExperiment}
         experimentTitle={experimentTitle}
         onTitleChange={updateExperimentTitleWithSave}
