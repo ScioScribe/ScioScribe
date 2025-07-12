@@ -31,8 +31,7 @@ import { ChatSuggestions } from "@/components/chat-suggestions"
 import type { Message, MessageHandlerContext, AiChatProps, WebSocketMessage } from "@/types/chat-types"
 
 export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChatProps) {
-  // Debug: Add render tracking
-  console.log("🔄 AiChat render")
+  
   
   // State management
   const [messages, setMessages] = useState<Message[]>([

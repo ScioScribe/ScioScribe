@@ -116,6 +116,8 @@ interface ExperimentState {
   editorText: string
   csvData: string
   visualizationHtml: string
+  // Highlight support
+  highlightRows: Set<string>
 }
 
 interface ExperimentActions {
@@ -150,6 +152,7 @@ interface ExperimentActions {
   // Dataclean integration functions
   updateCsvFromDatacleanResponse: (response: DatacleanResponse) => Promise<void>
   updateCsvFromDatacleanData: (csvData: string) => Promise<void>
+  clearHighlightRows: () => void
   
   // Reset actions
   resetState: () => void
@@ -170,6 +173,7 @@ const initialState: ExperimentState = {
   editorText: IRIS_EXPERIMENT_PLAN,
   csvData: IRIS_CSV_DATA,
   visualizationHtml: "",
+  highlightRows: new Set(),
 }
 
 export const useExperimentStore = create<ExperimentStore>((set: SetState, get: GetState) => ({
@@ -196,6 +200,9 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
   
   setVisualizationHtml: (visualizationHtml: string) => 
     set({ visualizationHtml }),
+
+  // Utility to clear row highlights
+  clearHighlightRows: () => set({ highlightRows: new Set() }),
   
   // Complex actions with side effects
   loadExperiments: async () => {
@@ -399,7 +406,42 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
   },
   
   updateExperimentCsvWithSave: async (csv: string) => {
-    set({ csvData: csv })
+    const { csvData: prevCsvData, highlightRows } = get()
+
+    // Compute added rows (simple diff by line value after header)
+    try {
+      const prevLines = prevCsvData ? prevCsvData.trim().split('\n').slice(1) : []
+      const newLines = csv.trim().split('\n').slice(1)
+      const prevSet = new Set(prevLines)
+      const addedLines: string[] = []
+      newLines.forEach(line => { if (!prevSet.has(line)) addedLines.push(line) })
+
+      // Determine ids of added rows using their position (index+1) in new CSV
+      const addedRowIds = new Set<string>()
+      if (addedLines.length) {
+        const headerPlusLines = csv.trim().split('\n')
+        headerPlusLines.slice(1).forEach((line, idx) => {
+          if (addedLines.includes(line)) {
+            addedRowIds.add((idx + 1).toString())
+          }
+        })
+      }
+
+      // Merge with existing highlightRows
+      const merged = new Set([...highlightRows, ...addedRowIds])
+      set({ highlightRows: merged, csvData: csv })
+      // Auto-clear highlight after 8s
+      if (addedRowIds.size) {
+        setTimeout(() => {
+          const current = get().highlightRows
+          addedRowIds.forEach(id => current.delete(id))
+          set({ highlightRows: new Set(current) })
+        }, 8000)
+      }
+    } catch (e) {
+      console.warn('Highlight diff error', e)
+      set({ csvData: csv })
+    }
     
     // Auto-save to database if experiment is selected
     const { currentExperiment, experiments } = get()

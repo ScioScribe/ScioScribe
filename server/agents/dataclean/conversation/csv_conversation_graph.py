@@ -782,9 +782,9 @@ class CSVConversationGraph:
                 if data_status == "cleaned":
                     response += " (cleaned data)"
                 
-                response += "\n\n**Tell me to:**"
-                response += "\n• \"analyze data quality\" • \"clean the data\" • \"describe columns\""
-                response += "\n• \"add/delete rows\" • \"fix missing values\""
+                response += "\n\nTell me to:"
+                response += "\n• Analyze data quality • clean the data • Describe Data"
+                response += "\n• Add/Delete rows\" • \"Fix missing values\""
                 response += "\n\nWhat first?"
                 return response
             else:

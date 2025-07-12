@@ -25,8 +25,7 @@ export interface ChatSessionsHookReturn {
 }
 
 export function useChatSessions(): ChatSessionsHookReturn {
-  // Debug: Add render tracking
-  console.log("🔄 useChatSessions render")
+  
   
   // Initialize session states
   const [planningSession, setPlanningSession] = useState<SessionState>({

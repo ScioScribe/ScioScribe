@@ -11,6 +11,7 @@ import { useExperimentStore } from "../stores/experiment-store"
 import { parseCSVData, getCSVHeaders } from "../data/placeholder"
 import { generateHeadersFromPlan, uploadFile } from "../api/dataclean"
 import { convertTableToCSV } from "../utils/csv-utils"
+import { cn } from "../lib/utils"
 
 interface DataTableViewerProps {
   csvData?: string
@@ -29,7 +30,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Existing hooks
-  const { currentExperiment, editorText, updateExperimentCsvWithSave } = useExperimentStore()
+  const { currentExperiment, editorText, updateExperimentCsvWithSave, highlightRows } = useExperimentStore()
   const { toast } = useToast()
 
   // Existing useEffect hooks
@@ -446,7 +447,10 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                 {filteredData.map((row) => (
                   <TableRow 
                     key={row.id} 
-                    className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+                    className={cn(
+                      "border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800",
+                      highlightRows.has(row.id) && "bg-green-50 dark:bg-green-900/40"
+                    )}
                   >
                     {headers.map((header) => (
                       <TableCell 
