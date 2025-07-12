@@ -181,7 +181,17 @@ async def _is_graph_interrupted(session_id: str) -> bool:
             next_nodes = [str(node) for node in state_snapshot.next]
             # These are the nodes we interrupt before
             interrupt_nodes = ["variable_agent", "design_agent", "methodology_agent", "data_agent", "review_agent"]
-            return any(node in interrupt_nodes for node in next_nodes)
+            is_interrupted = any(node in interrupt_nodes for node in next_nodes)
+            
+            # NEW: Check if we should skip interrupt due to edit mode
+            if is_interrupted and state_snapshot.values:
+                from agents.planning.graph.helpers import should_skip_interrupt_for_edit_mode
+                should_skip = should_skip_interrupt_for_edit_mode(state_snapshot.values)
+                if should_skip:
+                    logger.info(f"Skipping interrupt for session {session_id} due to edit mode")
+                    return False
+            
+            return is_interrupted
         
         return False
     except Exception as e:
@@ -599,50 +609,59 @@ async def _handle_user_message(websocket: WebSocket, session_id: str, message: D
                 return  # handled
 
             elif intent == "edit":
-                # IMPROVED: Process edit request directly with user's actual input
+                # SIMPLE APPROACH: Process edit and stay in same approval context
                 target_section = determine_section_to_edit(user_input, current_state)
                 
-                # STORE CURRENT STAGE FOR RETURN NAVIGATION
-                original_stage = await _get_current_stage_from_graph(session_id)
-                if not original_stage:
-                    original_stage = current_state.get("current_stage", "objective_setting")
+                # Add user edit request to chat history
+                updated_state = add_chat_message(current_state, "user", user_input)
                 
+                # Process the edit directly by calling the appropriate agent
+                if target_section == "objective_setting":
+                    from agents.planning.agents.objective_agent import ObjectiveAgent
+                    agent = ObjectiveAgent()
+                elif target_section == "variable_identification":
+                    from agents.planning.agents.variable_agent import VariableAgent
+                    agent = VariableAgent()
+                elif target_section == "experimental_design":
+                    from agents.planning.agents.design_agent import DesignAgent
+                    agent = DesignAgent()
+                elif target_section == "methodology_protocol":
+                    from agents.planning.agents.methodology_agent import MethodologyAgent
+                    agent = MethodologyAgent()
+                elif target_section == "data_planning":
+                    from agents.planning.agents.data_agent import DataAgent
+                    agent = DataAgent()
+                else:
+                    # Fallback to current stage agent
+                    current_stage = current_state.get("current_stage", "objective_setting")
+                    if current_stage == "variable_identification":
+                        from agents.planning.agents.variable_agent import VariableAgent
+                        agent = VariableAgent()
+                    else:
+                        from agents.planning.agents.objective_agent import ObjectiveAgent
+                        agent = ObjectiveAgent()
                 
-                
-                # Validate the routing decision
-                if target_section == original_stage:
-                    # Process edit in current stage without routing - let LangGraph handle it
-                    updated_state = add_chat_message(current_state, "user", user_input)
-                    await graph.aupdate_state(config, updated_state)
+                # Execute the agent to process the edit
+                try:
+                    edited_state = agent.execute(updated_state, user_input)
                     
-                    # Continue execution to process the edit in the current stage
-                    await _process_planning_execution(websocket, session_id, updated_state, graph, config)
-                    return
+                    # Update the graph state with the edited content
+                    await graph.aupdate_state(config, edited_state)
+                    
+                    # Send updated state to frontend - stay in same approval context
+                    await _send_planning_update(websocket, session_id, edited_state)
+                    
+                    # Send the same approval request again with updated content
+                    original_stage = await _get_current_stage_from_graph(session_id)
+                    if not original_stage:
+                        original_stage = current_state.get("current_stage", "objective_setting")
+                    await _send_approval_request(websocket, session_id, {"stage": original_stage, "status": "waiting"})
+                    
+                except Exception as e:
+                    logger.error(f"Error processing edit: {e}")
+                    await _send_error_message(websocket, session_id, f"Error processing edit: {str(e)}")
                 
-                # Transition to target section
-                routed_state = transition_to_stage(current_state.copy(), target_section, force=True)
-                
-                # STORE THE RETURN STAGE IN STATE
-                routed_state["return_to_stage"] = original_stage
-                
-                
-                # Add the user's actual edit request to chat history (not a generic message)
-                routed_state = add_chat_message(routed_state, "user", user_input)
-                
-                # Add system message explaining the transition
-                routed_state = add_chat_message(
-                    routed_state,
-                    "system",
-                    f"🔄 Processing your edit request for the {target_section.replace('_', ' ')} section. "
-                    f"After this edit, we'll return to the {original_stage.replace('_', ' ')} stage."
-                )
-
-                await graph.aupdate_state(config, routed_state)
-
-                # Continue processing - this will trigger the agent to process the edit
-                # and then LangGraph's conditional edges will handle the return routing
-                await _process_planning_execution(websocket, session_id, routed_state, graph, config)
-                return  # exit original handler
+                return  # Stay in current approval context
             
             else:
                 # Intent is unclear - ask for clarification
