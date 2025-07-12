@@ -9,6 +9,7 @@ import { useEffect, useRef, useState, useCallback } from "react"
 import { ChatMessage } from "@/components/chat-message"
 import { Button } from "@/components/ui/button"
 import { ChevronDown } from "lucide-react"
+import { ThinkingIndicator } from "@/components/enhanced-message-display"
 import type { Message } from "@/types/chat-types"
 
 interface ChatMessagesProps {
@@ -190,13 +191,12 @@ export function ChatMessages({
             />
           ))}
 
-          {/* Loading indicator */}
+          {/* Enhanced thinking indicator */}
           {isLoading && (
-            <div className="mb-4 animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
-              <div className="text-gray-700 dark:text-gray-300 mt-1 pl-4">
-                <LoadingIndicator selectedMode={selectedMode} />
-              </div>
-            </div>
+            <ThinkingIndicator 
+              message={getThinkingMessage(selectedMode)}
+              isVisible={isLoading}
+            />
           )}
         </div>
       </div>
@@ -239,35 +239,17 @@ export function ChatMessages({
 
 
 /**
- * Loading Indicator Component
+ * Get thinking message based on selected mode
  */
-interface LoadingIndicatorProps {
-  selectedMode: string
-}
-
-function LoadingIndicator({ selectedMode }: LoadingIndicatorProps) {
-  const loadingText = getLoadingText(selectedMode)
-  
-  return (
-    <div className="flex items-center gap-2">
-      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500"></div>
-      <span className="text-sm">{loadingText}</span>
-    </div>
-  )
-}
-
-/**
- * Get loading text based on selected mode
- */
-function getLoadingText(selectedMode: string): string {
+function getThinkingMessage(selectedMode: string): string {
   switch (selectedMode) {
     case "plan":
-      return "Planning your experiment..."
+      return "Planning your experiment"
     case "execute":
-      return "Processing your data..."
+      return "Processing your data"
     case "analysis":
-      return "Analyzing your request..."
+      return "Analyzing your request"
     default:
-      return "Processing..."
+      return "Thinking"
   }
 } 

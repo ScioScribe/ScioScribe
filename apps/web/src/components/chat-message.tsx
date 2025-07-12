@@ -1,13 +1,19 @@
 /**
  * Chat Message Component
  * 
- * This component renders individual chat messages with proper styling,
- * formatting for different message types and senders, and typewriter
- * animation for AI messages.
+ * This component renders individual chat messages with enhanced styling,
+ * formatting for different message types and senders, typewriter animation,
+ * and Cursor-style tool execution indicators.
  */
 
 import { useState, useEffect, useRef } from "react"
 import type { Message } from "@/types/chat-types"
+import { 
+  ToolExecutionDisplay, 
+  AgentMessageContainer, 
+  ApprovalMessageDisplay,
+  parseMessageForToolExecution 
+} from "@/components/enhanced-message-display"
 
 interface ChatMessageProps {
   message: Message
@@ -96,39 +102,22 @@ export function ChatMessage({ message, enableTypewriter = true }: ChatMessagePro
       {isUser && (
         <div className="text-gray-900 dark:text-gray-100 font-bold">
           <span className="text-blue-500 mr-2">→</span>
-          {message.mode && (
-            <span className="text-xs text-gray-500 dark:text-gray-400 mr-2">
-              [{message.mode}]
-            </span>
-          )}
           {message.content}
         </div>
       )}
       
       {isAi && (
-        <div className="text-gray-700 dark:text-gray-300 mt-0.5 pl-3">
-          {message.mode && (
-            <span className="text-xs text-gray-500 dark:text-gray-400 mb-1 block">
-              [{message.mode}] {getResponseTypeIndicator(message.response_type)}
-            </span>
-          )}
+        <div className="text-gray-700 dark:text-gray-300 mt-0.5">
           {message.isHtml ? (
             <div dangerouslySetInnerHTML={{ __html: message.content }} />
           ) : (
-            <div className="relative">
-              <pre ref={textRef} className="whitespace-pre-wrap font-inherit">
-                {displayedText}
-                {isTyping && showCursor && (
-                  <span 
-                    className="inline-block w-2 h-5 bg-blue-500 ml-1" 
-                    style={{
-                      animation: 'cursor-blink 1.06s infinite',
-                      verticalAlign: 'text-bottom'
-                    }}
-                  />
-                )}
-              </pre>
-            </div>
+            <EnhancedMessageRenderer 
+              message={message}
+              displayedText={displayedText}
+              isTyping={isTyping}
+              showCursor={showCursor}
+              textRef={textRef}
+            />
           )}
         </div>
       )}
@@ -139,19 +128,118 @@ export function ChatMessage({ message, enableTypewriter = true }: ChatMessagePro
 }
 
 /**
- * Gets the appropriate indicator for different response types
- * @param responseType The type of response
- * @returns String indicator for the response type
+ * Enhanced message renderer that uses the new UI components
  */
-function getResponseTypeIndicator(responseType?: string): string {
-  switch (responseType) {
-    case "approval":
-      return "⚠️ Approval Required"
-    case "confirmation":
-      return "❓ Confirmation"
-    case "error":
-      return "❌ Error"
+interface EnhancedMessageRendererProps {
+  message: Message
+  displayedText: string
+  isTyping: boolean
+  showCursor: boolean
+  textRef: React.RefObject<HTMLPreElement | null>
+}
+
+function EnhancedMessageRenderer({ 
+  message, 
+  displayedText, 
+  isTyping, 
+  showCursor, 
+  textRef 
+}: EnhancedMessageRendererProps) {
+  const parsedMessage = parseMessageForToolExecution(message.content, message)
+  
+  switch (parsedMessage.type) {
+    case 'tool_execution':
+      return (
+        <ToolExecutionDisplay
+          toolName={parsedMessage.toolName}
+          description={parsedMessage.description}
+          status={parsedMessage.status}
+        />
+      )
+    
+    case 'system_status':
+      if (parsedMessage.isConnecting) {
+        return (
+          <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+            <div className="text-sm text-blue-700 dark:text-blue-300">
+              Establishing connection...
+            </div>
+          </div>
+        )
+      } else if (parsedMessage.isConnected) {
+        return (
+          <div className="flex items-center gap-3 px-4 py-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+            <div className="text-sm text-green-700 dark:text-green-300">
+              Connected - Ready for real-time updates
+            </div>
+          </div>
+        )
+      }
+      return renderDefaultMessage()
+    
+    case 'error':
+      return (
+        <div className="px-4 py-3 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800">
+          <div className="relative">
+            <pre ref={textRef} className="whitespace-pre-wrap font-inherit text-red-700 dark:text-red-300">
+              {displayedText}
+              {isTyping && showCursor && (
+                <span 
+                  className="inline-block w-2 h-5 bg-red-500 ml-1" 
+                  style={{
+                    animation: 'cursor-blink 1.06s infinite',
+                    verticalAlign: 'text-bottom'
+                  }}
+                />
+              )}
+            </pre>
+          </div>
+        </div>
+      )
+    
     default:
-      return ""
+      // Check if it's an approval message
+      if (message.response_type === 'approval') {
+        return (
+          <ApprovalMessageDisplay message={displayedText}>
+            {/* Future: Add approval buttons here */}
+          </ApprovalMessageDisplay>
+        )
+      }
+      
+      return (
+        <AgentMessageContainer 
+          agentType={message.mode as 'plan' | 'analysis' | 'execute'}
+          showBorder={true}
+        >
+          {renderDefaultMessage()}
+        </AgentMessageContainer>
+      )
   }
-} 
+  
+  function renderDefaultMessage() {
+    return (
+      <div className="relative">
+        <pre 
+          ref={textRef} 
+          className="whitespace-pre-wrap leading-relaxed text-gray-800 dark:text-gray-200 font-inherit"
+        >
+          {displayedText}
+          {isTyping && showCursor && (
+            <span 
+              className="inline-block w-2 h-5 bg-blue-500 ml-1" 
+              style={{
+                animation: 'cursor-blink 1.06s infinite',
+                verticalAlign: 'text-bottom'
+              }}
+            />
+          )}
+        </pre>
+      </div>
+    )
+  }
+}
+
+ 

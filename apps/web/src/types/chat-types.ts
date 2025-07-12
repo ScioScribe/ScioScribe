@@ -14,6 +14,8 @@ export interface Message {
   mode?: "plan" | "execute" | "analysis"
   session_id?: string
   response_type?: "text" | "html" | "approval" | "confirmation" | "error"
+  tool_id?: string  // For tracking tool execution messages that can be updated
+  tool_status?: "pending" | "running" | "completed" | "error"
 }
 
 export interface SessionState {
@@ -102,6 +104,7 @@ export interface ChatMode {
 
 export interface MessageHandlerContext {
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>
+  updateMessage: (messageId: string, updates: Partial<Message>) => void
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>
   getPlanningSession: () => SessionState
   setPlanningSession: (updates: Partial<SessionState>) => void
