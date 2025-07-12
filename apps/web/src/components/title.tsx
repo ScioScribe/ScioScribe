@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { FileText, Save, Check } from "lucide-react"
+import { Microscope, Save, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ExperimentsDropdown } from "@/components/experiments-dropdown"
 import { ExperimentTitle } from "@/components/experiment-title"
@@ -78,7 +78,7 @@ export function Title({ experiments = [], selectedExperiment, onExperimentSelect
       {/* Left side - Logo, title, and save button */}
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
-          <FileText className="h-5 w-5 text-blue-500" />
+          <Microscope className="h-5 w-5 text-blue-500" />
           <h1
             className="text-lg font-bold text-gray-900 dark:text-white cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
             style={{
