@@ -144,10 +144,61 @@ async function processDatacleanResponse(response: DatacleanResponse, context: Me
     if (cleanedCsv) {
       // Use the proper dataclean response handler from the store
       try {
+        console.log("🔄 About to update CSV from dataclean response...")
+        console.log("🔍 Cleaned CSV preview:", cleanedCsv.substring(0, 100))
+        
         await updateCsvFromDatacleanResponse(response as unknown as Record<string, unknown>)
+        
         console.log("💾 Synced cleaned CSV to experiment store (length:", cleanedCsv.length, ")")
-      } catch (csvSyncErr) {
-        console.warn("⚠️ Failed to sync cleaned CSV:", csvSyncErr)
+        console.log("✅ CSV state update completed - React should re-render DataTableViewer")
+      } catch (csvSyncErr: any) {
+        console.error("⚠️ Failed to sync cleaned CSV:", csvSyncErr)
+        
+        // Check for version conflict specifically
+        const isVersionConflict = csvSyncErr?.message?.includes('Version conflict') || 
+                                  csvSyncErr?.message?.includes('409') ||
+                                  csvSyncErr?.status === 409
+        
+        if (isVersionConflict) {
+          console.warn("🔄 Version conflict detected in execute handler, attempting retry...")
+          // Try a direct update as fallback (this bypasses version checking)
+          try {
+            const { updateCsvFromDatacleanData } = await import('../stores/experiment-store')
+            const store = (await import('../stores/experiment-store')).useExperimentStore
+            await store.getState().updateCsvFromDatacleanData(cleanedCsv)
+            console.log("✅ Version conflict resolved with fallback update")
+          } catch (fallbackErr: any) {
+            console.error("❌ Fallback CSV update also failed:", fallbackErr)
+            // Add user notification for persistent failures
+            const { setMessages } = context
+            const errorMessage = {
+              id: (Date.now() + Math.random()).toString(),
+              content: "⚠️ **Update Conflict**\n\nThe agent's changes couldn't be applied due to a version conflict. Your data may have been edited while the agent was processing. Please try the operation again.",
+              sender: "ai" as const,
+              timestamp: new Date(),
+              mode: "execute" as const,
+              response_type: "error" as const
+            }
+            setMessages((prev) => [...prev, errorMessage])
+          }
+        } else {
+          // Non-conflict error - try fallback anyway
+          console.log("🔄 Non-conflict error, attempting direct CSV update as fallback...")
+          try {
+            const { updateCsvFromDatacleanData } = await import('../stores/experiment-store')
+            const store = (await import('../stores/experiment-store')).useExperimentStore
+            await store.getState().updateCsvFromDatacleanData(cleanedCsv)
+            console.log("✅ Fallback CSV update completed")
+          } catch (fallbackErr) {
+            console.error("❌ Fallback CSV update also failed:", fallbackErr)
+          }
+        }
+      }
+    } else {
+      console.warn("⚠️ No cleaned CSV data found in response - DataTableViewer won't update")
+      console.log("🔍 Response keys:", Object.keys(response))
+      if (response.data) {
+        console.log("🔍 Response.data keys:", Object.keys(response.data as Record<string, unknown>))
       }
     }
     
