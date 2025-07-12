@@ -60,11 +60,11 @@ Jane,30,LA`
   const parsedRows = parseCSVData(csvData)
   const result = calculateCsvDiff(csvData, csvData) // Same data = all unchanged
   
-  console.log("🧪 Parsed row IDs:", parsedRows.map(r => r.id))
+  console.log("🧪 Parsed row IDs:", parsedRows.map((r: any) => r.id))
   console.log("🧪 Diff map keys:", Array.from(result.diffs.keys()))
   
   // All parsed row IDs should exist in diff map
-  const allIdsPresent = parsedRows.every(row => result.diffs.has(row.id))
+  const allIdsPresent = parsedRows.every((row: any) => result.diffs.has(row.id))
   const allUnchanged = Array.from(result.diffs.values()).every(diff => diff.changeType === 'unchanged')
   
   console.log("🧪 All row IDs present in diff:", allIdsPresent)

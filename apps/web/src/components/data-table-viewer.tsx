@@ -616,10 +616,9 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
             {showDiff && (
               <>
                 <div className="w-px h-4 bg-muted" />
-                <Button 
-                  variant="secondary" 
-                  size="sm" 
-                  className="h-6 px-2 text-xs"
+                <Button
+                  variant="ghost"
+                  size="icon"
                   onClick={async () => {
                     try {
                       await acceptCsvChanges()
@@ -635,18 +634,15 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                       })
                     }
                   }}
+                  className="text-green-600 hover:bg-green-100 dark:hover:bg-green-900/30"
                   title="Accept all AI changes"
                 >
-                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-green-500/20 text-green-600 dark:bg-green-400/20 mr-1">
-                    <Check className="h-3 w-3" />
-                  </span>
-                  Accept
+                  <Check className="h-4 w-4" />
                 </Button>
                 
-                <Button 
-                  variant="secondary" 
-                  size="sm" 
-                  className="h-6 px-2 text-xs"
+                <Button
+                  variant="ghost"
+                  size="icon"
                   onClick={async () => {
                     try {
                       await rejectCsvChanges()
@@ -662,12 +658,10 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                       })
                     }
                   }}
+                  className="text-red-600 hover:bg-red-100 dark:hover:bg-red-900/30"
                   title="Reject all AI changes"
                 >
-                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:bg-red-400/20 mr-1">
-                    <X className="h-3 w-3" />
-                  </span>
-                  Reject
+                  <X className="h-4 w-4" />
                 </Button>
               </>
             )}

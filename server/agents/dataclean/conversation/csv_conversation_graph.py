@@ -78,6 +78,7 @@ class CSVConversationGraph:
             awaiting_approval: bool
             applied_transformations: List[str]
             confidence_score: float
+            experiment_id: Optional[str]
         
         graph = StateGraph(State)
         
@@ -458,7 +459,20 @@ class CSVConversationGraph:
                     await self.data_store.save_dataframe(state["session_id"], cleaned_df)
                     logger.info(f"Saved cleaned data to data store for session {state['session_id']}")
                     
-                    # Save to database for persistent storage
+                    # Update experiment database with agent versioning if experiment_id is available
+                    experiment_id = state.get("experiment_id")
+                    if experiment_id:
+                        try:
+                            await self._update_experiment_csv_with_versioning(
+                                experiment_id, 
+                                state["current_csv"],
+                                is_agent_update=True
+                            )
+                            logger.info(f"Updated experiment {experiment_id} with agent versioning")
+                        except Exception as e:
+                            logger.warning(f"Failed to update experiment {experiment_id}: {str(e)}")
+                    
+                    # Fallback: Save to database for persistent storage (legacy method)
                     try:
                         await self._save_cleaned_data_to_database(state["session_id"], state["current_csv"])
                         logger.info(f"Saved cleaned data to database for session {state['session_id']}")
@@ -510,10 +524,13 @@ class CSVConversationGraph:
             return state
     
     async def _handle_row_operations(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle row addition and deletion operations."""
+        """Handle row addition and deletion operations with improved validation and error handling."""
         try:
             user_message = state["user_message"]
             session_id = state["session_id"]
+            
+            # STEP 0: Preserve original CSV for rollback on errors
+            original_csv = state["current_csv"]
             
             # Get current DataFrame
             cleaned_df = await self.data_store.get_dataframe(session_id)
@@ -524,36 +541,51 @@ class CSVConversationGraph:
                 
             if current_df is None:
                 state["response"] = "I couldn't parse your CSV data. Please ensure it's properly formatted."
+                # Ensure state["current_csv"] remains valid
+                if not state.get("current_csv"):
+                    state["current_csv"] = original_csv
                 return state
             
-            # Use quality agent to detect and handle row operations
+            # STEP 1: Get available columns for later error messaging (but don't block execution)
+            available_columns = self._get_available_columns(current_df)
+            
+            # STEP 2: Use quality agent to detect and handle row operations
             if not self.quality_agent:
                 state["response"] = "Row operations are not available - AI agent not configured."
+                state["current_csv"] = original_csv
                 return state
             
-            # Step 1: Detect if this is a row operation
+            # STEP 3: Detect if this is a row operation
             detection_result = await self.quality_agent.detect_row_operations(user_message, current_df)
             
             if not detection_result.get("operation_detected", False):
                 state["response"] = "I couldn't detect a row operation in your message. Please be more specific about what you'd like to add or delete."
+                state["current_csv"] = original_csv
                 return state
             
             operation_type = detection_result.get("operation_type", "none")
             
             if operation_type == "none":
                 state["response"] = "I couldn't understand the specific row operation you want to perform."
+                state["current_csv"] = original_csv
                 return state
             
-            # Step 2: Parse operation details
+            # STEP 4: Parse operation details
             operation_details = await self.quality_agent.parse_row_operation_details(
                 user_message, operation_type, current_df
             )
             
             if not operation_details.get("success", False):
-                state["response"] = f"I couldn't parse the {operation_type} operation details. Please provide more specific information."
+                error_details = operation_details.get("error", "Unknown parsing error")
+                response_msg = f"I couldn't parse the {operation_type.replace('_', ' ')} operation details: {error_details}"
+                response_msg += f"\n\n📋 **Available columns:** {', '.join(available_columns)}"
+                response_msg += "\n\n**Please try a more specific request like:**\n• \"Delete rows where [column_name] equals [value]\""
+                
+                state["response"] = response_msg
+                state["current_csv"] = original_csv
                 return state
             
-            # Step 3: Validate the operation
+            # STEP 5: Validate the operation
             validation_result = await self.quality_agent.validate_row_operation(
                 operation_type, operation_details, current_df
             )
@@ -563,84 +595,124 @@ class CSVConversationGraph:
                 recommendations = validation_result.get("recommendations", [])
                 
                 # Build helpful error response with recommendations
-                response_msg = f"I couldn't {operation_type.replace('_', ' ')} because: {error_msg}"
+                response_msg = f"❌ I couldn't {operation_type.replace('_', ' ')} because: {error_msg}"
+                response_msg += f"\n\n📋 **Available columns:** {', '.join(available_columns)}"
                 
                 if recommendations:
-                    response_msg += "\n\n💡 Here are some suggestions:"
+                    response_msg += "\n\n💡 **Suggestions:**"
                     for i, rec in enumerate(recommendations[:3], 1):  # Show top 3 recommendations
                         response_msg += f"\n{i}. {rec}"
                 
                 state["response"] = response_msg
+                state["current_csv"] = original_csv
                 return state
             
-            # Step 4: Execute the operation
+            # STEP 6: Execute the operation
             execution_result = await self.quality_agent.execute_row_operation(
                 operation_type, validation_result, current_df
             )
             
             if not execution_result.get("success", False):
                 error_msg = execution_result.get("error", "Unknown execution error")
-                state["response"] = f"Failed to execute {operation_type}: {error_msg}"
+                response_msg = f"❌ Failed to execute {operation_type.replace('_', ' ')}: {error_msg}"
+                response_msg += f"\n\n📋 **Available columns:** {', '.join(available_columns)}"
+                
+                state["response"] = response_msg
+                state["current_csv"] = original_csv
                 return state
             
-            # Step 5: Update state with modified data
+            # STEP 7: Update state with modified data (with defensive checks)
             modified_df = execution_result.get("modified_df")
             if modified_df is not None:
-                # Convert back to CSV string
-                modified_csv = self.csv_processor._dataframe_to_csv_string(modified_df)
-                state["current_csv"] = modified_csv
-                
-                # Save to data store
-                await self.data_store.save_dataframe(session_id, modified_df)
-                
-                # Save to database for persistence
                 try:
-                    await self._save_cleaned_data_to_database(session_id, modified_csv)
-                    logger.info(f"Saved row operation result to database for session {session_id}")
+                    # Convert back to CSV string with validation
+                    modified_csv = self.csv_processor._dataframe_to_csv_string(modified_df)
+                    
+                    # Defensive check: ensure modified_csv is valid
+                    if not modified_csv or not modified_csv.strip():
+                        logger.error("Modified CSV is empty or invalid, preserving original")
+                        state["current_csv"] = original_csv
+                        state["response"] = f"❌ The {operation_type.replace('_', ' ')} operation failed to produce valid data. Original data preserved."
+                        return state
+                    
+                    # Update state with valid data
+                    state["current_csv"] = modified_csv
+                    
+                    # Save to data store
+                    await self.data_store.save_dataframe(session_id, modified_df)
+                    
+                    # Update experiment database with agent versioning if experiment_id is available
+                    experiment_id = state.get("experiment_id")
+                    if experiment_id:
+                        try:
+                            await self._update_experiment_csv_with_versioning(
+                                experiment_id, 
+                                modified_csv,
+                                is_agent_update=True
+                            )
+                            logger.info(f"Updated experiment {experiment_id} with row operation result")
+                        except Exception as e:
+                            logger.warning(f"Failed to update experiment {experiment_id}: {str(e)}")
+                    
+                    # Fallback: Save to database for persistence (legacy method)
+                    try:
+                        await self._save_cleaned_data_to_database(session_id, modified_csv)
+                        logger.info(f"Saved row operation result to database for session {session_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to save row operation result to database: {str(e)}")
+                    
+                    # Update transformation history
+                    changes_made = execution_result.get("changes_made", [])
+                    applied_transformations = state.get("applied_transformations", [])
+                    applied_transformations.extend(changes_made)
+                    state["applied_transformations"] = applied_transformations
+                    
+                    # Generate success response
+                    if operation_type == "add_row":
+                        rows_added = execution_result.get("rows_added", 0)
+                        new_shape = execution_result.get("new_shape", (0, 0))
+                        state["response"] = f"✅ Successfully added {rows_added} row. Your dataset now has {new_shape[0]} rows and {new_shape[1]} columns."
+                    elif operation_type == "delete_row":
+                        rows_deleted = execution_result.get("rows_deleted", 0)
+                        new_shape = execution_result.get("new_shape", (0, 0))
+                        state["response"] = f"✅ Successfully deleted {rows_deleted} row(s). Your dataset now has {new_shape[0]} rows and {new_shape[1]} columns."
+                    
+                    # Include change details
+                    if changes_made:
+                        state["response"] += f"\n\n📝 Changes made: {'; '.join(changes_made)}"
+                    
+                    # Include helpful recommendations from validation
+                    recommendations = validation_result.get("recommendations", [])
+                    if recommendations:
+                        state["response"] += f"\n\n💡 Notes:"
+                        for rec in recommendations[:3]:  # Show top 3 recommendations
+                            state["response"] += f"\n• {rec}"
+                    
+                    # Include warnings if any
+                    warnings = validation_result.get("warnings", [])
+                    if warnings:
+                        state["response"] += f"\n\n⚠️ Warnings: {'; '.join(warnings)}"
+                        
                 except Exception as e:
-                    logger.warning(f"Failed to save row operation result to database: {str(e)}")
-                
-                # Update transformation history
-                changes_made = execution_result.get("changes_made", [])
-                applied_transformations = state.get("applied_transformations", [])
-                applied_transformations.extend(changes_made)
-                state["applied_transformations"] = applied_transformations
-                
-                # Generate success response
-                if operation_type == "add_row":
-                    rows_added = execution_result.get("rows_added", 0)
-                    new_shape = execution_result.get("new_shape", (0, 0))
-                    state["response"] = f"✅ Successfully added {rows_added} row. Your dataset now has {new_shape[0]} rows and {new_shape[1]} columns."
-                elif operation_type == "delete_row":
-                    rows_deleted = execution_result.get("rows_deleted", 0)
-                    new_shape = execution_result.get("new_shape", (0, 0))
-                    state["response"] = f"✅ Successfully deleted {rows_deleted} row(s). Your dataset now has {new_shape[0]} rows and {new_shape[1]} columns."
-                
-                # Include change details
-                if changes_made:
-                    state["response"] += f"\n\n📝 Changes made: {'; '.join(changes_made)}"
-                
-                # Include helpful recommendations from validation
-                recommendations = validation_result.get("recommendations", [])
-                if recommendations:
-                    state["response"] += f"\n\n💡 Notes:"
-                    for rec in recommendations[:3]:  # Show top 3 recommendations
-                        state["response"] += f"\n• {rec}"
-                
-                # Include warnings if any
-                warnings = validation_result.get("warnings", [])
-                if warnings:
-                    state["response"] += f"\n\n⚠️ Warnings: {'; '.join(warnings)}"
-                
+                    logger.error(f"Error processing modified DataFrame: {str(e)}")
+                    state["current_csv"] = original_csv
+                    state["response"] = f"❌ The {operation_type.replace('_', ' ')} operation failed during data processing. Original data preserved."
+                    return state
+                    
             else:
-                state["response"] = f"The {operation_type} operation completed but no data was modified."
+                # Operation completed but no data was modified - preserve original
+                state["current_csv"] = original_csv
+                state["response"] = f"The {operation_type.replace('_', ' ')} operation completed but no data was modified. This might mean no rows matched your criteria."
+                state["response"] += f"\n\n📋 **Available columns:** {', '.join(available_columns)}"
             
             logger.info(f"Handled {operation_type} operation for session {session_id}")
             return state
             
         except Exception as e:
             logger.error(f"Error handling row operations: {str(e)}")
-            state["response"] = f"I encountered an error while handling the row operation: {str(e)}"
+            # Ensure original data is preserved on any unexpected error
+            state["current_csv"] = original_csv
+            state["response"] = f"❌ I encountered an error while handling the row operation: {str(e)}\n\nYour original data has been preserved."
             return state
     
     # Routing Functions
@@ -696,6 +768,83 @@ class CSVConversationGraph:
     
     # Helper Functions
     
+    def _get_available_columns(self, df) -> List[str]:
+        """Get list of available column names from DataFrame."""
+        if df is not None and hasattr(df, 'columns'):
+            return list(df.columns)
+        return []
+    
+    def _find_similar_columns(self, search_term: str, available_columns: List[str]) -> List[str]:
+        """Find columns similar to the search term using fuzzy matching."""
+        import difflib
+        
+        if not search_term or not available_columns:
+            return []
+        
+        # Use difflib to find similar column names
+        similar_columns = difflib.get_close_matches(
+            search_term.lower(), 
+            [col.lower() for col in available_columns], 
+            n=3,  # Return up to 3 matches
+            cutoff=0.4  # 40% similarity threshold
+        )
+        
+        # Map back to original case
+        result = []
+        for similar in similar_columns:
+            for original in available_columns:
+                if original.lower() == similar:
+                    result.append(original)
+                    break
+        
+        return result
+    
+    def _validate_column_references(self, user_message: str, available_columns: List[str]) -> Dict[str, Any]:
+        """Validate that column references in user message exist in the data."""
+        # Common patterns for column references in delete operations
+        import re
+        
+        # Look for patterns like "column_name = value", "where column_name", "category abhi"
+        # This is a simplified approach - the quality agent should do more sophisticated parsing
+        
+        # Extract potential column names from user message
+        potential_columns = []
+        
+        # Pattern 1: "where column_name = value"
+        where_pattern = r'\bwhere\s+(\w+)'
+        where_matches = re.findall(where_pattern, user_message.lower())
+        potential_columns.extend(where_matches)
+        
+        # Pattern 2: "column_name = value" or "column_name is value"  
+        equals_pattern = r'\b(\w+)\s*(?:=|is|equals?)\s*\w+'
+        equals_matches = re.findall(equals_pattern, user_message.lower())
+        potential_columns.extend(equals_matches)
+        
+        # Pattern 3: Common column name words (category, name, id, etc.)
+        common_column_words = ['category', 'name', 'id', 'type', 'status', 'group', 'class']
+        message_words = user_message.lower().split()
+        for word in message_words:
+            if word in common_column_words:
+                potential_columns.append(word)
+        
+        # Check if any potential columns don't exist
+        missing_columns = []
+        suggestions = {}
+        
+        for col in potential_columns:
+            if col not in [c.lower() for c in available_columns]:
+                similar = self._find_similar_columns(col, available_columns)
+                missing_columns.append(col)
+                if similar:
+                    suggestions[col] = similar
+        
+        return {
+            "valid": len(missing_columns) == 0,
+            "missing_columns": missing_columns,
+            "suggestions": suggestions,
+            "available_columns": available_columns
+        }
+    
     def _get_or_create_state(self, request: CSVMessageRequest) -> Dict[str, Any]:
         """Get or create conversation state as dictionary for LangGraph."""
         if request.session_id in self.sessions:
@@ -709,6 +858,9 @@ class CSVConversationGraph:
                 state["user_message"] = request.user_message
                 # Clear previous response to allow new response generation
                 state["response"] = ""
+                # Update experiment_id if provided in request
+                if request.experiment_id and not state.get("experiment_id"):
+                    state["experiment_id"] = request.experiment_id
             else:
                 # It's a Pydantic model
                 state = {
@@ -723,7 +875,8 @@ class CSVConversationGraph:
                     "pending_transformations": existing_state.pending_transformations,
                     "awaiting_approval": existing_state.awaiting_approval,
                     "applied_transformations": existing_state.applied_transformations,
-                    "confidence_score": existing_state.confidence_score
+                    "confidence_score": existing_state.confidence_score,
+                    "experiment_id": getattr(existing_state, 'experiment_id', request.experiment_id)
                 }
         else:
             # Create new state as dictionary
@@ -739,7 +892,8 @@ class CSVConversationGraph:
                 "pending_transformations": [],
                 "awaiting_approval": False,
                 "applied_transformations": [],
-                "confidence_score": 0.0
+                "confidence_score": 0.0,
+                "experiment_id": request.experiment_id
             }
         
         return state
@@ -887,6 +1041,33 @@ class CSVConversationGraph:
         except Exception as e:
             return f"I encountered an error describing your data: {str(e)}"
     
+    async def _update_experiment_csv_with_versioning(self, experiment_id: str, cleaned_csv: str, is_agent_update: bool = True) -> bool:
+        """Update experiment CSV data with proper versioning via HTTP API."""
+        try:
+            import httpx
+            
+            # Use httpx to call our database API endpoint
+            async with httpx.AsyncClient() as client:
+                response = await client.put(
+                    f"http://localhost:8000/api/database/experiments/{experiment_id}/csv",
+                    json={
+                        "csv_data": cleaned_csv,
+                        "is_agent_update": is_agent_update,
+                        "expected_version": None  # Let the API handle versioning
+                    }
+                )
+                
+                if response.status_code == 200:
+                    logger.info(f"Successfully updated experiment {experiment_id} with agent versioning")
+                    return True
+                else:
+                    logger.error(f"Failed to update experiment {experiment_id}: {response.status_code} - {response.text}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"Error updating experiment {experiment_id}: {str(e)}")
+            return False
+
     async def _save_cleaned_data_to_database(self, session_id: str, cleaned_csv: str) -> bool:
         """Save cleaned CSV data to database via HTTP API."""
         try:

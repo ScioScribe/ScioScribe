@@ -504,7 +504,12 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
         const updatedExperiment = await updateExperimentCsvAPI(currentExperiment.id, csv)
         
         // Update the current experiment with the new CSV data
-        set({ currentExperiment: updatedExperiment })
+        set({ 
+          currentExperiment: updatedExperiment,
+          csvVersion: updatedExperiment.csv_version || 0,  // Keep version in sync
+          previousCsv: null,                               // Clear any stale diff
+          hasDiff: false                                   // No pending agent diff
+        })
         
         // Update the experiments array to reflect the new CSV
         const updatedExperiments = experiments.map((exp: Experiment) => 

@@ -41,6 +41,8 @@ export interface ConversationMessageRequest {
   session_id: string
   user_id?: string
   artifact_id?: string
+  csv_data?: string
+  experiment_id?: string | null
 }
 
 export interface ConversationMessageResponse {
@@ -151,10 +153,11 @@ export async function sendConversationMessage(request: ConversationMessageReques
     
     // Use CSV-specific endpoint instead of general conversation endpoint
     const csvRequest = {
-      csv_data: "", // Empty CSV data for text-only messages
+      csv_data: request.csv_data || "", // Use provided CSV data or empty string
       user_message: request.user_message,
       session_id: request.session_id,
-      user_id: request.user_id || "demo-user"
+      user_id: request.user_id || "demo-user",
+      experiment_id: request.experiment_id || null // Pass experiment ID for database updates
     }
     
     const response = await fetch(`${BASE_URL}/csv-conversation/process`, {
