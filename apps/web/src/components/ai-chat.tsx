@@ -77,10 +77,18 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     datacleanSessionRef.current = datacleanSession
   }, [datacleanSession])
 
+  // Create updateMessage function
+  const updateMessage = useCallback((messageId: string, updates: Partial<Message>) => {
+    setMessages(prev => prev.map(msg => 
+      msg.id === messageId ? { ...msg, ...updates } : msg
+    ))
+  }, [])
+
   // Create message handler context (memoized to prevent infinite re-renders)
    
   const messageHandlerContext: MessageHandlerContext = useMemo(() => ({
     setMessages,
+    updateMessage,
     setIsLoading,
     getPlanningSession: () => planningSessionRef.current,
     setPlanningSession: updatePlanningSession,
@@ -94,6 +102,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     csv
   }), [
     // Remove session objects from dependencies to prevent constant re-creation
+    updateMessage,
     updatePlanningSession,
     updateDatacleanSession,
     updatePlanFromPlanningState,
@@ -150,16 +159,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     },
     () => {
       console.log("✅ Planning WebSocket connection opened")
-      
-      const connectionMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: `✅ Connected. Ready to continue planning.`,
-        sender: "ai",
-        timestamp: new Date(),
-        mode: "plan",
-        response_type: "text"
-      }
-      setMessages((prev) => [...prev, connectionMessage])
+      // Connection message removed - no need to show status in chat
     },
     (event) => {
       console.log("🔒 Planning WebSocket connection closed:", event)
