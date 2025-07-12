@@ -257,7 +257,7 @@ function handlePlanningApprovalRequest(data: Record<string, unknown>, context: M
   
   const rawMessage: Message = {
     id: (Date.now() + Math.random()).toString(),
-    content: JSON.stringify(data),
+    content: (data.display_message as string) || "Review completed work",
     sender: "ai",
     timestamp: new Date(),
     mode: "plan",
