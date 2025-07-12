@@ -332,7 +332,7 @@ async def start_hitl_planning_session(request: StartHITLPlanningRequest):
         return HITLSessionResponse(
             session_id=session_id,
             experiment_id=current_state["experiment_id"],
-            current_stage=current_stage or current_state.get("current_stage", "objective_setting"),
+            current_stage=current_state.get("current_stage") or current_stage or "objective_setting",
             is_waiting_for_approval=is_interrupted,
             pending_approval={"stage": current_stage, "status": "waiting"} if is_interrupted else None,
             streaming_enabled=True,
@@ -373,8 +373,9 @@ async def websocket_planning_session(websocket: WebSocket, session_id: str):
             # If graph is interrupted, send approval request
             is_interrupted = await _is_graph_interrupted(session_id)
             if is_interrupted:
-                current_stage = await _get_current_stage_from_graph(session_id)
-                await _send_approval_request(websocket, session_id, {"stage": current_stage, "status": "waiting"})
+                graph_stage = await _get_current_stage_from_graph(session_id)
+                correct_stage = current_state.get("current_stage") or graph_stage or "objective_setting"
+                await _send_approval_request(websocket, session_id, {"stage": correct_stage, "status": "waiting"})
         
         # Listen for messages from frontend
         while True:
@@ -486,7 +487,7 @@ async def _send_session_status(websocket: WebSocket, session_id: str):
         status_data = {
             "session_id": session_id,
             "is_active": current_state is not None,
-            "current_stage": current_stage or (current_state.get("current_stage") if current_state else None),
+            "current_stage": (current_state.get("current_stage") if current_state else None) or current_stage,
             "is_waiting_for_approval": is_interrupted
         }
         
@@ -503,6 +504,13 @@ async def _send_planning_update(websocket: WebSocket, session_id: str, state: Ex
     """Send planning state update to frontend."""
     try:
         serialized_state = serialize_state_to_dict(state)
+        
+        # Apply the same stage prioritization logic as API responses
+        # Prioritize state's current_stage over graph-based stage during active operations
+        graph_stage = await _get_current_stage_from_graph(session_id)
+        correct_stage = state.get("current_stage") or graph_stage or "objective_setting"
+        serialized_state["current_stage"] = correct_stage
+        
         await _send_websocket_message(websocket, {
             "type": "planning_update",
             "data": {"state": serialized_state},
@@ -747,8 +755,9 @@ async def _process_planning_execution(websocket: WebSocket, session_id: str, sta
         # Check if we're now interrupted at the next stage
         is_interrupted = await _is_graph_interrupted(session_id)
         if is_interrupted:
-            current_stage = await _get_current_stage_from_graph(session_id)
-            await _send_approval_request(websocket, session_id, {"stage": current_stage, "status": "waiting"})
+            graph_stage = await _get_current_stage_from_graph(session_id)
+            correct_stage = final_state.get("current_stage") or graph_stage or "objective_setting"
+            await _send_approval_request(websocket, session_id, {"stage": correct_stage, "status": "waiting"})
                 
     except Exception as e:
         logger.error(f"Error in planning execution: {e}")
@@ -771,7 +780,7 @@ async def get_hitl_session_status(session_id: str):
         return HITLSessionResponse(
             session_id=session_id,
             experiment_id=current_state["experiment_id"],
-            current_stage=current_stage or current_state.get("current_stage", "objective_setting"),
+            current_stage=current_state.get("current_stage") or current_stage or "objective_setting",
             is_waiting_for_approval=is_interrupted,
             pending_approval={"stage": current_stage, "status": "waiting"} if is_interrupted else None,
             streaming_enabled=True,
