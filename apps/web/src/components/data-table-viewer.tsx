@@ -568,13 +568,8 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                   Agent updating...
                 </div>
               )}
-              {tableData.length > 0 && !isAgentUpdating && (
-                <span className="text-xs text-muted-foreground/70 font-normal">
-                  ({filteredData.length} of {tableData.length} rows)
-                </span>
-              )}
+              <ChangeSummary />
             </CardTitle>
-            <ChangeSummary />
           </div>
           
           <div className="flex items-center gap-2">
