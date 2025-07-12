@@ -27,7 +27,6 @@ export function ExperimentView() {
     csvData,
     visualizationHtml,
     loadExperiments,
-    createFirstExperiment,
     selectExperiment,
     updateEditorTextWithSave,
     updateVisualizationHtmlWithSave,
@@ -53,9 +52,9 @@ export function ExperimentView() {
   // Show home page when no experiments exist or no current experiment selected
   if (experiments.length === 0 || !currentExperiment) {
     return <HomePage 
-      onNavigateToExperiment={async () => {
-        await createFirstExperiment()
-        // No need to navigate - component will re-render with the new experiment
+      onNavigateToExperiment={() => {
+        // No need to call createFirstExperiment here - HomePage already handles it
+        // Component will re-render when the experiment is created
       }}
       onExperimentSelect={(experiment) => {
         selectExperiment(experiment)

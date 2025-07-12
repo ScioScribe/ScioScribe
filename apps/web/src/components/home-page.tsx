@@ -19,7 +19,7 @@ interface HomePageProps {
 }
 
 export function HomePage({ onNavigateToExperiment, onExperimentSelect }: HomePageProps) {
-  const { experiments, isLoading, createFirstExperiment, selectExperiment } = useExperimentStore()
+  const { experiments, isLoading, isCreatingExperiment, createFirstExperiment, selectExperiment } = useExperimentStore()
 
   const handleCreateExperiment = async () => {
     try {
@@ -115,14 +115,24 @@ export function HomePage({ onNavigateToExperiment, onExperimentSelect }: HomePag
         <div className="flex flex-col items-center justify-center mt-8">
           <Button
             onClick={handleCreateExperiment}
+            disabled={isCreatingExperiment}
             size="lg"
-            className="px-12 py-6 text-lg font-semibold bg-blue-600 hover:bg-blue-700 text-white border-0 shadow-lg hover:shadow-xl transition-all duration-300 mb-8"
+            className="px-12 py-6 text-lg font-semibold bg-blue-600 hover:bg-blue-700 text-white border-0 shadow-lg hover:shadow-xl transition-all duration-300 mb-8 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
               fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
             }}
           >
-            <Play className="h-5 w-5 mr-3" />
-            New Experiment
+            {isCreatingExperiment ? (
+              <>
+                <div className="animate-spin h-5 w-5 mr-3 border-2 border-white border-t-transparent rounded-full" />
+                Creating...
+              </>
+            ) : (
+              <>
+                <Play className="h-5 w-5 mr-3" />
+                New Experiment
+              </>
+            )}
           </Button>
 
           {/* Additional Info */}

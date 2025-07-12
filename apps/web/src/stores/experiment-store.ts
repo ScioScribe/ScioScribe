@@ -65,7 +65,8 @@ const convertPlanningStateToString = (planningState: PlanningState): string => {
     if (!planningState) return "";
 
     // Use the new structured text formatter instead of raw JSON
-    return convertPlanningStateToText(planningState);
+    // Convert PlanningState to Record<string, unknown> for compatibility
+    return convertPlanningStateToText(planningState as Record<string, unknown>);
   } catch (error) {
     console.error("❌ Error converting planning state to string:", error);
     return `# Experiment Plan\n\n*Error formatting planning data: ${error instanceof Error ? error.message : 'Unknown error'}*`;
@@ -108,6 +109,7 @@ interface ExperimentState {
   currentExperiment: Experiment | null
   experiments: Experiment[]
   isLoading: boolean
+  isCreatingExperiment: boolean
   
   // Content state
   experimentTitle: string
@@ -163,6 +165,7 @@ const initialState: ExperimentState = {
   currentExperiment: null,
   experiments: [],
   isLoading: true,
+  isCreatingExperiment: false,
   experimentTitle: "Untitled Experiment",
   editorText: IRIS_EXPERIMENT_PLAN,
   csvData: IRIS_CSV_DATA,
@@ -292,6 +295,17 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
    },
 
    createFirstExperiment: async () => {
+     const state = get()
+     
+     // Debouncing: Check if we're already creating an experiment
+     if (state.isCreatingExperiment) {
+       console.log("⏳ Experiment creation already in progress, skipping duplicate call")
+       return
+     }
+     
+     // Set flag to prevent duplicate calls
+     set({ isCreatingExperiment: true })
+     
      try {
        const newExperiment = await createExperimentAPI({
          title: "Untitled Experiment",
@@ -309,6 +323,9 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
        get().selectExperiment(newExperiment)
      } catch (error) {
        console.error("Failed to create experiment:", error)
+     } finally {
+       // Clear the flag after operation completes
+       set({ isCreatingExperiment: false })
      }
    },
   
