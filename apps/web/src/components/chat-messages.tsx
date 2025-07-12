@@ -7,29 +7,20 @@
 
 import { useEffect, useRef, useState, useCallback } from "react"
 import { ChatMessage } from "@/components/chat-message"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Wifi, WifiOff, Loader2, Zap, Clock, RefreshCw, ChevronDown } from "lucide-react"
+import { ChevronDown } from "lucide-react"
 import type { Message } from "@/types/chat-types"
 
 interface ChatMessagesProps {
   messages: Message[]
   isLoading: boolean
   selectedMode: string
-  isConnected?: boolean
-  connectionStatus?: string
-  lastActivity?: Date
-  onRetryConnection?: () => void
 }
 
 export function ChatMessages({ 
   messages, 
   isLoading, 
-  selectedMode,
-  isConnected = false,
-  connectionStatus = "disconnected",
-  lastActivity,
-  onRetryConnection
+  selectedMode
 }: ChatMessagesProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
@@ -174,15 +165,6 @@ export function ChatMessages({
         </div>
       </div>
 
-      {/* Connection Status Bar */}
-      <ConnectionStatusBar 
-        isConnected={isConnected}
-        connectionStatus={connectionStatus}
-        selectedMode={selectedMode}
-        lastActivity={lastActivity}
-        onRetryConnection={onRetryConnection}
-      />
-      
       {/* Messages Container */}
       <div
         ref={scrollAreaRef}
@@ -254,151 +236,7 @@ export function ChatMessages({
   )
 }
 
-/**
- * Connection Status Bar Component
- */
-interface ConnectionStatusBarProps {
-  isConnected: boolean
-  connectionStatus: string
-  selectedMode: string
-  lastActivity?: Date
-  onRetryConnection?: () => void
-}
 
-function ConnectionStatusBar({ isConnected, connectionStatus, selectedMode, lastActivity, onRetryConnection }: ConnectionStatusBarProps) {
-  const [timeAgo, setTimeAgo] = useState("")
-
-  // Update time ago periodically
-  useEffect(() => {
-    const updateTimeAgo = () => {
-      if (lastActivity) {
-        const now = new Date()
-        const diffMs = now.getTime() - lastActivity.getTime()
-        const diffSecs = Math.floor(diffMs / 1000)
-        const diffMins = Math.floor(diffSecs / 60)
-        
-        const newTimeAgo = diffSecs < 60 
-          ? `${diffSecs}s ago`
-          : diffMins < 60 
-            ? `${diffMins}m ago`
-            : ">1h ago"
-        
-        // Only update state if the value actually changed
-        setTimeAgo(prev => prev === newTimeAgo ? prev : newTimeAgo)
-      }
-    }
-
-    updateTimeAgo()
-    const interval = setInterval(updateTimeAgo, 5000) // Update every 5 seconds
-    
-    return () => clearInterval(interval)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastActivity?.getTime()]) // Use primitive value instead of Date object
-
-  const getStatusColor = () => {
-    if (selectedMode !== "plan") return "gray" // Only show for planning mode
-    
-    switch (connectionStatus) {
-      case "connected":
-        return "green"
-      case "connecting":
-        return "yellow"
-      case "reconnecting":
-        return "orange"
-      case "disconnected":
-      case "error":
-        return "red"
-      default:
-        return "gray"
-    }
-  }
-
-  const getStatusIcon = () => {
-    if (selectedMode !== "plan") return null
-    
-    switch (connectionStatus) {
-      case "connected":
-        return <Wifi className="h-3 w-3" />
-      case "connecting":
-      case "reconnecting":
-        return <Loader2 className="h-3 w-3 animate-spin" />
-      case "disconnected":
-      case "error":
-        return <WifiOff className="h-3 w-3" />
-      default:
-        return <Clock className="h-3 w-3" />
-    }
-  }
-
-  const getStatusText = () => {
-    if (selectedMode !== "plan") {
-      return `${selectedMode} mode - Real-time updates available`
-    }
-    
-    switch (connectionStatus) {
-      case "connected":
-        return `WebSocket connected - Real-time updates ${timeAgo ? `(${timeAgo})` : ""}`
-      case "connecting":
-        return "Connecting to planning server..."
-      case "reconnecting":
-        return "Reconnecting to planning server..."
-      case "disconnected":
-        return "Disconnected from planning server"
-      case "error":
-        return "Connection error - Retrying..."
-      default:
-        return `Planning mode - ${connectionStatus}`
-    }
-  }
-
-  if (selectedMode !== "plan" && !isConnected) {
-    return null // Don't show status bar for non-planning modes when not relevant
-  }
-
-  return (
-    <div className="flex-shrink-0 px-6 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Badge 
-            variant={getStatusColor() === "green" ? "default" : "secondary"}
-            className={`text-xs flex items-center gap-1 ${
-              getStatusColor() === "green" ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" :
-              getStatusColor() === "yellow" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200" :
-              getStatusColor() === "orange" ? "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200" :
-              getStatusColor() === "red" ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" :
-              "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200"
-            }`}
-          >
-            {getStatusIcon()}
-            <span>{getStatusText()}</span>
-          </Badge>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          {selectedMode === "plan" && isConnected && (
-            <div className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
-              <Zap className="h-3 w-3" />
-              <span>Live</span>
-            </div>
-          )}
-          
-          {/* Retry button for failed connections */}
-          {selectedMode === "plan" && connectionStatus === "failed" && onRetryConnection && (
-            <Button
-              onClick={onRetryConnection}
-              size="sm"
-              variant="outline"
-              className="h-6 px-2 text-xs"
-            >
-              <RefreshCw className="h-3 w-3 mr-1" />
-              Retry
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
 
 /**
  * Loading Indicator Component
