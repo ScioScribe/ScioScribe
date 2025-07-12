@@ -316,6 +316,60 @@ def is_graph_complete(state_snapshot) -> bool:
     return False
 
 
+def should_skip_interrupt_for_edit_mode(state: ExperimentPlanState) -> bool:
+    """
+    Check if we should skip the interrupt because we're in edit mode.
+    
+    This function determines whether the current execution is part of an edit
+    operation that should bypass the normal approval interrupt.
+    
+    Args:
+        state: Current experiment plan state
+        
+    Returns:
+        True if interrupt should be skipped (edit mode), False otherwise
+    """
+    edit_mode = state.get('edit_mode', False)
+    return bool(edit_mode)
+
+
+def set_edit_mode(state: ExperimentPlanState, enabled: bool, return_stage: str = None) -> ExperimentPlanState:
+    """
+    Set or clear edit mode in the state.
+    
+    Args:
+        state: Current experiment plan state
+        enabled: Whether to enable edit mode
+        return_stage: Stage to return to after edit (if enabling)
+        
+    Returns:
+        Updated state with edit mode set
+    """
+    updated_state = state.copy() if hasattr(state, 'copy') else dict(state)
+    updated_state['edit_mode'] = enabled
+    
+    if enabled and return_stage:
+        updated_state['return_to_stage'] = return_stage
+    elif not enabled:
+        # Clear return stage when disabling edit mode
+        updated_state.pop('return_to_stage', None)
+    
+    return updated_state
+
+
+def clear_edit_mode(state: ExperimentPlanState) -> ExperimentPlanState:
+    """
+    Clear edit mode and return stage from state.
+    
+    Args:
+        state: Current experiment plan state
+        
+    Returns:
+        Updated state with edit mode cleared
+    """
+    return set_edit_mode(state, False)
+
+
 def detect_session_completion(session_id: str, graph_components: Dict[str, Any]) -> bool:
     """
     Detect if a planning session has reached completion.

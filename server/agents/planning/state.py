@@ -52,6 +52,10 @@ class ExperimentPlanState(TypedDict):
     current_stage: str
     errors: List[str]
     chat_history: List[Dict[str, Any]]
+    
+    # Edit mode flags for conditional interrupt behavior
+    edit_mode: Optional[bool]           # True when processing edit requests (skip interrupts)
+    return_to_stage: Optional[str]      # Stage to return to after edit completion
 
 
 # Stage constants for tracking progress

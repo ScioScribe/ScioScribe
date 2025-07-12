@@ -48,7 +48,7 @@ def objective_completion_check(state: ExperimentPlanState) -> Literal["continue"
         research_query = state.get('research_query', '')
         
         
-        if return_to_stage and return_to_stage != "objective_setting":
+        if return_to_stage:  # Any edit mode should return to original stage
             # Use the validate_objective_completeness function with 0-100 scoring
             from ..prompts.objective_prompts import validate_objective_completeness
             
@@ -58,6 +58,7 @@ def objective_completion_check(state: ExperimentPlanState) -> Literal["continue"
             
             # If edit is complete enough (≥70 for edits), return to original stage
             if score >= 70:
+                # NOTE: Edit mode will be cleared in the return_router node
                 return "return_to_original"
             else:
                 return "retry"
@@ -101,15 +102,22 @@ def variable_completion_check(state: ExperimentPlanState) -> Literal["continue",
     def _check_variable_completion(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
         # Check if this was an edit operation that should return to original stage
         return_to_stage = state.get('return_to_stage')
-        if return_to_stage and return_to_stage != "variable_identification":
+        edit_mode = state.get('edit_mode', False)
+        
+        if return_to_stage:  # Any edit mode should return to original stage
             independent_vars = state.get('independent_variables', [])
             dependent_vars = state.get('dependent_variables', [])
             control_vars = state.get('control_variables', [])
             
+            logger.info(f"[VARIABLE_COMPLETION] Edit mode check - return_to_stage: {return_to_stage}, edit_mode: {edit_mode}")
+            logger.info(f"[VARIABLE_COMPLETION] Variables - indep: {len(independent_vars)}, dep: {len(dependent_vars)}, control: {len(control_vars)}")
+            
             # For edits, use more lenient criteria (at least some variables defined)
             if independent_vars and dependent_vars:
+                logger.info(f"[VARIABLE_COMPLETION] ✅ Edit complete, returning to {return_to_stage}")
                 return "return_to_original"
             else:
+                logger.info(f"[VARIABLE_COMPLETION] ❌ Edit not complete, retrying")
                 return "retry"
         
         # Normal flow - use stricter criteria for continuing to next stage
@@ -153,12 +161,13 @@ def design_completion_check(state: ExperimentPlanState) -> Literal["continue", "
     def _check_design_completion(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
         # Check if this was an edit operation that should return to original stage
         return_to_stage = state.get('return_to_stage')
-        if return_to_stage and return_to_stage != "experimental_design":
+        if return_to_stage:  # Any edit mode should return to original stage
             experimental_groups = state.get('experimental_groups', [])
             control_groups = state.get('control_groups', [])
             
             # For edits, use more lenient criteria
             if experimental_groups and control_groups:
+                # NOTE: Edit mode will be cleared in the return_router node
                 return "return_to_original"
             else:
                 return "retry"
@@ -204,12 +213,13 @@ def methodology_completion_check(state: ExperimentPlanState) -> Literal["continu
     def _check_methodology_completion(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
         # Check if this was an edit operation that should return to original stage
         return_to_stage = state.get('return_to_stage')
-        if return_to_stage and return_to_stage != "methodology_protocol":
+        if return_to_stage:  # Any edit mode should return to original stage
             methodology_steps = state.get('methodology_steps', [])
             materials_equipment = state.get('materials_equipment', [])
             
             # For edits, use more lenient criteria
             if methodology_steps and materials_equipment:
+                # NOTE: Edit mode will be cleared in the return_router node
                 return "return_to_original"
             else:
                 return "retry"
@@ -253,12 +263,13 @@ def data_completion_check(state: ExperimentPlanState) -> Literal["continue", "re
     def _check_data_completion(state: ExperimentPlanState) -> Literal["continue", "retry", "return_to_original"]:
         # Check if this was an edit operation that should return to original stage
         return_to_stage = state.get('return_to_stage')
-        if return_to_stage and return_to_stage != "data_planning":
+        if return_to_stage:  # Any edit mode should return to original stage
             data_collection_plan = state.get('data_collection_plan', {})
             data_analysis_plan = state.get('data_analysis_plan', {})
             
             # For edits, use more lenient criteria
             if data_collection_plan and data_analysis_plan:
+                # NOTE: Edit mode will be cleared in the return_router node
                 return "return_to_original"
             else:
                 return "retry"

@@ -81,7 +81,11 @@ def create_default_state(experiment_id: str, research_query: str) -> ExperimentP
         # Minimal System State (LangGraph manages the rest)
         current_stage="objective_setting",
         errors=[],
-        chat_history=[]
+        chat_history=[],
+        
+        # Edit mode flags for conditional interrupt behavior
+        edit_mode=False,
+        return_to_stage=None
     )
     
     # Validate the created state
