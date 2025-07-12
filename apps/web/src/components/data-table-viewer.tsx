@@ -116,6 +116,20 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
         console.log("🔍 Diff map keys:", Array.from(diffResult.diffs.keys()))
         console.log("🔍 Diff map entries:", Array.from(diffResult.diffs.entries()).map(([k, v]) => `${k}: ${v.changeType}`))
         
+        // Cross-reference with table data to ensure ID consistency
+        if (tableData.length > 0) {
+          console.log("🔍 DEBUG: Table data row IDs:", tableData.slice(0, 10).map(r => r.id))
+          const missingInDiff = tableData.filter(row => !diffResult.diffs.has(row.id))
+          const extraInDiff = Array.from(diffResult.diffs.keys()).filter(id => !tableData.some(row => row.id === id))
+          
+          if (missingInDiff.length > 0) {
+            console.warn("🔍 WARNING: Table rows missing from diff:", missingInDiff.map(r => r.id))
+          }
+          if (extraInDiff.length > 0) {
+            console.log("🔍 INFO: Extra diff entries (removed rows):", extraInDiff)
+          }
+        }
+        
         setCsvDiff(diffResult.diffs)
         setShowDiff(true)
       } catch (error) {
@@ -127,7 +141,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
       setCsvDiff(new Map())
       setShowDiff(false)
     }
-  }, [hasDiff, csvData, previousCsv])
+  }, [hasDiff, csvData, previousCsv, tableData])
 
   // Debounce ref for CSV sync
   const csvSyncTimeoutRef = useRef<NodeJS.Timeout | null>(null)
