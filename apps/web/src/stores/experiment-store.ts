@@ -135,6 +135,7 @@ interface ExperimentActions {
   // Complex actions with side effects
   loadExperiments: () => Promise<void>
   createFirstExperiment: () => Promise<void>
+  createExperiment: () => Promise<Experiment>
   selectExperiment: (experiment: Experiment) => void
   updateEditorTextWithSave: (text: string) => Promise<void>
   updateVisualizationHtmlWithSave: (html: string) => Promise<void>
@@ -330,6 +331,41 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
        get().selectExperiment(newExperiment)
      } catch (error) {
        console.error("Failed to create experiment:", error)
+     } finally {
+       // Clear the flag after operation completes
+       set({ isCreatingExperiment: false })
+     }
+   },
+
+   createExperiment: async () => {
+     const state = get()
+     
+     // Debouncing: Check if we're already creating an experiment
+     if (state.isCreatingExperiment) {
+       console.log("⏳ Experiment creation already in progress, skipping duplicate call")
+       throw new Error("Experiment creation already in progress")
+     }
+     
+     // Set flag to prevent duplicate calls
+     set({ isCreatingExperiment: true })
+     
+     try {
+       const newExperiment = await createExperimentAPI({
+         title: "Untitled Experiment",
+         experimental_plan: IRIS_EXPERIMENT_PLAN,
+         csv_data: IRIS_CSV_DATA,
+         visualization_html: ""
+       })
+       
+       // Add the new experiment to the experiments array instead of reloading all
+       const { experiments } = get()
+       const updatedExperiments = [newExperiment, ...experiments]
+       set({ experiments: updatedExperiments })
+       
+       return newExperiment
+     } catch (error) {
+       console.error("Failed to create experiment:", error)
+       throw error
      } finally {
        // Clear the flag after operation completes
        set({ isCreatingExperiment: false })

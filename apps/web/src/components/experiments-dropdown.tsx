@@ -21,8 +21,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { ChevronDown, Plus, FlaskRoundIcon as Flask, AlertCircle, Loader2, Trash } from "lucide-react"
-import { createExperiment, type Experiment } from "@/api/database"
-import { IRIS_EXPERIMENT_PLAN, IRIS_CSV_DATA } from "@/data/placeholder"
+import { type Experiment } from "@/api/database"
 import { useToast } from "@/hooks/use-toast"
 
 interface ExperimentsDropdownProps {
@@ -84,20 +83,11 @@ export function ExperimentsDropdown({ experiments, selectedExperiment, onExperim
     setError(null)
     
     try {
-      const newExperiment = await createExperiment({
-        title: "Untitled Experiment",
-        experimental_plan: IRIS_EXPERIMENT_PLAN,
-        csv_data: IRIS_CSV_DATA,
-        visualization_html: ""
-      })
+      // Notify parent to handle experiment creation
+      // This will use the store's createExperiment function and update the experiments list
+      await onExperimentCreated?.()
       
-      // Notify parent to refresh experiments list
-      onExperimentCreated?.()
-      
-      // Select the new experiment
-      onExperimentSelect?.(newExperiment)
-      
-      console.log("Created new experiment:", getExperimentTitle(newExperiment))
+      console.log("Experiment creation initiated")
     } catch (err) {
       console.error("Failed to create experiment:", err)
       setError(err instanceof Error ? err.message : "Failed to create experiment")

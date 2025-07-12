@@ -27,6 +27,7 @@ export function ExperimentView() {
     csvData,
     visualizationHtml,
     loadExperiments,
+    createExperiment,
     selectExperiment,
     updateEditorTextWithSave,
     updateVisualizationHtmlWithSave,
@@ -39,6 +40,16 @@ export function ExperimentView() {
   useEffect(() => {
     loadExperiments()
   }, [])
+
+  // Handle experiment creation from dropdown
+  const handleExperimentCreated = async () => {
+    try {
+      const newExperiment = await createExperiment()
+      selectExperiment(newExperiment)
+    } catch (error) {
+      console.error("Failed to create experiment:", error)
+    }
+  }
 
   // Show loading state
   if (isLoading) {
@@ -70,6 +81,7 @@ export function ExperimentView() {
         experiments={experiments}
         selectedExperiment={currentExperiment}
         onExperimentSelect={selectExperiment}
+        onExperimentCreated={handleExperimentCreated}
         onExperimentDelete={removeExperiment}
         experimentTitle={experimentTitle}
         onTitleChange={updateExperimentTitleWithSave}
