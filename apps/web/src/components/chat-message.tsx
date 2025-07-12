@@ -49,14 +49,14 @@ export function ChatMessage({ message, enableTypewriter = true }: ChatMessagePro
     let animationFrameId: number | null = null
     
     // Calculate typing speed based on content length
-    const baseSpeed = 20 // Slightly faster base speed
-    const speedVariation = Math.random() * 10 + 5 // 5-15ms variation
+    const baseSpeed = 8 // Much faster base speed
+    const speedVariation = Math.random() * 4 + 2 // 2-6ms variation
     const typingSpeed = baseSpeed + speedVariation
     
     const typeNextChar = () => {
       if (index < text.length) {
         // Update text in batches for better performance
-        const batchSize = Math.random() > 0.8 ? 2 : 1 // Occasionally type 2 chars at once
+        const batchSize = Math.random() > 0.6 ? 3 : Math.random() > 0.3 ? 2 : 1 // More frequent batching
         const nextIndex = Math.min(index + batchSize, text.length)
         setDisplayedText(text.slice(0, nextIndex))
         index = nextIndex

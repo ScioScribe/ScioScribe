@@ -159,16 +159,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     },
     () => {
       console.log("✅ Planning WebSocket connection opened")
-      
-      const connectionMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: `✅ Connected. Ready to continue planning.`,
-        sender: "ai",
-        timestamp: new Date(),
-        mode: "plan",
-        response_type: "text"
-      }
-      setMessages((prev) => [...prev, connectionMessage])
+      // Connection message removed - no need to show status in chat
     },
     (event) => {
       console.log("🔒 Planning WebSocket connection closed:", event)

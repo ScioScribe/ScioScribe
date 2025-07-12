@@ -186,7 +186,8 @@ export function ChatMessages({
               enableTypewriter={
                 message.sender === "ai" && 
                 !message.isHtml && 
-                index === messages.length - 1 // Only animate the latest AI message
+                (index === messages.length - 1 || // Latest AI message
+                 (message.mode === "plan" && index >= messages.length - 2)) // Planning messages get priority
               }
             />
           ))}
