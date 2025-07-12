@@ -36,16 +36,16 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
-      content: "Welcome to ScioScribe! I can help you analyze your iris dataset and create visualizations. Try asking me to create charts or analyze the data patterns.",
+      content: "Welcome to ScioScribe! I'm your planning agent and I'll help you design comprehensive research experiments. Tell me about your research question or what you'd like to investigate.",
       sender: "ai",
       timestamp: new Date(),
-      mode: "analysis",
+      mode: "plan",
       response_type: "text"
     }
   ])
 
   const [inputValue, setInputValue] = useState("")
-  const [selectedMode, setSelectedMode] = useState("analysis")
+  const [selectedMode, setSelectedMode] = useState("plan")
   const [isLoading, setIsLoading] = useState(false)
   const [showSuggestions, setShowSuggestions] = useState(false)
 
