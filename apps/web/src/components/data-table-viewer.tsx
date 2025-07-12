@@ -11,7 +11,7 @@ import { useExperimentStore } from "../stores/experiment-store"
 import { parseCSVData, getCSVHeaders } from "../data/placeholder"
 import { generateHeadersFromPlan, uploadFile } from "../api/dataclean"
 import { convertTableToCSV } from "../utils/csv-utils"
-import { cn } from "../lib/utils"
+import { cn } from "../shared/utils"
 
 interface DataTableViewerProps {
   csvData?: string
