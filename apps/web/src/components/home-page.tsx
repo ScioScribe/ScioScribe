@@ -74,9 +74,9 @@ export function HomePage({ onNavigateToExperiment, onExperimentSelect }: HomePag
       <div className="absolute inset-0 bg-black/40" />
 
       {/* Content */}
-      <div className="relative z-10 flex flex-col h-full text-white">
+      <div className="relative z-10 flex flex-col items-center justify-center h-full text-white px-8">
         {/* Header Section */}
-        <div className="flex-shrink-0 flex flex-col items-center justify-center pt-20 pb-12">
+        <div className="flex flex-col items-center justify-center mb-8">
           {/* Logo and Title */}
           <div className="flex items-center gap-4 mb-8">
             <FileText className="h-16 w-16 text-blue-400" />
@@ -92,7 +92,7 @@ export function HomePage({ onNavigateToExperiment, onExperimentSelect }: HomePag
 
           {/* Subtitle */}
           <p 
-            className="text-xl text-gray-200 mb-8 text-center max-w-2xl"
+            className="text-xl text-gray-200 text-center max-w-2xl"
             style={{
               fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
             }}
@@ -103,7 +103,7 @@ export function HomePage({ onNavigateToExperiment, onExperimentSelect }: HomePag
 
         {/* Experiments Carousel Section */}
         {experiments.length > 0 && (
-          <div className="flex-1 flex items-center justify-center py-8">
+          <div className="flex items-center justify-center py-8">
             <ExperimentsCarousel 
               experiments={experiments} 
               onExperimentSelect={handleExperimentSelect}
@@ -112,7 +112,7 @@ export function HomePage({ onNavigateToExperiment, onExperimentSelect }: HomePag
         )}
 
         {/* Call to Action Section */}
-        <div className="flex-shrink-0 flex flex-col items-center justify-center pb-20">
+        <div className="flex flex-col items-center justify-center mt-8">
           <Button
             onClick={handleCreateExperiment}
             size="lg"
