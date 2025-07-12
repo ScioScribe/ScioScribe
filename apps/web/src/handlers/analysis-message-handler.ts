@@ -182,9 +182,9 @@ function handleAnalysisWebSocketMessage(wsMessage: AnalysisWebSocketMessage, con
       }
       
       case 'analysis_complete': {
-        const analysisData = wsMessage.data as unknown as { html?: string; message?: string }
-        const html = analysisData.html
-        const message = analysisData.message || "Analysis complete"
+        const analysisData = wsMessage.data as unknown as { result?: { html_content?: string; explanation?: string }; html?: string; message?: string }
+        const html = analysisData.result?.html_content || analysisData.html
+        const message = analysisData.result?.explanation || analysisData.message || "Analysis complete"
         
         if (html) {
           const htmlMessage: Message = {
