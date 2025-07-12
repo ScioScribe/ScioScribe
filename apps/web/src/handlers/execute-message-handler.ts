@@ -8,6 +8,7 @@
 
 import { sendConversationMessage } from "@/api/dataclean"
 import type { Message, MessageHandlerContext, DatacleanResponse } from "@/types/chat-types"
+import { extractCsvFromDatacleanResponse } from "@/utils/dataclean-response"
 
 /**
  * Handles incoming messages for the execute (data cleaning) mode
@@ -132,17 +133,13 @@ async function processDatacleanResponse(response: DatacleanResponse, context: Me
   console.log("🔄 PROCESSING DATACLEAN RESPONSE:", JSON.stringify(response, null, 2))
   
   try {
-    // If the backend sent back a cleaned CSV (either wrapped in `data` or top-level),
-    // push it into the experiment store immediately so the DataTableViewer refreshes.
-    const cleanedCsv =
-      (response.data && (response.data as Record<string, unknown>).cleaned_csv as string | undefined) ||
-      (response as unknown as Record<string, unknown>).cleaned_csv as string | undefined
+    // Extract CSV data using standardized utility
+    const cleanedCsv = extractCsvFromDatacleanResponse(response, 'conversation-message')
 
-    if (cleanedCsv && typeof cleanedCsv === 'string' && cleanedCsv.trim()) {
-      // We reuse the existing helper that expects a Dataclean-style envelope.
-      // Passing { data: cleanedCsv } is enough for it to store the string.
+    if (cleanedCsv) {
+      // Use the proper dataclean response handler from the store
       try {
-        await updateCsvFromDatacleanResponse({ data: cleanedCsv } as unknown as Record<string, unknown>)
+        await updateCsvFromDatacleanResponse(response as unknown as Record<string, unknown>)
         console.log("💾 Synced cleaned CSV to experiment store (length:", cleanedCsv.length, ")")
       } catch (csvSyncErr) {
         console.warn("⚠️ Failed to sync cleaned CSV:", csvSyncErr)
@@ -177,17 +174,8 @@ async function processDatacleanResponse(response: DatacleanResponse, context: Me
         }
         setMessages((prev) => [...prev, dataPreviewMessage])
         
-        // Update CSV data in experiment store if data is available
-        if (response.data) {
-          console.log("📤 Updating CSV from dataclean response")
-          updateCsvFromDatacleanResponse(response as unknown as Record<string, unknown>)
-            .then(() => {
-              console.log("📥 UPDATE CSV FROM DATACLEAN RESPONSE: Success")
-            })
-            .catch(error => {
-              console.error("❌ Failed to update CSV from dataclean response:", error)
-            })
-        }
+        // Note: CSV data is already processed at the top level of this function
+        // No need for duplicate processing here
         break
       }
         

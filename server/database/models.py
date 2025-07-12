@@ -5,7 +5,7 @@ Simple experiment model for storing experimental plans, visualizations, and data
 """
 
 from datetime import datetime
-from sqlalchemy import Column, String, Text, DateTime
+from sqlalchemy import Column, String, Text, DateTime, Integer
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 import uuid
@@ -24,6 +24,12 @@ class Experiment(Base):
     experimental_plan = Column(Text, nullable=True)
     visualization_html = Column(Text, nullable=True)
     csv_data = Column(Text, nullable=True)
+    
+    # CSV versioning fields
+    previous_csv = Column(Text, nullable=True)
+    csv_version = Column(Integer, default=0)
+    agent_modified_at = Column(DateTime, nullable=True)
+    modification_source = Column(String, default='user')
     
     # Metadata
     title = Column(String, nullable=True)
