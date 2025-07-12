@@ -11,6 +11,7 @@ from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
 from langgraph.graph import StateGraph, END
 from langgraph.graph.state import CompiledStateGraph
+from collections import OrderedDict
 
 from ..models import (
     CSVMessageRequest,
@@ -24,6 +25,13 @@ from ..quality_agent import DataQualityAgent
 from ..memory_store import get_data_store
 
 logger = logging.getLogger(__name__)
+
+# Helper utilities ---------------------------------------------------------
+
+def _dedupe_preserve_order(items: List[str]) -> List[str]:
+    """Remove duplicates while preserving first-seen order."""
+    # OrderedDict trick keeps the first occurrence and maintains order
+    return list(OrderedDict.fromkeys(items))
 
 
 class CSVConversationGraph:
@@ -796,20 +804,25 @@ class CSVConversationGraph:
     async def _generate_analysis_response(self, state: Dict[str, Any]) -> str:
         """Generate analysis response without entering approval flow."""
         try:
-            quality_issues = state.get("quality_issues", [])
-            pending_transformations = state.get("pending_transformations", [])
+            # 1) De-duplicate issues for clarity
+            quality_issues = _dedupe_preserve_order(state.get("quality_issues", []))
 
+            # 2) Suggested fixes that are not already applied
+            pending_transformations = state.get("pending_transformations", [])
+            applied_transformations = set(state.get("applied_transformations", []))
+            pending_transformations = [t for t in pending_transformations if t not in applied_transformations]
+ 
             if quality_issues:
                 response = f"I've analyzed your data and found {len(quality_issues)} issues:\n"
                 for issue in quality_issues:
                     response += f"• {issue}\n"
-
-                # Show top 3 suggestions (if any) so the user can decide next steps
+ 
+                # Show up to 3 fresh suggestions only if there is something left to apply
                 if pending_transformations:
                     response += "\nHere are some potential fixes you might consider:\n"
                     for suggestion in pending_transformations[:3]:
                         response += f"- {suggestion}\n"
-
+ 
                 return response
             else:
                 return "Your data looks good! I didn't find any significant quality issues."
