@@ -88,24 +88,24 @@ export function ExperimentView() {
       />
       
       {/* Enhanced main layout with better spacing and flexible ratios */}
-      <div className="flex-1 grid gap-6 px-6 pb-6 pt-2 min-h-0 overflow-hidden" style={{ 
+      <div className="flex-1 grid gap-6 px-8 pb-8 pt-4 min-h-0 overflow-visible" style={{ 
         gridTemplateColumns: "1.6fr 2.2fr 1.2fr",
         gridTemplateRows: "1fr",
         minHeight: "0"
       }}>
         {/* Left Column - Plan Editor */}
-        <div className="flex flex-col min-h-0 rounded-xl bg-gradient-to-b from-background to-muted/20 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden">
+        <div className="flex flex-col min-h-0 rounded-xl bg-gradient-to-b from-blue-50/80 to-blue-100/60 dark:from-blue-950/40 dark:to-blue-900/30 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden border border-blue-200/50 dark:border-blue-800/50">
           <div className="flex-1 min-h-0">
             <TextEditor value={editorText} onChange={updateEditorTextWithSave} />
           </div>
         </div>
 
         {/* Middle Column - Data Table and Visualization */}
-        <div className="flex flex-col gap-6 min-h-0 overflow-hidden">
-          <div className="flex-1 min-h-0 rounded-xl bg-gradient-to-br from-background to-accent/10 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden">
+        <div className="flex flex-col gap-8 min-h-0 overflow-visible py-2">
+          <div className="flex-1 min-h-0 rounded-xl bg-gradient-to-br from-emerald-50/80 to-emerald-100/60 dark:from-emerald-950/40 dark:to-emerald-900/30 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden border border-emerald-200/50 dark:border-emerald-800/50">
             <DataTableViewer csvData={csvData} />
           </div>
-          <div className="flex-1 min-h-0 rounded-xl bg-gradient-to-br from-background to-accent/10 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden">
+          <div className="flex-1 min-h-0 rounded-xl bg-gradient-to-br from-purple-50/80 to-purple-100/60 dark:from-purple-950/40 dark:to-purple-900/30 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden border border-purple-200/50 dark:border-purple-800/50">
             <GraphViewer 
               htmlContent={visualizationHtml}
               onRefresh={refreshVisualization}
@@ -114,7 +114,7 @@ export function ExperimentView() {
         </div>
 
         {/* Right Column - AI Chat */}
-        <div className="flex flex-col min-h-0 rounded-xl bg-gradient-to-b from-background to-primary/5 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden">
+        <div className="flex flex-col min-h-0 rounded-xl bg-gradient-to-b from-indigo-50/80 to-indigo-100/60 dark:from-indigo-950/40 dark:to-indigo-900/30 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden border border-indigo-200/50 dark:border-indigo-800/50">
           <div className="flex-1 min-h-0">
             <AiChat 
               plan={editorText}
