@@ -497,76 +497,211 @@ Use appropriate data types. For missing columns, use null."""
     
     async def delete_row(self, csv_data: str, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Delete rows using LLM to understand natural language criteria.
+        Delete rows using intelligent LLM analysis to understand various deletion criteria.
         """
         try:
             df = pd.read_csv(StringIO(csv_data))
             original_rows = len(df)
             
             if self.llm and 'user_message' in params:
-                # Use LLM to extract deletion criteria
+                # Use LLM to analyze deletion request comprehensively
                 columns_info = list(df.columns)
-                sample_data = df.head(3).to_dict('records')
+                sample_data = df.head(5).to_dict('records')
+                total_rows = len(df)
                 
-                prompt = f"""Extract deletion criteria from this instruction:
-"{params['user_message']}"
+                prompt = f"""Analyze this deletion request and determine how to delete rows from the data.
 
-Columns: {columns_info}
-Sample data: {json.dumps(sample_data, indent=2)}
+User Request: "{params['user_message']}"
 
-Return ONLY a JSON object with:
-{{"column": "column_name", "value": "value_to_match"}}
+Available Data:
+- Columns: {columns_info}
+- Total rows: {total_rows}
+- Sample data (first 5 rows): {json.dumps(sample_data, indent=2)}
 
-Be precise with column names and values."""
+Determine the deletion criteria. Handle these types of requests:
+1. Delete by column value: "delete rows where status=inactive"
+2. Delete by position: "delete the last 3 rows", "delete first 2 rows"
+3. Delete by range: "delete rows 5-10", "delete middle rows"
+4. Delete by condition: "delete empty rows", "delete duplicates"
+
+Return a JSON object with the deletion strategy:
+{{
+  "strategy": "column_match" | "position" | "range" | "condition",
+  "details": {{
+    // For column_match: {{"column": "name", "value": "value"}}
+    // For position: {{"type": "last" | "first", "count": 3}}
+    // For range: {{"start": 5, "end": 10}}
+    // For condition: {{"type": "empty" | "duplicates" | "custom"}}
+  }}
+}}
+
+Be conservative - if unclear, explain what you need clarified."""
 
                 response = await self.llm.chat.completions.create(
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.1,
-                    max_tokens=100
+                    max_tokens=300
                 )
                 
+                llm_response = response.choices[0].message.content
+                logger.info(f"LLM deletion analysis: {llm_response}")
+                
                 try:
-                    content = response.choices[0].message.content
+                    # Parse LLM response
                     import re
-                    json_match = re.search(r'\{[^}]+\}', content, re.DOTALL)
+                    json_match = re.search(r'\{[^}]+\}', llm_response, re.DOTALL)
                     if json_match:
-                        criteria = json.loads(json_match.group())
-                        condition = {criteria['column']: criteria['value']}
+                        deletion_plan = json.loads(json_match.group())
                     else:
-                        condition = json.loads(content)
-                except:
-                    condition = params.get('condition', {})
+                        deletion_plan = json.loads(llm_response)
+                    
+                    strategy = deletion_plan.get('strategy')
+                    details = deletion_plan.get('details', {})
+                    
+                    # Execute deletion based on strategy
+                    if strategy == 'column_match':
+                        column = details.get('column')
+                        value = details.get('value')
+                        
+                        if column and column in df.columns:
+                            # Handle different data types
+                            if df[column].dtype in ['int64', 'float64']:
+                                try:
+                                    value = float(value) if '.' in str(value) else int(value)
+                                except:
+                                    pass
+                            
+                            mask = df[column] == value
+                            rows_to_delete = mask.sum()
+                            df = df[~mask]
+                            deletion_msg = f"Deleted {rows_to_delete} rows where {column}={value}"
+                        else:
+                            raise ValueError(f"Column '{column}' not found in data")
+                    
+                    elif strategy == 'position':
+                        pos_type = details.get('type', 'last')
+                        count = min(details.get('count', 1), len(df))  # Prevent deleting more than available
+                        
+                        if pos_type == 'last':
+                            df = df.iloc[:-count] if count > 0 else df
+                            deletion_msg = f"Deleted last {count} rows"
+                        elif pos_type == 'first':
+                            df = df.iloc[count:] if count > 0 else df
+                            deletion_msg = f"Deleted first {count} rows"
+                        else:
+                            raise ValueError(f"Unsupported position type: {pos_type}")
+                        
+                        rows_to_delete = count
+                    
+                    elif strategy == 'range':
+                        start = max(0, details.get('start', 0))
+                        end = min(details.get('end', len(df)), len(df))
+                        
+                        if start < end:
+                            # Delete rows in range (convert to 0-based indexing)
+                            start_idx = max(0, start - 1) if start > 0 else 0
+                            end_idx = min(end, len(df))
+                            
+                            # Keep rows before start and after end
+                            df_before = df.iloc[:start_idx] if start_idx > 0 else pd.DataFrame()
+                            df_after = df.iloc[end_idx:] if end_idx < len(df) else pd.DataFrame()
+                            df = pd.concat([df_before, df_after], ignore_index=True)
+                            
+                            rows_to_delete = end_idx - start_idx
+                            deletion_msg = f"Deleted rows {start} to {end} ({rows_to_delete} rows)"
+                        else:
+                            raise ValueError("Invalid range specified")
+                    
+                    elif strategy == 'condition':
+                        condition_type = details.get('type', 'empty')
+                        
+                        if condition_type == 'empty':
+                            # Delete rows with all empty/null values
+                            mask = df.isnull().all(axis=1) | (df == '').all(axis=1)
+                            rows_to_delete = mask.sum()
+                            df = df[~mask]
+                            deletion_msg = f"Deleted {rows_to_delete} empty rows"
+                        elif condition_type == 'duplicates':
+                            # Delete duplicate rows
+                            before_count = len(df)
+                            df = df.drop_duplicates()
+                            rows_to_delete = before_count - len(df)
+                            deletion_msg = f"Deleted {rows_to_delete} duplicate rows"
+                        else:
+                            raise ValueError(f"Unsupported condition type: {condition_type}")
+                    
+                    else:
+                        raise ValueError(f"Unsupported deletion strategy: {strategy}")
+                
+                except (json.JSONDecodeError, KeyError, ValueError) as parse_error:
+                    logger.warning(f"Failed to parse LLM deletion plan: {parse_error}")
+                    # Fallback to simple keyword-based deletion
+                    user_msg = params['user_message'].lower()
+                    
+                    if 'last' in user_msg:
+                        # Extract number of rows to delete
+                        import re
+                        number_match = re.search(r'(\d+)', user_msg)
+                        count = int(number_match.group(1)) if number_match else 1
+                        count = min(count, len(df))  # Don't delete more than available
+                        
+                        df = df.iloc[:-count] if count > 0 else df
+                        rows_to_delete = count
+                        deletion_msg = f"Deleted last {count} rows"
+                    
+                    elif 'first' in user_msg:
+                        # Extract number of rows to delete
+                        import re
+                        number_match = re.search(r'(\d+)', user_msg)
+                        count = int(number_match.group(1)) if number_match else 1
+                        count = min(count, len(df))
+                        
+                        df = df.iloc[count:] if count > 0 else df
+                        rows_to_delete = count
+                        deletion_msg = f"Deleted first {count} rows"
+                    
+                    else:
+                        raise ValueError("Could not understand deletion criteria. Please be more specific.")
+            
             else:
+                # Non-LLM fallback
                 condition = params.get('condition', {})
-            
-            if not condition:
-                raise ValueError("No deletion criteria provided")
-            
-            # Build mask for deletion
-            mask = pd.Series([True] * len(df))
-            for col, value in condition.items():
-                if col in df.columns:
-                    mask = mask & (df[col] == value)
-                else:
-                    raise ValueError(f"Column '{col}' not found")
-            
-            rows_to_delete = mask.sum()
-            df = df[~mask]
+                if not condition:
+                    raise ValueError("No deletion criteria provided")
+                
+                # Simple column-value matching
+                mask = pd.Series([True] * len(df))
+                for col, value in condition.items():
+                    if col in df.columns:
+                        mask = mask & (df[col] == value)
+                    else:
+                        raise ValueError(f"Column '{col}' not found")
+                
+                rows_to_delete = mask.sum()
+                df = df[~mask]
+                deletion_msg = f"Deleted {rows_to_delete} rows matching criteria"
             
             new_csv = df.to_csv(index=False)
             
             return {
                 'csv_data': new_csv,
-                'changes': [f"Deleted {rows_to_delete} rows"],
+                'changes': [deletion_msg],
                 'rows_before': original_rows,
                 'rows_after': len(df),
-                'ai_message': f"✅ Deleted {rows_to_delete} row(s). {len(df)} rows remaining."
+                'ai_message': f"✅ {deletion_msg}. Dataset now has {len(df)} rows."
             }
             
         except Exception as e:
             logger.error(f"Error deleting rows: {str(e)}")
-            raise
+            # Return graceful error response instead of raising
+            return {
+                'csv_data': csv_data,  # Return original data
+                'changes': [],
+                'rows_before': len(pd.read_csv(StringIO(csv_data))),
+                'rows_after': len(pd.read_csv(StringIO(csv_data))),
+                'ai_message': f"❌ Could not delete rows: {str(e)}. Please try a different approach."
+            }
     
     # Fallback methods for non-LLM operation
     async def _analyze_data_basic(self, df: pd.DataFrame, csv_data: str) -> Dict[str, Any]:
