@@ -290,7 +290,7 @@ We welcome contributions! Please follow these steps:
 
 | Name | GitHub | Email | Role |
 |------|--------|-------|------|
-| Abhi Balagurusamy | [@abhi-node](https://github.com/abhi-node) | abhi.balagurusamy@example.com | Core Developer |
+| Abhi Balagurusamy | [@abhi-node](https://github.com/abhi-node) | abhijith.balagurusamy@gauntletai.com | Core Developer |
 | Pranjal Ekhande | [@pranjalekhande](https://github.com/pranjalekhande) | pranjalekhande11@gmail.com | Core Developer |
 | Kanishk Jain | [@kanishk-jain-01](https://github.com/kanishk-jain-01) | kanishk.jain-01@icloud.com | Core Developer |
 
