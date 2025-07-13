@@ -69,6 +69,16 @@ export function ChatInput({
             datacleanSession={datacleanSession}
           />
         </div>
+        {/* Suggestions toggle */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onToggleSuggestions}
+          className="text-xs"
+          disabled={isLoading}
+        >
+          Suggestions
+        </Button>
       </div>
 
       {/* Input Field */}

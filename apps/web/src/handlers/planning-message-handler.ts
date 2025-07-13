@@ -244,9 +244,13 @@ function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHan
   }, "planning_update")
 }
 
+// Pending approval message shape including reference to preceding AI message
+interface PendingApprovalMessage extends Message {
+  followsMessageId?: string
+}
 
-// Global pending approval messages queue
-let pendingApprovalMessages: Message[] = []
+// Global pending approval messages queue (array reference not reassigned)
+const pendingApprovalMessages: PendingApprovalMessage[] = []
 
 /**
  * Handles approval request events from WebSocket
@@ -284,7 +288,7 @@ function handlePlanningApprovalRequest(data: Record<string, unknown>, context: M
       pendingApprovalMessages.push({
         ...rawMessage,
         followsMessageId: recentAiMessage.id
-      } as any)
+      })
       
       // Set up a fallback timeout in case typewriter callback doesn't fire
       setTimeout(() => {
@@ -325,7 +329,7 @@ function handlePlanningApprovalRequest(data: Record<string, unknown>, context: M
  */
 function showPendingApprovalIfExists(setMessages: (updater: (prev: Message[]) => Message[]) => void, messageId: string): void {
   const pendingIndex = pendingApprovalMessages.findIndex(msg => 
-    (msg as any).followsMessageId === messageId
+    msg.followsMessageId === messageId
   )
   
   if (pendingIndex !== -1) {
@@ -335,7 +339,8 @@ function showPendingApprovalIfExists(setMessages: (updater: (prev: Message[]) =>
     pendingApprovalMessages.splice(pendingIndex, 1)
     
     // Remove the followsMessageId property before adding to messages
-    const { followsMessageId, ...cleanMessage } = pendingMessage as any
+    const cleanMessage = { ...pendingMessage }
+    delete (cleanMessage as PendingApprovalMessage).followsMessageId
     
     console.log("➕ Adding queued approval message after typewriter completion")
     setMessages((prev) => {

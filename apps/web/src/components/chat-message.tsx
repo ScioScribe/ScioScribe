@@ -88,6 +88,7 @@ export function ChatMessage({ message, enableTypewriter = true, onTypewriterComp
         cancelAnimationFrame(animationFrameId)
       }
     }
+  /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [message.content, message.isHtml, isAi, enableTypewriter])
 
   // Cursor blinking effect

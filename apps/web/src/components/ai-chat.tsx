@@ -125,6 +125,16 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     }
     
     handlePlanningWebSocketMessage(message, messageHandlerContext)
+
+    // 🆕 Hide loading indicator after we receive the first meaningful response
+    if (
+      message.type === "planning_update" ||
+      message.type === "approval_request" ||
+      message.type === "error" ||
+      message.type === "session_complete"
+    ) {
+      setIsLoading(false)
+    }
   }, [messageHandlerContext])
 
   // WebSocket handlers
@@ -272,6 +282,8 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         response_type: "error"
       }
       setMessages((prev) => [...prev, errorMessage])
+      // Ensure the loading indicator is dismissed on error
+      setIsLoading(false)
     }
   }, [updatePlanningSession, planningHandlers, setMessages, messageHandlerContext])
 
@@ -407,8 +419,13 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         response_type: "error"
       }
       setMessages((prev) => [...prev, errorMessage])
-    } finally {
+      // Ensure the loading indicator is dismissed on error
       setIsLoading(false)
+    } finally {
+      // Dismiss loading indicator for non-planning modes once processing completes
+      if (selectedMode !== "plan") {
+        setIsLoading(false)
+      }
     }
   }, [inputValue, selectedMode, setMessages, setInputValue, setIsLoading, handlePlanningMessageWithWebSocket, handleExecuteMessageWithSession, messageHandlerContext])
 

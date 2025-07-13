@@ -6,8 +6,9 @@
  * visual separation between different types of content.
  */
 
+/* eslint-disable react-refresh/only-export-components */
 import { useState, useEffect } from "react"
-import { ChevronDown, ChevronRight, Loader2, Play, CheckCircle, AlertCircle } from "lucide-react"
+import { Loader2, Play, CheckCircle, AlertCircle } from "lucide-react"
 
 interface ToolExecutionDisplayProps {
   toolName: string
