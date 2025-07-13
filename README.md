@@ -5,36 +5,56 @@
 
 ![ScioScribe Interface](https://img.shields.io/badge/React-19.1.0-blue?logo=react) ![FastAPI](https://img.shields.io/badge/FastAPI-0.104-green?logo=fastapi) ![LangGraph](https://img.shields.io/badge/LangGraph-Multi--Agent-purple) ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-blue?logo=typescript)
 
-## ✨ Features
+![License](https://img.shields.io/badge/License-MIT-green.svg)
 
-### 🔬 **AI-Powered Experiment Planning**
+## Table of Contents
+- [Features](#-features)
+- [Live Demo](#-live-demo)
+- [Architecture](#-architecture)
+- [Getting Started](#-getting-started)
+- [Usage](#-usage)
+- [Development](#-development)
+- [API Reference](#-api-reference)
+- [Security & Configuration](#-security--configuration)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+## **ScioScribe**
+
+![ScioScribe Landing Page](documents/scioscribe-media/ScioScribe-landing.gif)
+
+
+
+## Features
+
+### **AI-Powered Experiment Planning**
 - **Multi-agent planning system** with specialized AI teams
 - **Human-in-the-loop approval workflows** for each planning stage
 - **Real-time collaboration** via WebSocket connections
 - **Interactive refinement** conversations with domain experts
 
-### 🧹 **Intelligent Data Cleaning**
+###  **Intelligent Data Cleaning**
 - **Conversational interface** for natural language data processing
 - **AI-powered quality assessment** with automatic suggestions
 - **Custom transformation pipeline** with preview capabilities
 - **Multi-format support:** CSV, Excel, images with OCR
 - **Version control** with undo/redo functionality
 
-### 📊 **Automated Analysis & Visualization**
+###  **Automated Analysis & Visualization**
 - **Specialized agent team** for comprehensive analysis
 - **Plotly visualization generation** with responsive HTML output
 - **Real-time progress tracking** through analysis stages
 - **Statistical profiling** and chart recommendations
 - **Interactive visualizations** with full Plotly features
 
-### 🚀 **Modern Architecture**
+### **Modern Architecture**
 - **Real-time WebSocket communication** with connection pooling
 - **Responsive three-column layout** optimized for research workflows
 - **Dark/light theme support** with accessible components
 - **Auto-save functionality** with optimistic updates
 - **Session persistence** across page reloads
 
-## 🏗️ Architecture
+## Architecture
 
 ### Frontend Stack
 - **React 19.1.0** with TypeScript for type-safe component development
@@ -56,7 +76,7 @@
 2. **Data Cleaning Agents:** Quality assessment, transformation, and validation
 3. **Analysis Agents:** Statistical profiling, visualization design, and scientific communication
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -125,7 +145,7 @@ The application will be available at `http://localhost:5173`
    - **API Documentation:** http://localhost:8000/docs
    - **Alternative Docs:** http://localhost:8000/redoc
 
-## 📚 Usage
+## Usage
 
 ### 1. Experiment Planning
 ```bash
@@ -159,7 +179,7 @@ curl -X POST "http://localhost:8000/api/analysis/generate-visualization" \
 ws://localhost:8000/api/analysis/ws/{session_id}
 ```
 
-## 🔧 Development
+##  Development
 
 ### Project Structure
 ```
@@ -213,7 +233,7 @@ pytest
 pytest --cov=. --cov-report=html
 ```
 
-## 📊 API Reference
+## API Reference
 
 ### Core Endpoints
 
@@ -234,7 +254,7 @@ pytest --cov=. --cov-report=html
 
 For detailed API documentation, visit: http://localhost:8000/docs
 
-## 🔒 Security & Configuration
+## Security & Configuration
 
 ### Security Features
 - **CORS protection** with configurable origins
@@ -249,7 +269,7 @@ For detailed API documentation, visit: http://localhost:8000/docs
 - Use environment variables for all sensitive data
 - Enable HTTPS with proper SSL certificates
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! Please follow these steps:
 
@@ -267,7 +287,7 @@ We welcome contributions! Please follow these steps:
 - Update documentation for new features
 - Follow the existing architectural patterns
 
-## 🔗 Links
+## Links
 
 - **Project Homepage:** [https://github.com/your-username/scioscribe](https://github.com/your-username/scioscribe)
 - **Issue Tracker:** [https://github.com/your-username/scioscribe/issues](https://github.com/your-username/scioscribe/issues)
@@ -280,7 +300,7 @@ We welcome contributions! Please follow these steps:
 - **React:** [https://react.dev/](https://react.dev/)
 - **Plotly:** [https://plotly.com/javascript/](https://plotly.com/javascript/)
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
