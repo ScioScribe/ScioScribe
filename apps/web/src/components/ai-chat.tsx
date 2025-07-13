@@ -13,7 +13,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import { Card } from "@/components/ui/card"
 import { useExperimentStore } from "@/stores"
 import { useChatSessions } from "@/hooks/use-chat-sessions"
-import { handlePlanningWebSocketMessage } from "@/handlers/planning-message-handler"
+import { handlePlanningWebSocketMessage, onTypewriterComplete } from "@/handlers/planning-message-handler"
 import { handlePlanningMessage } from "@/handlers/planning-message-handler"
 import { handleExecuteMessage, createDatacleanWelcomeMessage } from "@/handlers/execute-message-handler"
 import { handleAnalysisMessage } from "@/handlers/analysis-message-handler"
@@ -26,7 +26,6 @@ import {
 import { websocketManager } from "@/utils/streaming-connection-manager"
 import { ChatMessages } from "@/components/chat-messages"
 import { ChatInput } from "@/components/chat-input"
-import { ChatSuggestions } from "@/components/chat-suggestions"
 import type { Message, MessageHandlerContext, AiChatProps, WebSocketMessage } from "@/types/chat-types"
 
 export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChatProps) {
@@ -47,9 +46,8 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
   const [inputValue, setInputValue] = useState("")
   const [selectedMode, setSelectedMode] = useState("plan")
   const [isLoading, setIsLoading] = useState(false)
-  const [showSuggestions, setShowSuggestions] = useState(false)
 
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   // Get experiment store actions
   const { updatePlanFromPlanningState, updatePlanFromPlanningMessage, updateCsvFromDatacleanResponse } = useExperimentStore()
@@ -125,6 +123,16 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     }
     
     handlePlanningWebSocketMessage(message, messageHandlerContext)
+
+    // 🆕 Hide loading indicator after we receive the first meaningful response
+    if (
+      message.type === "planning_update" ||
+      message.type === "approval_request" ||
+      message.type === "error" ||
+      message.type === "session_complete"
+    ) {
+      setIsLoading(false)
+    }
   }, [messageHandlerContext])
 
   // WebSocket handlers
@@ -217,16 +225,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
           last_activity: new Date()
         })
         
-        // Add initial response message
-        const initialMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: `🎯 **Planning Your Experiment**\n\nAnalyzing: "${message}"\n\nI'll guide you through creating a comprehensive research plan.`,
-          sender: "ai",
-          timestamp: new Date(),
-          mode: "plan",
-          response_type: "text"
-        }
-        setMessages((prev) => [...prev, initialMessage])
+        // Initial response message removed - let the agent respond directly
         
         // Connect WebSocket
         const connection = connectPlanningSession(sessionResponse.session_id, planningHandlers)
@@ -281,6 +280,8 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         response_type: "error"
       }
       setMessages((prev) => [...prev, errorMessage])
+      // Ensure the loading indicator is dismissed on error
+      setIsLoading(false)
     }
   }, [updatePlanningSession, planningHandlers, setMessages, messageHandlerContext])
 
@@ -416,8 +417,13 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         response_type: "error"
       }
       setMessages((prev) => [...prev, errorMessage])
-    } finally {
+      // Ensure the loading indicator is dismissed on error
       setIsLoading(false)
+    } finally {
+      // Dismiss loading indicator for non-planning modes once processing completes
+      if (selectedMode !== "plan") {
+        setIsLoading(false)
+      }
     }
   }, [inputValue, selectedMode, setMessages, setInputValue, setIsLoading, handlePlanningMessageWithWebSocket, handleExecuteMessageWithSession, messageHandlerContext])
 
@@ -429,11 +435,10 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     }
   }, [handleSendMessage])
 
-  const handleSuggestionClick = useCallback((suggestion: string) => {
-    setInputValue(suggestion)
-    setShowSuggestions(false)
-    inputRef.current?.focus()
-  }, [setInputValue, setShowSuggestions])
+  // Handle typewriter completion for approval message timing
+  const handleTypewriterComplete = useCallback((messageId: string) => {
+    onTypewriterComplete(messageId, setMessages)
+  }, [setMessages])
 
 
 
@@ -521,15 +526,8 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         messages={messages}
         isLoading={isLoading}
         selectedMode={selectedMode}
+        onTypewriterComplete={handleTypewriterComplete}
       />
-
-      {/* Suggestions Panel */}
-      {showSuggestions && (
-        <ChatSuggestions
-          selectedMode={selectedMode}
-          onSuggestionClick={handleSuggestionClick}
-        />
-      )}
 
       {/* Input Area */}
       <ChatInput
@@ -538,7 +536,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         selectedMode={selectedMode}
         onModeChange={handleModeSwitch}
         onSendMessage={handleSendMessage}
-        onToggleSuggestions={useCallback(() => setShowSuggestions(prev => !prev), [setShowSuggestions])}
         onKeyPress={handleKeyPress}
         isLoading={isLoading}
         planningSession={planningSession}

@@ -6,10 +6,11 @@
  */
 
 import type React from "react"
-import { Input } from "@/components/ui/input"
+import TextareaAutosize from "react-textarea-autosize"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Send, Lightbulb } from "lucide-react"
+import { Microscope } from "lucide-react"
+import { cn } from "@/shared/utils"
 import type { SessionState } from "@/types/chat-types"
 
 interface ChatInputProps {
@@ -18,12 +19,11 @@ interface ChatInputProps {
   selectedMode: string
   onModeChange: (mode: string) => void
   onSendMessage: () => void
-  onToggleSuggestions: () => void
   onKeyPress: (e: React.KeyboardEvent) => void
   isLoading: boolean
   planningSession: SessionState
   datacleanSession: SessionState
-  inputRef: React.RefObject<HTMLInputElement | null>
+  inputRef: React.RefObject<HTMLTextAreaElement | null>
 }
 
 export function ChatInput({
@@ -32,7 +32,6 @@ export function ChatInput({
   selectedMode,
   onModeChange,
   onSendMessage,
-  onToggleSuggestions,
   onKeyPress,
   isLoading,
   planningSession,
@@ -50,13 +49,13 @@ export function ChatInput({
             </SelectTrigger>
             <SelectContent className="dark:bg-gray-800 dark:border-gray-700">
               <SelectItem value="plan" className="text-xs dark:text-gray-300 dark:focus:bg-gray-700">
-                plan
+                Plan
               </SelectItem>
               <SelectItem value="execute" className="text-xs dark:text-gray-300 dark:focus:bg-gray-700">
-                execute
+                Execute
               </SelectItem>
               <SelectItem value="analysis" className="text-xs dark:text-gray-300 dark:focus:bg-gray-700">
-                analysis
+                Analysis
               </SelectItem>
             </SelectContent>
           </Select>
@@ -68,41 +67,47 @@ export function ChatInput({
             datacleanSession={datacleanSession}
           />
         </div>
-        
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 px-2 text-xs"
-          onClick={onToggleSuggestions}
-        >
-          <Lightbulb className="h-3 w-3" />
-        </Button>
       </div>
 
       {/* Input Field */}
-      <div className="px-6 py-3 flex items-center gap-2">
-        <Input
-          ref={inputRef}
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyPress={onKeyPress}
-          placeholder={getPlaceholderText(selectedMode)}
-          className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md px-3 py-2 focus-visible:ring-0 focus-visible:outline-none text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400"
-          style={{
-            fontFamily: '"Source Code Pro", ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
-            fontSize: "14px",
-            lineHeight: "20px",
-          }}
-          disabled={isLoading}
-        />
-        <Button
-          onClick={onSendMessage}
-          disabled={isLoading || !inputValue.trim()}
-          size="sm"
-          className="h-8 px-3"
-        >
-          <Send className="h-3 w-3" />
-        </Button>
+      <div className="px-6 py-3">
+        <div className="relative">
+          <TextareaAutosize
+            ref={inputRef}
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyPress={onKeyPress}
+            placeholder={getPlaceholderText(selectedMode)}
+            className={cn(
+              "w-full resize-none border-0 bg-transparent px-4 py-3 pr-12 text-sm",
+              "placeholder:text-muted-foreground/60",
+              "focus-visible:outline-none focus-visible:ring-0",
+              "text-foreground",
+              "leading-relaxed"
+            )}
+            style={{
+              fontFamily: '"Source Code Pro", ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
+              fontSize: "14px",
+              lineHeight: "1.5",
+            }}
+            minRows={3}
+            maxRows={8}
+            disabled={isLoading}
+          />
+          
+          {/* Submit button inside textarea - bottom right */}
+          <Button
+            onClick={onSendMessage}
+            disabled={isLoading || !inputValue.trim()}
+            size="sm"
+            className="absolute bottom-2 right-2 h-8 w-8 p-0 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md transition-all duration-200"
+          >
+            <Microscope className="h-3.5 w-3.5 text-blue-500" />
+          </Button>
+          
+          {/* Container with subtle border */}
+          <div className="absolute inset-0 -z-10 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 shadow-sm transition-all duration-200 hover:shadow-md hover:border-gray-300 dark:hover:border-gray-600 focus-within:border-gray-400 dark:focus-within:border-gray-500 focus-within:shadow-md" />
+        </div>
       </div>
     </div>
   )

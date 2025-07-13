@@ -308,10 +308,14 @@ def is_graph_complete(state_snapshot) -> bool:
     # If there are no next nodes, the graph has completed
     if not state_snapshot.next:
         return True
-    
-    # Check if next nodes is empty list (also indicates completion)
-    if isinstance(state_snapshot.next, list) and len(state_snapshot.next) == 0:
-        return True
+
+    # Check if next nodes represent an empty list or only the terminal '__end__' node
+    if isinstance(state_snapshot.next, list):
+        if len(state_snapshot.next) == 0:
+            return True
+        # Some LangGraph implementations keep a sentinel "__end__" as the sole next node
+        if len(state_snapshot.next) == 1 and str(state_snapshot.next[0]) == "__end__":
+            return True
     
     return False
 

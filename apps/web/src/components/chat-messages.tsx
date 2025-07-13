@@ -16,12 +16,14 @@ interface ChatMessagesProps {
   messages: Message[]
   isLoading: boolean
   selectedMode: string
+  onTypewriterComplete?: (messageId: string) => void
 }
 
 export function ChatMessages({ 
   messages, 
   isLoading, 
-  selectedMode
+  selectedMode,
+  onTypewriterComplete
 }: ChatMessagesProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
@@ -189,6 +191,7 @@ export function ChatMessages({
                 (index === messages.length - 1 || // Latest AI message
                  (message.mode === "plan" && index >= messages.length - 2)) // Planning messages get priority
               }
+              onTypewriterComplete={() => onTypewriterComplete?.(message.id)}
             />
           ))}
 
