@@ -155,6 +155,11 @@ export function handlePlanningWebSocketMessage(message: WebSocketMessage, contex
       handleSessionStatus(message.data, context)
       break
       
+    case "session_complete":
+      console.log("🎉 Processing session completion from WebSocket")
+      handleSessionComplete(message.data, context)
+      break
+      
     case "pong":
       console.log("🏓 Received pong from server (ignoring)")
       break
@@ -417,4 +422,48 @@ function handleSessionStatus(data: Record<string, unknown>, context: MessageHand
       last_activity: new Date()
     }, "session_status_update")
   }
+}
+
+/**
+ * Handles session completion events from WebSocket
+ * @param data Completion data (includes summary/message)
+ * @param context Message handler context
+ */
+function handleSessionComplete(data: Record<string, unknown>, context: MessageHandlerContext): void {
+  const { setMessages, setPlanningSession } = context
+
+  console.log("🎉 Session completed – final data:", data)
+
+  // Extract message and summary from backend payload
+  const completionMessage = (data.message as string) || "🎉 Experiment planning completed successfully!"
+  const summary = data.summary as Record<string, unknown> | undefined
+
+  // Build human-readable summary text if provided
+  let summaryText = ""
+  if (summary) {
+    const stagesCompleted = summary.stages_completed ?? "?"
+    const totalMessages = summary.total_messages ?? "?"
+    const objective = summary.experiment_objective ?? ""
+    summaryText = `\n\n**Summary**\n- Stages completed: ${stagesCompleted}\n- Total messages: ${totalMessages}${objective ? `\n- Objective: ${objective}` : ""}`
+  }
+
+  // Add final AI message to chat
+  const finalMessage: Message = {
+    id: (Date.now() + Math.random()).toString(),
+    content: `${completionMessage}${summaryText}`,
+    sender: "ai",
+    timestamp: new Date(),
+    mode: "plan",
+    response_type: "confirmation"
+  }
+
+  setMessages(prev => [...prev, finalMessage])
+
+  // Mark session as inactive (do NOT clear IDs so history can be referenced)
+  safeUpdateSession(setPlanningSession, {
+    is_active: false,
+    is_waiting_for_approval: false,
+    current_stage: "final_review",
+    last_activity: new Date()
+  }, "session_complete")
 } 
