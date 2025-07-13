@@ -68,7 +68,6 @@
 - **LangGraph** for sophisticated multi-agent AI orchestration
 - **OpenAI GPT-4** integration via LangChain
 - **SQLite + SQLAlchemy** for persistent data storage
-- **EasyOCR** for image text extraction
 - **WebSockets** for real-time bidirectional communication
 
 ### AI Agent Teams
@@ -287,10 +286,18 @@ We welcome contributions! Please follow these steps:
 - Update documentation for new features
 - Follow the existing architectural patterns
 
+## Contributors
+
+| Name | GitHub | Email | Role |
+|------|--------|-------|------|
+| Abhi Balagurusamy | [@abhi-node](https://github.com/abhi-node) | abhi.balagurusamy@example.com | Core Developer |
+| Pranjal Ekhande | [@pranjalekhande](https://github.com/pranjalekhande) | pranjalekhande11@gmail.com | Core Developer |
+| Kanishk Jain | [@kanishk-jain-01](https://github.com/kanishk-jain-01) | kanishk.jain-01@icloud.com | Core Developer |
+
 ## Links
 
-- **Project Homepage:** [https://github.com/your-username/scioscribe](https://github.com/your-username/scioscribe)
-- **Issue Tracker:** [https://github.com/your-username/scioscribe/issues](https://github.com/your-username/scioscribe/issues)
+- **Project Homepage:** [https://github.com/ScioScribe/ScioScribe](https://github.com/ScioScribe/ScioScribe)
+- **Issue Tracker:** [https://github.com/ScioScribe/ScioScribe/issues](https://github.com/ScioScribe/ScioScribe/issues)
 - **Documentation:** [https://scioscribe.readthedocs.io](https://scioscribe.readthedocs.io)
 - **API Documentation:** http://localhost:8000/docs (when running locally)
 
