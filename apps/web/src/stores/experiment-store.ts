@@ -301,7 +301,7 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
              csvData,
              { 
                isAgentUpdate: true,
-               expectedVersion: null  // Skip version checking for agent updates
+               expectedVersion: undefined  // Skip version checking for agent updates
              }
            )
          } catch (error: any) {
@@ -314,7 +314,7 @@ export const useExperimentStore = create<ExperimentStore>((set: SetState, get: G
                  csvData,
                  { 
                    isAgentUpdate: true,
-                   expectedVersion: null  // Force no version checking
+                   expectedVersion: undefined  // Force no version checking
                  }
                )
                console.log("✅ Retry successful after version conflict")

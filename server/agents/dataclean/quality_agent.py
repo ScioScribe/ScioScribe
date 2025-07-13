@@ -39,7 +39,7 @@ class DataQualityAgent:
             openai_client: AsyncOpenAI client instance
         """
         self.client = openai_client
-        self.model = "gpt-4.1"  # Using consistent model across codebase
+        self.model = "gpt-4o-mini"  # Using fast and efficient model for analysis
         
     async def analyze_data(self, df: pd.DataFrame) -> List[QualityIssue]:
         """

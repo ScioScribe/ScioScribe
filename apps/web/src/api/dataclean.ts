@@ -1,392 +1,230 @@
 /**
- * Data cleaning API functions
+ * Data Cleaning API Client - Simplified Version
  * 
- * This module provides functions to interact with the data cleaning service
- * through the /api/dataclean endpoint.
+ * This module provides a clean interface to the data processing API.
  */
 
-const BASE_URL = 'http://localhost:8000/api/dataclean'
+export type DataAction = 'analyze' | 'clean' | 'describe' | 'add_row' | 'delete_row';
 
-export interface DataCleanError {
-  error: string
-  message: string
-  details?: string
+export interface DataProcessRequest {
+  action: DataAction;
+  csv_data: string;
+  experiment_id?: string;
+  params?: Record<string, any>;
 }
 
-// Conversation API interfaces and functions
-export interface StartConversationRequest {
-  user_id?: string
-  session_id?: string
-  artifact_id?: string
-  file_path?: string
-  csv_data?: string // optional raw CSV string to bootstrap the conversation
-  user_message?: string // optional user message to start the conversation
-}
-
-export interface StartConversationResponse {
-  session_id: string
-  user_id: string
-  status: string
-  message: string
-  capabilities: string[]
-  session_info: {
-    created_at: string
-    session_type: string
-    state: string
-  }
-}
-
-export interface ConversationMessageRequest {
-  user_message: string
-  session_id: string
-  user_id?: string
-  artifact_id?: string
-  csv_data?: string
-  experiment_id?: string | null
-}
-
-export interface ConversationMessageResponse {
-  session_id: string
-  response_type: "text" | "data_preview" | "suggestion" | "confirmation" | "error"
-  message: string
-  data?: unknown
-  suggestions?: Array<{
-    id: string
-    type: string
-    description: string
-    confidence: number
-  }>
-  requires_confirmation?: boolean
-  next_steps?: string[]
-}
-
-export interface ConversationConfirmationRequest {
-  session_id: string
-  confirmed: boolean
-  user_id?: string
-}
-
-export interface ConversationSessionSummary {
-  session_id: string
-  user_id: string
-  status: string
-  created_at: string
-  last_activity: string
-  message_count: number
-  operations_performed: number
-  current_state: string
-}
-
-export interface ConversationCapabilitiesResponse {
-  status: string
-  capabilities: {
-    supported_intents: string[]
-    supported_operations: string[]
-    supported_formats: string[]
-    features: string[]
-  }
+export interface DataProcessResponse {
+  success: boolean;
+  action: string;
+  csv_data?: string;
+  changes?: string[];
+  analysis?: {
+    issues: Array<{
+      type: string;
+      column?: string;
+      count?: number;
+      percentage?: number;
+      severity: string;
+      fix: string;
+    }>;
+    total_issues: number;
+    data_quality_score: number;
+  };
+  description?: {
+    shape: { rows: number; columns: number };
+    columns: string[];
+    dtypes: Record<string, string>;
+    memory_usage: string;
+    column_stats: Record<string, any>;
+    sample_data: Record<string, any>[];
+  };
+  ai_message: string;
+  error?: string;
 }
 
 /**
- * Start a new CSV conversation session for data cleaning
- * 
- * @param request - The conversation start request
- * @returns Promise resolving to session information
+ * Process data with the specified action
  */
-export async function startConversation(request: StartConversationRequest): Promise<StartConversationResponse> {
+export async function processData(
+  action: DataAction,
+  csvData: string,
+  experimentId?: string,
+  params?: Record<string, any>
+): Promise<DataProcessResponse> {
   try {
-    console.log("🧹 Starting CSV conversation with new endpoint")
-    
-    // Use CSV-specific endpoint instead of general conversation endpoint
-    const csvRequest = {
-      csv_data: request.csv_data || "", // Include CSV if provided
-      user_message: request.user_message || "Hi", // Use provided message or default greeting
-      session_id: request.session_id || `csv-session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      user_id: request.user_id || "demo-user"
-    }
-    
-    const response = await fetch(`${BASE_URL}/csv-conversation/process`, {
+    const response = await fetch('/api/dataclean/process', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(csvRequest),
-    })
+      body: JSON.stringify({
+        action,
+        csv_data: csvData,
+        experiment_id: experimentId,
+        params: params || {}
+      } as DataProcessRequest),
+    });
 
     if (!response.ok) {
-      const errorData: DataCleanError = await response.json()
-      throw new Error(`Failed to start CSV conversation: ${errorData.message}`)
+      const errorText = await response.text();
+      throw new Error(`API request failed: ${response.status} ${errorText}`);
     }
 
-    const result = await response.json()
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Data processing error:', error);
+    return {
+      success: false,
+      action,
+      ai_message: '❌ Failed to process data. Please try again.',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+}
+
+/**
+ * Helper function to detect action from user message
+ */
+export function detectAction(message: string): DataAction {
+  const lowerMessage = message.toLowerCase();
+  
+  if (lowerMessage.includes('analyze') || lowerMessage.includes('check') || lowerMessage.includes('quality')) {
+    return 'analyze';
+  } else if (lowerMessage.includes('clean') || lowerMessage.includes('fix')) {
+    return 'clean';
+  } else if (lowerMessage.includes('describe') || lowerMessage.includes('overview') || lowerMessage.includes('summary')) {
+    return 'describe';
+  } else if (lowerMessage.includes('add') && lowerMessage.includes('row')) {
+    return 'add_row';
+  } else if (lowerMessage.includes('delete') || lowerMessage.includes('remove')) {
+    return 'delete_row';
+  }
+  
+  // Default to analyze if unsure
+  return 'analyze';
+}
+
+/**
+ * Extract parameters from user message
+ */
+export function extractParams(message: string, action: DataAction): Record<string, any> {
+  const params: Record<string, any> = {};
+  
+  if (action === 'add_row') {
+    // Try to extract key-value pairs from message
+    // Example: "add row with name=John, age=30"
+    const matches = message.matchAll(/(\w+)\s*=\s*([^,]+)/g);
+    const rowData: Record<string, any> = {};
     
-    // Convert CSV response to conversation response format
-    const conversationResponse: StartConversationResponse = {
-      session_id: result.session_id,
-      user_id: csvRequest.user_id,
-      status: result.success ? "active" : "error",
-      message: result.response_message || "CSV conversation started",
-      capabilities: ["csv_analysis", "data_cleaning", "quality_assessment"],
-      session_info: {
-        created_at: new Date().toISOString(),
-        session_type: "csv_conversation",
-        state: result.success ? "active" : "error"
+    for (const match of matches) {
+      const key = match[1].trim();
+      let value: any = match[2].trim();
+      
+      // Try to parse as number
+      if (!isNaN(Number(value))) {
+        value = Number(value);
       }
+      
+      rowData[key] = value;
     }
     
-    return conversationResponse
-  } catch (error) {
-    console.error("❌ Error starting CSV conversation:", error)
-    throw error
+    if (Object.keys(rowData).length > 0) {
+      params.row_data = rowData;
+    }
+  } else if (action === 'delete_row') {
+    // Try to extract condition
+    // Example: "delete rows where department=Sales"
+    const whereMatch = message.match(/where\s+(\w+)\s*=\s*(.+)/i);
+    if (whereMatch) {
+      const column = whereMatch[1].trim();
+      let value: any = whereMatch[2].trim();
+      
+      // Remove quotes if present
+      if ((value.startsWith('"') && value.endsWith('"')) || 
+          (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      
+      // Try to parse as number
+      if (!isNaN(Number(value))) {
+        value = Number(value);
+      }
+      
+      params.condition = { [column]: value };
+    }
   }
+  
+  return params;
 }
 
-/**
- * Send a message in an active CSV conversation session
- * 
- * @param request - The conversation message request
- * @returns Promise resolving to conversation response
- */
-export async function sendConversationMessage(request: ConversationMessageRequest): Promise<ConversationMessageResponse> {
-  try {
-    console.log("🧹 Sending CSV conversation message with new endpoint")
-    
-    // Use CSV-specific endpoint instead of general conversation endpoint
-    const csvRequest = {
-      csv_data: request.csv_data || "", // Use provided CSV data or empty string
-      user_message: request.user_message,
-      session_id: request.session_id,
-      user_id: request.user_id || "demo-user",
-      experiment_id: request.experiment_id || null // Pass experiment ID for database updates
-    }
-    
-    const response = await fetch(`${BASE_URL}/csv-conversation/process`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(csvRequest),
-    })
-
-    if (!response.ok) {
-      const errorData: DataCleanError = await response.json()
-      throw new Error(`Failed to send CSV message: ${errorData.message}`)
-    }
-
-    const result = await response.json()
-    
-    // Convert CSV response to conversation response format
-    const conversationResponse: ConversationMessageResponse = {
-      session_id: result.session_id,
-      response_type: result.success ? "text" : "error",
-      message: result.response_message || "Message processed",
-      // Always pass back both the original and cleaned CSV (if present)
-      data: {
-        original_csv: result.original_csv,
-        cleaned_csv: result.cleaned_csv ?? null
-      },
-      suggestions: result.suggestions || [],
-      requires_confirmation: result.requires_approval || false,
-      next_steps: result.changes_made || []
-    }
-    
-    return conversationResponse
-  } catch (error) {
-    console.error("❌ Error sending CSV conversation message:", error)
-    throw error
-  }
-}
+// Additional API functions for frontend compatibility
 
 /**
- * Handle confirmation for operations that require approval
- * 
- * @param request - The confirmation request
- * @returns Promise resolving to confirmation response
+ * Response type for file upload
  */
-export async function handleConversationConfirmation(request: ConversationConfirmationRequest): Promise<ConversationMessageResponse> {
-  try {
-    const response = await fetch(`${BASE_URL}/conversation/confirm`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(request),
-    })
-
-    if (!response.ok) {
-      const errorData: DataCleanError = await response.json()
-      throw new Error(`Failed to handle confirmation: ${errorData.message}`)
-    }
-
-    const result = await response.json()
-    return result
-  } catch (error) {
-    console.error("❌ Error handling confirmation:", error)
-    throw error
-  }
-}
-
-/**
- * Get conversation session summary
- * 
- * @param sessionId - The session ID
- * @returns Promise resolving to session summary
- */
-export async function getConversationSession(sessionId: string): Promise<ConversationSessionSummary> {
-  try {
-    const response = await fetch(`${BASE_URL}/conversation/session/${sessionId}`)
-
-    if (!response.ok) {
-      const errorData: DataCleanError = await response.json()
-      throw new Error(`Failed to get session: ${errorData.message}`)
-    }
-
-    const result = await response.json()
-    return result
-  } catch (error) {
-    console.error("❌ Error getting session:", error)
-    throw error
-  }
-}
-
-/**
- * Get conversation capabilities
- * 
- * @returns Promise resolving to capabilities information
- */
-export async function getConversationCapabilities(): Promise<ConversationCapabilitiesResponse> {
-  try {
-    const response = await fetch(`${BASE_URL}/conversation/capabilities`)
-
-    if (!response.ok) {
-      const errorData: DataCleanError = await response.json()
-      throw new Error(`Failed to get capabilities: ${errorData.message}`)
-    }
-
-    const result = await response.json()
-    return result
-  } catch (error) {
-    console.error("❌ Error getting capabilities:", error)
-    throw error
-  }
-} 
-
-// Minimal subset of fields we rely on from the /process-file-complete response
 export interface ProcessFileCompleteResponse {
-  success: boolean
-  artifact_id: string
-  cleaned_data?: unknown // This will be a CSV string when response_format="csv"
-  data_shape?: number[]
-  error_message?: string
-  [key: string]: unknown // allow additional backend fields without strict typing
+  success: boolean;
+  artifact_id: string;
+  cleaned_data?: string;
+  data_shape?: number[];
+  error_message?: string;
 }
 
 /**
- * Upload a CSV (as text) to the dataclean service using the "process-file-complete"
- * endpoint. This performs end-to-end processing (upload + quality analysis) in one call.
- *
- * The backend returns a rich response; we only require the generated `artifact_id`.
- */
-export async function uploadCsvFile(csvText: string, experimentId: string = "demo-experiment"): Promise<ProcessFileCompleteResponse> {
-  const formData = new FormData()
-  const blob = new Blob([csvText], { type: 'text/csv' })
-  const file = new File([blob], 'dataset.csv', { type: 'text/csv' })
-
-  formData.append('file', file)
-  // Back-end endpoint parameters – providing experiment_id; the rest use defaults
-  formData.append('experiment_id', experimentId)
-
-  // ---- DEBUG: Log request body ----
-  try {
-    console.group("📤 process-file-complete Request Body")
-    for (const [key, value] of formData.entries()) {
-      if (value instanceof File) {
-        console.log(`${key}: File(name=${value.name}, size=${value.size} bytes, type=${value.type})`)
-      } else {
-        console.log(`${key}:`, value)
-      }
-    }
-    console.groupEnd()
-  }
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  catch (_err) {
-    /* silently ignore logging errors (e.g., non-browser env) */
-  }
-
-  const response = await fetch(`${BASE_URL}/process-file-complete`, {
-    method: 'POST',
-    body: formData,
-  })
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({ message: response.statusText }))
-    throw new Error(err.message || 'Upload failed')
-  }
-
-  return await response.json()
-}
-
-/**
- * Upload any file (CSV, image, PDF) to the dataclean service using the "process-file-complete"
- * endpoint. This performs end-to-end processing including OCR for images/PDFs.
- *
- * @param file - The file to upload
- * @param experimentId - The experiment ID
- * @param responseFormat - The format to get back (csv for CSV string)
- * @returns Promise resolving to the processing response
+ * Upload a file (CSV, PDF, or image) for processing
  */
 export async function uploadFile(
-  file: File, 
+  file: File,
   experimentId: string = "demo-experiment",
   responseFormat: string = "csv"
 ): Promise<ProcessFileCompleteResponse> {
-  const formData = new FormData()
-  formData.append('file', file)
-  formData.append('experiment_id', experimentId)
-  formData.append('response_format', responseFormat)
-  formData.append('auto_apply_suggestions', 'true')
-  formData.append('confidence_threshold', '0.7')
-
-  const response = await fetch(`${BASE_URL}/process-file-complete`, {
-    method: 'POST',
-    body: formData,
-  })
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({ message: response.statusText }))
-    throw new Error(err.message || 'Upload failed')
-  }
-
-  return await response.json()
-}
-
-/**
- * Header Generation API
- */
-
-export interface GenerateHeadersRequest {
-  plan: string
-  experiment_id?: string
-}
-
-export interface GenerateHeadersResponse {
-  success: boolean
-  headers: string[]
-  csv_data: string
-  error_message?: string
-}
-
-/**
- * Generate CSV headers from experimental plan using AI
- * 
- * @param plan - The experimental plan text
- * @param experimentId - Optional experiment ID to immediately persist the CSV
- * @returns Promise resolving to the generated headers response
- * @throws Error if the request fails
- */
-export async function generateHeadersFromPlan(plan: string, experimentId?: string): Promise<GenerateHeadersResponse> {
   try {
-    const response = await fetch(`${BASE_URL}/generate-headers-from-plan`, {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('experiment_id', experimentId);
+    formData.append('response_format', responseFormat);
+    
+    const response = await fetch('/api/dataclean/upload', {
+      method: 'POST',
+      body: formData,
+    });
+    
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Upload failed: ${error}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('File upload error:', error);
+    return {
+      success: false,
+      artifact_id: '',
+      error_message: error instanceof Error ? error.message : 'Upload failed'
+    };
+  }
+}
+
+/**
+ * Response type for header generation
+ */
+export interface GenerateHeadersResponse {
+  success: boolean;
+  headers: string[];
+  csv_data: string;
+  error_message?: string;
+}
+
+/**
+ * Generate CSV headers from experimental plan
+ */
+export async function generateHeadersFromPlan(
+  plan: string,
+  experimentId?: string
+): Promise<GenerateHeadersResponse> {
+  try {
+    const response = await fetch('/api/dataclean/generate-headers', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -395,19 +233,171 @@ export async function generateHeadersFromPlan(plan: string, experimentId?: strin
         plan,
         experiment_id: experimentId,
       }),
-    })
-
+    });
+    
     if (!response.ok) {
-      const errorData: DataCleanError = await response.json()
-      throw new Error(`Failed to generate headers: ${errorData.message}`)
+      const error = await response.text();
+      throw new Error(`Failed to generate headers: ${error}`);
     }
-
-    const result: GenerateHeadersResponse = await response.json()
-    return result
+    
+    return await response.json();
   } catch (error) {
-    if (error instanceof Error) {
-      throw error
-    }
-    throw new Error('Unknown error occurred while generating headers')
+    console.error('Header generation error:', error);
+    return {
+      success: false,
+      headers: [],
+      csv_data: '',
+      error_message: error instanceof Error ? error.message : 'Generation failed'
+    };
   }
+}
+
+/**
+ * Conversation session types
+ */
+export interface StartConversationRequest {
+  user_id?: string;
+  session_id?: string;
+  artifact_id?: string;
+  file_path?: string;
+  csv_data?: string;
+  user_message?: string;
+}
+
+export interface StartConversationResponse {
+  session_id: string;
+  user_id: string;
+  status: string;
+  message: string;
+  capabilities: string[];
+  session_info: {
+    created_at: string;
+    session_type: string;
+    state: string;
+  };
+}
+
+/**
+ * Start a conversation session (mainly for compatibility)
+ */
+export async function startConversation(
+  request: StartConversationRequest
+): Promise<StartConversationResponse> {
+  // For the simplified version, we just return a mock session
+  // The actual data processing happens through the processData function
+  const sessionId = request.session_id || `session-${Date.now()}`;
+  
+  return {
+    session_id: sessionId,
+    user_id: request.user_id || 'default-user',
+    status: 'active',
+    message: 'Ready to process your data',
+    capabilities: ['analyze', 'clean', 'describe', 'add_row', 'delete_row'],
+    session_info: {
+      created_at: new Date().toISOString(),
+      session_type: 'dataclean',
+      state: 'active'
+    }
+  };
+}
+
+// WebSocket support for conversational dataclean
+import { WebSocketConnectionManager } from '@/utils/streaming-connection-manager';
+import type { WebSocketConnectionHandlers, WebSocketMessage } from '@/types/chat-types';
+
+// Singleton WebSocket manager instance
+const websocketManager = new WebSocketConnectionManager();
+
+/**
+ * Connect to dataclean WebSocket for streaming conversation
+ */
+export function connectDatacleanSession(
+  sessionId: string,
+  handlers: WebSocketConnectionHandlers
+): WebSocket | null {
+  console.log('🔗 Connecting to dataclean WebSocket:', sessionId);
+  
+  const wsUrl = `ws://localhost:8000/api/dataclean/ws/${sessionId}`;
+  
+  try {
+    const connection = websocketManager.createConnection(
+      sessionId,
+      wsUrl,
+      handlers,
+      {
+        maxReconnectAttempts: 3,
+        reconnectDelay: 2000
+      }
+    );
+    
+    if (connection) {
+      console.log('✅ Dataclean WebSocket connected:', sessionId);
+    } else {
+      console.error('❌ Failed to connect dataclean WebSocket:', sessionId);
+    }
+    
+    return connection;
+  } catch (error) {
+    console.error('❌ Dataclean WebSocket error:', error);
+    return null;
+  }
+}
+
+/**
+ * Send message through dataclean WebSocket
+ */
+export function sendDatacleanWebSocketMessage(
+  sessionId: string,
+  message: string,
+  csvData?: string
+): boolean {
+  console.log('📤 Sending dataclean WebSocket message:', sessionId);
+  
+  const wsMessage: WebSocketMessage = {
+    type: 'message',
+    data: {
+      message,
+      csv_data: csvData
+    },
+    session_id: sessionId
+  };
+  
+  return websocketManager.sendMessage(sessionId, wsMessage);
+}
+
+/**
+ * Check if dataclean session is connected
+ */
+export function isDatacleanSessionConnected(sessionId: string): boolean {
+  return websocketManager.isConnected(sessionId);
+}
+
+/**
+ * Get dataclean connection status
+ */
+export function getDatacleanConnectionStatus(sessionId: string) {
+  return websocketManager.getConnectionStatus(sessionId);
+}
+
+/**
+ * Close dataclean WebSocket connection
+ */
+export function closeDatacleanSession(sessionId: string): void {
+  console.log('🔌 Closing dataclean session:', sessionId);
+  websocketManager.closeConnection(sessionId);
+}
+
+/**
+ * Get dataclean WebSocket connection
+ */
+export function getDatacleanConnection(sessionId: string): WebSocket | null {
+  return websocketManager.getConnection(sessionId);
+}
+
+/**
+ * Retry dataclean connection
+ */
+export function retryDatacleanConnection(sessionId: string): boolean {
+  console.log('🔄 Retrying dataclean connection:', sessionId);
+  return websocketManager.manualRetryConnection(sessionId);
 } 

@@ -159,9 +159,34 @@ class CSVDirectProcessor:
                 quality_issues.append(f"Found {duplicate_count} duplicate rows")
                 suggestions.append("Consider removing duplicate rows")
             
-            # Check for mixed data types
+            # Check for mixed data types and formatting issues
             for col in df.columns:
                 if df[col].dtype == 'object':
+                    # Check for numeric formatting issues like "0-2" instead of "0.2"
+                    has_dash_numbers = False
+                    has_incomplete_rows = False
+                    
+                    for val in df[col].dropna():
+                        val_str = str(val).strip()
+                        # Check for dash-formatted decimals
+                        if val_str and '-' in val_str and not val_str.startswith('-'):
+                            # Pattern like "0-2" or "1-4" 
+                            parts = val_str.split('-')
+                            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                                has_dash_numbers = True
+                        
+                        # Check for completely empty values
+                        if val_str == '' or val_str == 'nan':
+                            has_incomplete_rows = True
+                    
+                    if has_dash_numbers:
+                        quality_issues.append(f"Column '{col}' contains dash-formatted numbers (e.g., '0-2' should be '0.2')")
+                        suggestions.append("Fix notation inconsistencies")
+                    
+                    if has_incomplete_rows:
+                        quality_issues.append(f"Column '{col}' has incomplete/empty entries")
+                        suggestions.append("Fill missing values")
+                    
                     try:
                         pd.to_numeric(df[col], errors='raise')
                     except:
@@ -171,6 +196,15 @@ class CSVDirectProcessor:
                             analysis_notes.append(f"Column '{col}' appears to be categorical")
                         else:
                             analysis_notes.append(f"Column '{col}' contains mixed text data")
+            
+            # Check for structural issues
+            expected_cols = len(df.columns)
+            for idx, row in df.iterrows():
+                non_null_count = row.count()
+                if non_null_count < expected_cols:
+                    quality_issues.append(f"Row {idx} is incomplete (missing {expected_cols - non_null_count} values)")
+                    suggestions.append("Remove incomplete rows")
+                    break  # Only report once to avoid spam
             
             # Use AI quality agent if available
             if self.quality_agent:
@@ -237,6 +271,7 @@ class CSVDirectProcessor:
         try:
             df = self._parse_csv_string(csv_data)
             if df is None:
+                logger.warning("Failed to parse CSV data, returning original")
                 return csv_data
             
             original_shape = df.shape
@@ -304,6 +339,140 @@ class CSVDirectProcessor:
                     after_count = len(df)
                     if before_count != after_count:
                         applied_changes.append(f"Removed {before_count - after_count} outlier rows")
+                        
+                elif "convert words to numbers" in transformation.lower() or "word to number" in transformation.lower():
+                    # Convert word-based numbers to numeric values
+                    word_to_num = {
+                        'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5',
+                        'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10',
+                        'eleven': '11', 'twelve': '12', 'thirteen': '13', 'fourteen': '14', 'fifteen': '15',
+                        'sixteen': '16', 'seventeen': '17', 'eighteen': '18', 'nineteen': '19', 'twenty': '20',
+                        'thirty': '30', 'forty': '40', 'fifty': '50', 'sixty': '60', 'seventy': '70',
+                        'eighty': '80', 'ninety': '90', 'hundred': '100', 'thousand': '1000', 'million': '1000000'
+                    }
+                    
+                    conversions_made = 0
+                    for col in df.columns:
+                        if df[col].dtype == 'object':
+                            for word, num in word_to_num.items():
+                                mask = df[col].str.lower().str.strip() == word
+                                if mask.any():
+                                    df.loc[mask, col] = num
+                                    conversions_made += mask.sum()
+                    
+                    if conversions_made > 0:
+                        applied_changes.append(f"Converted {conversions_made} word-based numbers to numeric values")
+                        
+                elif "standardize notation" in transformation.lower() or "fix notation" in transformation.lower():
+                    # Standardize common notation inconsistencies
+                    changes_made = 0
+                    for col in df.columns:
+                        if df[col].dtype == 'object':
+                            original_values = df[col].copy()
+                            
+                            # Remove currency symbols and standardize
+                            df[col] = df[col].str.replace(r'[\$£€¥]', '', regex=True)
+                            
+                            # Standardize percentage notation
+                            df[col] = df[col].str.replace('%', '', regex=True)
+                            
+                            # Fix common punctuation issues
+                            df[col] = df[col].str.replace(r'\s*,\s*', ',', regex=True)  # Fix spacing around commas
+                            df[col] = df[col].str.replace(r'\s*;\s*', ';', regex=True)  # Fix spacing around semicolons
+                            
+                            # Standardize yes/no variants
+                            df[col] = df[col].str.replace(r'^(y|yes|true|t)$', 'yes', case=False, regex=True)
+                            df[col] = df[col].str.replace(r'^(n|no|false|f)$', 'no', case=False, regex=True)
+                            
+                            # Count actual changes
+                            changes_made += (original_values != df[col]).sum()
+                    
+                    if changes_made > 0:
+                        applied_changes.append(f"Standardized notation in {changes_made} cells")
+                        
+                elif "fix data types" in transformation.lower() or "convert data types" in transformation.lower():
+                    # Attempt to convert columns to appropriate data types
+                    type_conversions = 0
+                    for col in df.columns:
+                        if df[col].dtype == 'object':
+                            # Try to convert to numeric if possible
+                            try:
+                                # Remove common non-numeric characters first
+                                cleaned_col = df[col].str.replace(r'[^\d\.\-\+]', '', regex=True)
+                                numeric_version = pd.to_numeric(cleaned_col, errors='coerce')
+                                
+                                # If most values convert successfully, use the numeric version
+                                if numeric_version.notna().sum() / len(df) > 0.7:
+                                    df[col] = numeric_version
+                                    type_conversions += 1
+                            except:
+                                pass
+                                
+                            # Try to convert to datetime if it looks like dates
+                            if type_conversions == 0:  # Only if numeric conversion didn't work
+                                try:
+                                    datetime_version = pd.to_datetime(df[col], errors='coerce')
+                                    if datetime_version.notna().sum() / len(df) > 0.7:
+                                        df[col] = datetime_version
+                                        type_conversions += 1
+                                except:
+                                    pass
+                    
+                    if type_conversions > 0:
+                        applied_changes.append(f"Converted {type_conversions} columns to appropriate data types")
+                        
+                elif "remove special characters" in transformation.lower():
+                    # Remove or standardize special characters
+                    special_char_fixes = 0
+                    for col in df.columns:
+                        if df[col].dtype == 'object':
+                            original_values = df[col].copy()
+                            
+                            # Remove common problematic characters
+                            df[col] = df[col].str.replace(r'[^\w\s\.\,\-\+]', '', regex=True)
+                            
+                            # Count changes
+                            special_char_fixes += (original_values != df[col]).sum()
+                    
+                    if special_char_fixes > 0:
+                        applied_changes.append(f"Cleaned special characters from {special_char_fixes} cells")
+                        
+                elif "fix notation" in transformation.lower() or "standardize notation" in transformation.lower():
+                    # Fix dash-formatted decimals like "0-2" -> "0.2"
+                    notation_fixes = 0
+                    for col in df.columns:
+                        if df[col].dtype == 'object':
+                            original_values = df[col].copy()
+                            
+                            # Fix dash-formatted decimals
+                            def fix_dash_decimals(val):
+                                if pd.isna(val):
+                                    return val
+                                val_str = str(val).strip()
+                                # Check for pattern like "0-2" or "1-4"
+                                if val_str and '-' in val_str and not val_str.startswith('-'):
+                                    parts = val_str.split('-')
+                                    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                                        return f"{parts[0]}.{parts[1]}"
+                                return val_str
+                            
+                            df[col] = df[col].apply(fix_dash_decimals)
+                            
+                            # Count changes
+                            notation_fixes += (original_values != df[col]).sum()
+                    
+                    if notation_fixes > 0:
+                        applied_changes.append(f"Fixed {notation_fixes} dash-formatted decimal numbers")
+                        
+                elif "remove incomplete rows" in transformation.lower() or "clean incomplete" in transformation.lower():
+                    # Remove rows that have too many missing values
+                    before_count = len(df)
+                    # Remove rows where more than 50% of values are missing
+                    threshold = len(df.columns) * 0.5
+                    df = df.dropna(thresh=int(threshold))
+                    after_count = len(df)
+                    if before_count != after_count:
+                        applied_changes.append(f"Removed {before_count - after_count} incomplete rows")
             
             # Log transformation results
             new_shape = df.shape
@@ -311,7 +480,14 @@ class CSVDirectProcessor:
             logger.info(f"Changes applied: {applied_changes}")
             
             # Convert back to CSV string
-            return self._dataframe_to_csv_string(df)
+            result_csv = self._dataframe_to_csv_string(df)
+            
+            if result_csv and result_csv.strip():
+                logger.info(f"Successfully applied transformations and generated CSV: {len(result_csv)} characters")
+                return result_csv
+            else:
+                logger.error("Failed to generate CSV string from transformed DataFrame, returning original")
+                return csv_data
             
         except Exception as e:
             logger.error(f"Error applying transformations: {str(e)}")
@@ -339,9 +515,22 @@ class CSVDirectProcessor:
     def _dataframe_to_csv_string(self, df: pd.DataFrame) -> str:
         """Convert DataFrame to CSV string."""
         try:
-            return df.to_csv(index=False)
+            if df is None:
+                logger.error("DataFrame is None, cannot convert to CSV")
+                return ""
+            
+            if df.empty:
+                logger.warning("DataFrame is empty, returning just headers")
+                # Return just the headers if DataFrame is empty
+                return ",".join(df.columns) + "\n"
+            
+            csv_string = df.to_csv(index=False)
+            logger.info(f"Successfully converted DataFrame to CSV string: {len(csv_string)} chars, {df.shape[0]} rows, {df.shape[1]} cols")
+            
+            return csv_string
         except Exception as e:
             logger.error(f"Error converting DataFrame to CSV: {str(e)}")
+            logger.error(f"DataFrame info: shape={df.shape if df is not None else 'None'}, columns={list(df.columns) if df is not None else 'None'}")
             return ""
     
     def _get_or_create_session_state(self, request: CSVMessageRequest, df: pd.DataFrame) -> CSVConversationState:

@@ -6,9 +6,22 @@ experiment planning, data cleaning, analysis, and other AI agent functionality.
 """
 
 import logging
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+
+# Load environment variables from .env file
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(dotenv_path=env_path)
+logger = logging.getLogger(__name__)
+logger.info(f"Loading environment from: {env_path}")
+logger.info(f"OpenAI API Key loaded: {'✓' if os.getenv('OPENAI_API_KEY') else '✗'}")
 
 from api.dataclean import router as dataclean_router
 from api.planning import router as planning_router
@@ -16,10 +29,6 @@ from api.analysis import router as analysis_router
 from api.database import router as database_router
 # Import database initialization functions
 from database import init_db, check_db_connection
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Create FastAPI app
 app = FastAPI(

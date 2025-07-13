@@ -480,36 +480,15 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
       const response = await uploadFile(file, currentExperiment?.id || "demo-experiment", "csv")
       
       if (response.success) {
-        console.log("📤 Processing upload response with agent versioning")
+        console.log("📤 Processing upload response")
         
-        // Use agent versioning system for file uploads
-        try {
-          // Convert ProcessFileCompleteResponse to DatacleanResponse format
-          const datacleanResponse = {
-            response_type: "data_preview" as const,
-            message: "File uploaded successfully",
-            data: {
-              cleaned_data: response.cleaned_data,
-              artifact_id: response.artifact_id
-            }
-          }
-          await updateCsvFromDatacleanResponse(datacleanResponse)
-          console.log("✅ File uploaded with agent versioning")
-        } catch (csvError) {
-          console.warn("⚠️ Failed to use agent versioning for upload, falling back to manual processing:", csvError)
-          
-          // Fallback to manual processing if versioning fails
-          if (response.cleaned_data) {
-            const csvContent = extractCsvFromDatacleanResponse(response, 'file-upload')
-            if (csvContent) {
-              await updateExperimentCsvWithSave(csvContent)
-              console.log("✅ File uploaded with fallback processing")
-            } else {
-              throw new Error("No valid CSV data found in upload response")
-            }
-          } else {
-            throw new Error("No cleaned_data in upload response")
-          }
+        // Directly update CSV data from upload response
+        if (response.cleaned_data) {
+          console.log("✅ Found cleaned_data, updating CSV directly")
+          await updateExperimentCsvWithSave(response.cleaned_data)
+          console.log("✅ File uploaded and CSV updated successfully")
+        } else {
+          throw new Error("No cleaned_data in upload response")
         }
         
         toast({
@@ -573,13 +552,13 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
           </div>
           
           <div className="flex items-center gap-2">
-            <div className="relative">
-              <Search className="h-3 w-3 absolute left-2 top-1/2 transform -translate-y-1/2 text-muted-foreground" />
+            <div className="relative group">
+              <Search className="h-3 w-3 absolute left-2.5 top-1/2 transform -translate-y-1/2 text-muted-foreground/50 group-focus-within:text-muted-foreground transition-colors" />
               <Input
                 placeholder="Search..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-32 h-6 text-xs pl-6 bg-transparent border-gray-300 dark:border-gray-600"
+                className="w-40 h-7 text-xs pl-7 pr-2 bg-muted/30 border-0 rounded-md placeholder:text-muted-foreground/50 focus:bg-muted/50 transition-all duration-200 hover:bg-muted/40"
               />
             </div>
 
@@ -612,7 +591,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
               size="sm" 
               className="h-6 px-2 text-xs dark:text-gray-300 dark:hover:text-white"
               onClick={handleGenerateHeaders}
-              disabled={isGenerating}
+              disabled={isGenerating || !editorText || !editorText.trim()}
               title="Generate headers from experimental plan"
             >
               {isGenerating ? (
@@ -690,7 +669,16 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
         </div>
       </CardHeader>
 
-      <CardContent className="flex-1 flex flex-col min-h-0 p-0 bg-gradient-to-b from-card to-muted/20">
+      <CardContent className="flex-1 flex flex-col min-h-0 p-0 bg-gradient-to-b from-card to-muted/20 relative">
+        {/* Loading overlay when agent is updating */}
+        {isAgentUpdating && (
+          <div className="absolute inset-0 bg-background/50 backdrop-blur-sm z-10 flex items-center justify-center">
+            <div className="flex items-center gap-3 bg-background/90 px-4 py-3 rounded-lg shadow-lg border border-border">
+              <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+              <span className="text-sm font-medium text-foreground">Agent processing data...</span>
+            </div>
+          </div>
+        )}
         <div className="flex-1 min-h-0 border-t border-border/50 overflow-auto max-w-full backdrop-blur-sm">
           {headers.length > 0 ? (
             <div className="w-full overflow-x-auto">
