@@ -13,7 +13,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import { Card } from "@/components/ui/card"
 import { useExperimentStore } from "@/stores"
 import { useChatSessions } from "@/hooks/use-chat-sessions"
-import { handlePlanningWebSocketMessage } from "@/handlers/planning-message-handler"
+import { handlePlanningWebSocketMessage, onTypewriterComplete } from "@/handlers/planning-message-handler"
 import { handlePlanningMessage } from "@/handlers/planning-message-handler"
 import { handleExecuteMessage, createDatacleanWelcomeMessage } from "@/handlers/execute-message-handler"
 import { handleAnalysisMessage } from "@/handlers/analysis-message-handler"
@@ -217,16 +217,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
           last_activity: new Date()
         })
         
-        // Add initial response message
-        const initialMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: `🎯 **Planning Your Experiment**\n\nAnalyzing: "${message}"\n\nI'll guide you through creating a comprehensive research plan.`,
-          sender: "ai",
-          timestamp: new Date(),
-          mode: "plan",
-          response_type: "text"
-        }
-        setMessages((prev) => [...prev, initialMessage])
+        // Initial response message removed - let the agent respond directly
         
         // Connect WebSocket
         const connection = connectPlanningSession(sessionResponse.session_id, planningHandlers)
@@ -435,6 +426,11 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     inputRef.current?.focus()
   }, [setInputValue, setShowSuggestions])
 
+  // Handle typewriter completion for approval message timing
+  const handleTypewriterComplete = useCallback((messageId: string) => {
+    onTypewriterComplete(messageId, setMessages)
+  }, [setMessages])
+
 
 
   // We no longer forcibly close the planning WebSocket when the component
@@ -521,6 +517,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         messages={messages}
         isLoading={isLoading}
         selectedMode={selectedMode}
+        onTypewriterComplete={handleTypewriterComplete}
       />
 
       {/* Suggestions Panel */}

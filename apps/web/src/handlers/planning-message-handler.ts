@@ -245,6 +245,9 @@ function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHan
 }
 
 
+// Global pending approval messages queue
+let pendingApprovalMessages: Message[] = []
+
 /**
  * Handles approval request events from WebSocket
  * @param data Approval request data
@@ -264,8 +267,50 @@ function handlePlanningApprovalRequest(data: Record<string, unknown>, context: M
     response_type: "approval"
   }
   
-  console.log("➕ Adding raw approval message to chat from WebSocket")
-  setMessages((prev) => [...prev, rawMessage])
+  // Check if there's a recent AI message that might still be typing
+  setMessages((prevMessages) => {
+    const recentAiMessage = prevMessages
+      .filter(msg => msg.sender === "ai" && msg.mode === "plan" && msg.response_type === "text")
+      .pop()
+    
+    // If there's a recent AI message (within last 5 seconds), queue the approval
+    const isRecentMessage = recentAiMessage && 
+      (Date.now() - new Date(recentAiMessage.timestamp).getTime()) < 5000
+    
+    if (isRecentMessage) {
+      console.log("⏳ Queuing approval message - recent AI message detected, likely still typing")
+      
+      // Store in pending queue with a flag to identify which message it follows
+      pendingApprovalMessages.push({
+        ...rawMessage,
+        followsMessageId: recentAiMessage.id
+      } as any)
+      
+      // Set up a fallback timeout in case typewriter callback doesn't fire
+      setTimeout(() => {
+        console.log("⏰ Fallback: Adding approval message after timeout")
+        showPendingApprovalIfExists(setMessages, recentAiMessage.id)
+      }, 3000) // 3 second fallback
+      
+      return prevMessages // Don't add message yet
+    } else {
+      console.log("➕ Adding approval message immediately - no recent AI message")
+      
+      // Check for duplicates even in immediate case
+      const isDuplicate = prevMessages.some(msg => 
+        msg.response_type === "approval" && 
+        msg.content === rawMessage.content &&
+        (Date.now() - new Date(msg.timestamp).getTime()) < 10000 // Within 10 seconds
+      )
+      
+      if (isDuplicate) {
+        console.log("⏭️ Skipping duplicate immediate approval message")
+        return prevMessages
+      }
+      
+      return [...prevMessages, rawMessage]
+    }
+  })
   
   // Update session state (preserve session continuity)
   safeUpdateSession(setPlanningSession, {
@@ -273,6 +318,49 @@ function handlePlanningApprovalRequest(data: Record<string, unknown>, context: M
     pending_approval: data,
     last_activity: new Date()
   }, "approval_request")
+}
+
+/**
+ * Shows pending approval message if it exists for the given message ID
+ */
+function showPendingApprovalIfExists(setMessages: (updater: (prev: Message[]) => Message[]) => void, messageId: string): void {
+  const pendingIndex = pendingApprovalMessages.findIndex(msg => 
+    (msg as any).followsMessageId === messageId
+  )
+  
+  if (pendingIndex !== -1) {
+    const pendingMessage = pendingApprovalMessages[pendingIndex]
+    
+    // Remove from pending queue FIRST to prevent double-processing
+    pendingApprovalMessages.splice(pendingIndex, 1)
+    
+    // Remove the followsMessageId property before adding to messages
+    const { followsMessageId, ...cleanMessage } = pendingMessage as any
+    
+    console.log("➕ Adding queued approval message after typewriter completion")
+    setMessages((prev) => {
+      // Double-check for duplicates before adding
+      const isDuplicate = prev.some(msg => 
+        msg.response_type === "approval" && 
+        msg.content === cleanMessage.content &&
+        (Date.now() - new Date(msg.timestamp).getTime()) < 10000 // Within 10 seconds
+      )
+      
+      if (isDuplicate) {
+        console.log("⏭️ Skipping duplicate approval message")
+        return prev
+      }
+      
+      return [...prev, cleanMessage]
+    })
+  }
+}
+
+/**
+ * Export function to be called when typewriter completes
+ */
+export function onTypewriterComplete(messageId: string, setMessages: (updater: (prev: Message[]) => Message[]) => void): void {
+  showPendingApprovalIfExists(setMessages, messageId)
 }
 
 /**

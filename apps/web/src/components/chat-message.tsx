@@ -18,9 +18,10 @@ import {
 interface ChatMessageProps {
   message: Message
   enableTypewriter?: boolean
+  onTypewriterComplete?: () => void
 }
 
-export function ChatMessage({ message, enableTypewriter = true }: ChatMessageProps) {
+export function ChatMessage({ message, enableTypewriter = true, onTypewriterComplete }: ChatMessageProps) {
   const isUser = message.sender === "user"
   const isAi = message.sender === "ai"
   
@@ -70,7 +71,11 @@ export function ChatMessage({ message, enableTypewriter = true }: ChatMessagePro
       } else {
         setIsTyping(false)
         // Keep cursor visible for a short time after typing completes
-        setTimeout(() => setShowCursor(false), 500)
+        setTimeout(() => {
+          setShowCursor(false)
+          // Call completion callback if provided
+          onTypewriterComplete?.()
+        }, 500)
       }
     }
 
