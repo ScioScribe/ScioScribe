@@ -7,29 +7,23 @@
 
 import { useEffect, useRef, useState, useCallback } from "react"
 import { ChatMessage } from "@/components/chat-message"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Wifi, WifiOff, Loader2, Zap, Clock, RefreshCw, ChevronDown } from "lucide-react"
+import { ChevronDown } from "lucide-react"
+import { ThinkingIndicator } from "@/components/enhanced-message-display"
 import type { Message } from "@/types/chat-types"
 
 interface ChatMessagesProps {
   messages: Message[]
   isLoading: boolean
   selectedMode: string
-  isConnected?: boolean
-  connectionStatus?: string
-  lastActivity?: Date
-  onRetryConnection?: () => void
+  onTypewriterComplete?: (messageId: string) => void
 }
 
 export function ChatMessages({ 
   messages, 
   isLoading, 
   selectedMode,
-  isConnected = false,
-  connectionStatus = "disconnected",
-  lastActivity,
-  onRetryConnection
+  onTypewriterComplete
 }: ChatMessagesProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
@@ -153,15 +147,27 @@ export function ChatMessages({
 
   return (
     <div className="flex-1 flex flex-col min-h-0 relative">
-      {/* Connection Status Bar */}
-      <ConnectionStatusBar 
-        isConnected={isConnected}
-        connectionStatus={connectionStatus}
-        selectedMode={selectedMode}
-        lastActivity={lastActivity}
-        onRetryConnection={onRetryConnection}
-      />
-      
+      {/* AI Chat Header */}
+      <div className="flex-shrink-0 px-4 pt-4 pb-3 border-b border-border/50">
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 rounded-lg bg-indigo-100 dark:bg-indigo-900/30">
+            <svg className="h-4 w-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+          </div>
+          <h3 className="text-sm font-semibold text-foreground">AI Chat</h3>
+          <div className="flex items-center gap-1 ml-2">
+            <div className={`w-2 h-2 rounded-full ${
+              selectedMode === "analysis" ? "bg-purple-500" :
+              selectedMode === "plan" ? "bg-blue-500" :
+              selectedMode === "execute" ? "bg-green-500" :
+              "bg-gray-400"
+            }`} />
+            <span className="text-xs text-muted-foreground capitalize">{selectedMode}</span>
+          </div>
+        </div>
+      </div>
+
       {/* Messages Container */}
       <div
         ref={scrollAreaRef}
@@ -182,18 +188,19 @@ export function ChatMessages({
               enableTypewriter={
                 message.sender === "ai" && 
                 !message.isHtml && 
-                index === messages.length - 1 // Only animate the latest AI message
+                (index === messages.length - 1 || // Latest AI message
+                 (message.mode === "plan" && index >= messages.length - 2)) // Planning messages get priority
               }
+              onTypewriterComplete={() => onTypewriterComplete?.(message.id)}
             />
           ))}
 
-          {/* Loading indicator */}
+          {/* Enhanced thinking indicator */}
           {isLoading && (
-            <div className="mb-4 animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
-              <div className="text-gray-700 dark:text-gray-300 mt-1 pl-4">
-                <LoadingIndicator selectedMode={selectedMode} />
-              </div>
-            </div>
+            <ThinkingIndicator 
+              message={getThinkingMessage(selectedMode)}
+              isVisible={isLoading}
+            />
           )}
         </div>
       </div>
@@ -233,182 +240,20 @@ export function ChatMessages({
   )
 }
 
-/**
- * Connection Status Bar Component
- */
-interface ConnectionStatusBarProps {
-  isConnected: boolean
-  connectionStatus: string
-  selectedMode: string
-  lastActivity?: Date
-  onRetryConnection?: () => void
-}
 
-function ConnectionStatusBar({ isConnected, connectionStatus, selectedMode, lastActivity, onRetryConnection }: ConnectionStatusBarProps) {
-  const [timeAgo, setTimeAgo] = useState("")
-
-  // Update time ago periodically
-  useEffect(() => {
-    const updateTimeAgo = () => {
-      if (lastActivity) {
-        const now = new Date()
-        const diffMs = now.getTime() - lastActivity.getTime()
-        const diffSecs = Math.floor(diffMs / 1000)
-        const diffMins = Math.floor(diffSecs / 60)
-        
-        const newTimeAgo = diffSecs < 60 
-          ? `${diffSecs}s ago`
-          : diffMins < 60 
-            ? `${diffMins}m ago`
-            : ">1h ago"
-        
-        // Only update state if the value actually changed
-        setTimeAgo(prev => prev === newTimeAgo ? prev : newTimeAgo)
-      }
-    }
-
-    updateTimeAgo()
-    const interval = setInterval(updateTimeAgo, 5000) // Update every 5 seconds
-    
-    return () => clearInterval(interval)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastActivity?.getTime()]) // Use primitive value instead of Date object
-
-  const getStatusColor = () => {
-    if (selectedMode !== "plan") return "gray" // Only show for planning mode
-    
-    switch (connectionStatus) {
-      case "connected":
-        return "green"
-      case "connecting":
-        return "yellow"
-      case "reconnecting":
-        return "orange"
-      case "disconnected":
-      case "error":
-        return "red"
-      default:
-        return "gray"
-    }
-  }
-
-  const getStatusIcon = () => {
-    if (selectedMode !== "plan") return null
-    
-    switch (connectionStatus) {
-      case "connected":
-        return <Wifi className="h-3 w-3" />
-      case "connecting":
-      case "reconnecting":
-        return <Loader2 className="h-3 w-3 animate-spin" />
-      case "disconnected":
-      case "error":
-        return <WifiOff className="h-3 w-3" />
-      default:
-        return <Clock className="h-3 w-3" />
-    }
-  }
-
-  const getStatusText = () => {
-    if (selectedMode !== "plan") {
-      return `${selectedMode} mode - Real-time updates available`
-    }
-    
-    switch (connectionStatus) {
-      case "connected":
-        return `WebSocket connected - Real-time updates ${timeAgo ? `(${timeAgo})` : ""}`
-      case "connecting":
-        return "Connecting to planning server..."
-      case "reconnecting":
-        return "Reconnecting to planning server..."
-      case "disconnected":
-        return "Disconnected from planning server"
-      case "error":
-        return "Connection error - Retrying..."
-      default:
-        return `Planning mode - ${connectionStatus}`
-    }
-  }
-
-  if (selectedMode !== "plan" && !isConnected) {
-    return null // Don't show status bar for non-planning modes when not relevant
-  }
-
-  return (
-    <div className="flex-shrink-0 px-6 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Badge 
-            variant={getStatusColor() === "green" ? "default" : "secondary"}
-            className={`text-xs flex items-center gap-1 ${
-              getStatusColor() === "green" ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" :
-              getStatusColor() === "yellow" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200" :
-              getStatusColor() === "orange" ? "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200" :
-              getStatusColor() === "red" ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" :
-              "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200"
-            }`}
-          >
-            {getStatusIcon()}
-            <span>{getStatusText()}</span>
-          </Badge>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          {selectedMode === "plan" && isConnected && (
-            <div className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
-              <Zap className="h-3 w-3" />
-              <span>Live</span>
-            </div>
-          )}
-          
-          {/* Retry button for failed connections */}
-          {selectedMode === "plan" && connectionStatus === "failed" && onRetryConnection && (
-            <Button
-              onClick={onRetryConnection}
-              size="sm"
-              variant="outline"
-              className="h-6 px-2 text-xs"
-            >
-              <RefreshCw className="h-3 w-3 mr-1" />
-              Retry
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
 
 /**
- * Loading Indicator Component
+ * Get thinking message based on selected mode
  */
-interface LoadingIndicatorProps {
-  selectedMode: string
-}
-
-function LoadingIndicator({ selectedMode }: LoadingIndicatorProps) {
-  const loadingText = getLoadingText(selectedMode)
-  
-  return (
-    <div className="flex items-center gap-2">
-      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500"></div>
-      <span className="text-sm">{loadingText}</span>
-    </div>
-  )
-}
-
-/**
- * Get loading text based on selected mode
- */
-function getLoadingText(selectedMode: string): string {
+function getThinkingMessage(selectedMode: string): string {
   switch (selectedMode) {
     case "plan":
-      return "Planning your experiment..."
+      return "Planning your experiment"
     case "execute":
-      return "Processing your data..."
+      return "Processing your data"
     case "analysis":
-      return "Analyzing your request..."
+      return "Analyzing your request"
     default:
-      return "Processing..."
+      return "Thinking"
   }
 } 

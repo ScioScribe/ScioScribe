@@ -242,15 +242,17 @@ export function GraphViewer({ htmlContent, onRefresh }: GraphViewerProps) {
   return (
     <Card 
       ref={containerRef}
-      className="h-full flex flex-col dark:bg-gray-900 dark:border-gray-800 w-full"
+      className="h-full flex flex-col shadow-lg border-0 bg-card/95 backdrop-blur-sm w-full"
     >
-      <CardHeader className="flex-shrink-0 pb-2">
+      <CardHeader className="flex-shrink-0 pb-3 px-4 pt-4 border-b border-border/50">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2 dark:text-white">
-            <BarChart3 className="h-4 w-4" />
+          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground">
+            <div className="p-1.5 rounded-lg bg-purple-100 dark:bg-purple-900/30">
+              <BarChart3 className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+            </div>
             Visualization
             {htmlContent && (
-              <span className="text-xs text-green-600 dark:text-green-400">
+              <span className="text-xs text-green-600 dark:text-green-400 font-normal">
                 • Live
               </span>
             )}
@@ -278,8 +280,8 @@ export function GraphViewer({ htmlContent, onRefresh }: GraphViewerProps) {
         </div>
       </CardHeader>
 
-      <CardContent className="flex-1 flex flex-col min-h-0 p-0">
-        <div className="flex-1 min-h-0 border-t dark:border-gray-700 overflow-hidden">
+      <CardContent className="flex-1 flex flex-col min-h-0 p-0 bg-gradient-to-b from-card to-muted/20">
+        <div className="flex-1 min-h-0 border-t border-border/50 overflow-hidden backdrop-blur-sm">
           {currentHtml ? (
             <iframe
               ref={iframeRef}
@@ -295,10 +297,10 @@ export function GraphViewer({ htmlContent, onRefresh }: GraphViewerProps) {
               title="Data Visualization"
             />
           ) : (
-            <div className="flex items-center justify-center h-full text-xs text-muted-foreground dark:text-gray-400">
+            <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
               <div className="text-center">
                 <BarChart3 className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p>No visualization available</p>
+                <p className="font-medium">No visualization available</p>
                 <p className="text-xs mt-1 opacity-75">Use the AI chat to generate charts</p>
               </div>
             </div>

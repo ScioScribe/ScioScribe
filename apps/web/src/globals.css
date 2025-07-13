@@ -102,8 +102,19 @@ body {
   * {
     @apply border-border;
   }
+  
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
+  
   body {
     @apply bg-background text-foreground;
+  }
+  
+  #root {
+    height: 100vh;
+    overflow: hidden;
   }
 }
 

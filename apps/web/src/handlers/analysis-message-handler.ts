@@ -34,12 +34,14 @@ export async function handleAnalysisMessage(message: string, context: MessageHan
       
       // Add connection status message
       const connectingMessage: Message = {
-        id: (Date.now()).toString(),
+        id: "analysis-connection-status",
         content: "🔌 **Connecting to Analysis Stream**\n\nEstablishing real-time connection for visualization generation...\n\nYou'll see live updates as the analysis progresses through each processing stage.",
         sender: "ai",
         timestamp: new Date(),
         mode: "analysis",
-        response_type: "text"
+        response_type: "text",
+        tool_id: "connection-status",
+        tool_status: "running"
       }
       setMessages((prev) => [...prev, connectingMessage])
       
@@ -49,16 +51,17 @@ export async function handleAnalysisMessage(message: string, context: MessageHan
         () => {
           console.log("✅ Analysis WebSocket connected")
           
-          // Add connection success message
-          const connectedMessage: Message = {
-            id: (Date.now()).toString(),
-            content: "✅ **Analysis Stream Connected**\n\nReal-time connection established. Starting analysis with live node updates...",
-            sender: "ai",
-            timestamp: new Date(),
-            mode: "analysis",
-            response_type: "text"
-          }
-          setMessages((prev) => [...prev, connectedMessage])
+          // Update connection status message
+          setMessages((prev) => prev.map(msg => 
+            msg.tool_id === "connection-status" 
+              ? {
+                  ...msg,
+                  content: "✅ **Analysis Stream Connected**\n\nReal-time connection established. Starting analysis with live node updates...",
+                  tool_status: "completed" as const,
+                  timestamp: new Date()
+                }
+              : msg
+          ))
           
           // Send the analysis request now that we're connected
           if (analysisWebSocket && currentSessionId) {
@@ -78,15 +81,18 @@ export async function handleAnalysisMessage(message: string, context: MessageHan
         },
         (error) => {
           console.error("❌ Analysis WebSocket error:", error)
-          const errorMessage: Message = {
-            id: (Date.now() + 1).toString(),
-            content: `❌ **WebSocket Connection Error**\n\nFailed to establish real-time connection for analysis streaming.\n\nFalling back to standard API request...`,
-            sender: "ai",
-            timestamp: new Date(),
-            mode: "analysis",
-            response_type: "error"
-          }
-          setMessages((prev) => [...prev, errorMessage])
+          
+          // Update connection status message to show error
+          setMessages((prev) => prev.map(msg => 
+            msg.tool_id === "connection-status" 
+              ? {
+                  ...msg,
+                  content: `❌ **WebSocket Connection Error**\n\nFailed to establish real-time connection for analysis streaming.\n\nFalling back to standard API request...`,
+                  tool_status: "error" as const,
+                  timestamp: new Date()
+                }
+              : msg
+          ))
           
           // Fallback to regular API
           handleAnalysisMessageFallback(message, context)
@@ -140,22 +146,45 @@ function handleAnalysisWebSocketMessage(wsMessage: AnalysisWebSocketMessage, con
         
       case "node_update": {
         const updateData = wsMessage.data as unknown as NodeUpdateData
-        const nodeStatusMessage: Message = {
-          id: (Date.now() + Math.random()).toString(),
-          content: `🔄 **${updateData.node_name}**\n\n${updateData.node_data.description}\n\nStatus: ${updateData.node_data.status}`,
-          sender: "ai",
-          timestamp: new Date(),
-          mode: "analysis",
-          response_type: "text"
-        }
-        setMessages((prev) => [...prev, nodeStatusMessage])
+        const toolId = `tool-${updateData.node_name}`
+        const status = updateData.node_data.status.toLowerCase().includes('complete') ? 'completed' : 'running'
+        
+        // Check if this tool message already exists
+        setMessages((prev) => {
+          const existingMessageIndex = prev.findIndex(msg => msg.tool_id === toolId)
+          
+          if (existingMessageIndex !== -1) {
+            // Update existing message
+            const updatedMessages = [...prev]
+            updatedMessages[existingMessageIndex] = {
+              ...updatedMessages[existingMessageIndex],
+              content: `🔄 **${updateData.node_name}**\n\n${updateData.node_data.description}\n\nStatus: ${updateData.node_data.status}`,
+              tool_status: status,
+              timestamp: new Date()
+            }
+            return updatedMessages
+          } else {
+            // Create new message
+            const nodeStatusMessage: Message = {
+              id: (Date.now() + Math.random()).toString(),
+              content: `🔄 **${updateData.node_name}**\n\n${updateData.node_data.description}\n\nStatus: ${updateData.node_data.status}`,
+              sender: "ai",
+              timestamp: new Date(),
+              mode: "analysis",
+              response_type: "text",
+              tool_id: toolId,
+              tool_status: status
+            }
+            return [...prev, nodeStatusMessage]
+          }
+        })
         break
       }
       
       case 'analysis_complete': {
-        const analysisData = wsMessage.data as unknown as { html?: string; message?: string }
-        const html = analysisData.html
-        const message = analysisData.message || "Analysis complete"
+        const analysisData = wsMessage.data as unknown as { result?: { html_content?: string; explanation?: string }; html?: string; message?: string }
+        const html = analysisData.result?.html_content || analysisData.html
+        const message = analysisData.result?.explanation || analysisData.message || "Analysis complete"
         
         if (html) {
           const htmlMessage: Message = {

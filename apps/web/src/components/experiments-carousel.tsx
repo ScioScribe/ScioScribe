@@ -117,7 +117,7 @@ export function ExperimentsCarousel({ experiments, onExperimentSelect }: Experim
             className="flex transition-transform duration-300 ease-in-out gap-6"
             style={{ transform: `translateX(-${currentIndex * (100 / itemsPerView)}%)` }}
           >
-            {experiments.map((experiment, index) => (
+            {experiments.map((experiment) => (
               <Card
                 key={experiment.id}
                 className="flex-shrink-0 w-80 bg-white/10 backdrop-blur-md border-white/20 hover:bg-white/20 transition-all duration-300 cursor-pointer group"

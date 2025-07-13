@@ -44,11 +44,18 @@ class UpdateHtmlRequest(BaseModel):
 class UpdateCsvRequest(BaseModel):
     """Request model for updating experiment CSV data."""
     csv_data: str = Field(..., description="Updated CSV data content")
+    is_agent_update: bool = Field(False, description="Whether this update is from an AI agent")
+    expected_version: Optional[int] = Field(None, description="Expected CSV version for optimistic locking")
 
 
 class UpdateTitleRequest(BaseModel):
     """Request model for updating experiment title."""
     title: str = Field(..., description="Updated experiment title")
+
+
+class AcceptRejectChangesRequest(BaseModel):
+    """Request model for accepting or rejecting CSV changes."""
+    action: str = Field(..., description="Action to perform: 'accept' or 'reject'", pattern="^(accept|reject)$")
 
 
 class ExperimentResponse(BaseModel):
@@ -59,6 +66,10 @@ class ExperimentResponse(BaseModel):
     experimental_plan: Optional[str] = Field(None, description="Experimental plan text")
     visualization_html: Optional[str] = Field(None, description="HTML visualization content")
     csv_data: Optional[str] = Field(None, description="CSV data content")
+    previous_csv: Optional[str] = Field(None, description="Previous CSV data before agent modifications")
+    csv_version: int = Field(0, description="CSV version number for optimistic locking")
+    agent_modified_at: Optional[datetime] = Field(None, description="Timestamp of last agent modification")
+    modification_source: str = Field("user", description="Source of last modification (user/agent)")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 
@@ -86,6 +97,10 @@ def _experiment_to_response(experiment: Experiment) -> ExperimentResponse:
         experimental_plan=experiment.experimental_plan,
         visualization_html=experiment.visualization_html,
         csv_data=experiment.csv_data,
+        previous_csv=experiment.previous_csv,
+        csv_version=experiment.csv_version,
+        agent_modified_at=experiment.agent_modified_at,
+        modification_source=experiment.modification_source,
         created_at=experiment.created_at,
         updated_at=experiment.updated_at
     )
@@ -287,13 +302,15 @@ async def update_experiment_csv(
     db: Session = Depends(get_db)
 ):
     """
-    Update the CSV data for a specific experiment.
+    Update the CSV data for a specific experiment with version control.
     
-    Updates only the csv_data field, leaving other fields unchanged.
+    Supports optimistic locking and tracks agent vs user modifications.
     """
     try:
-        # Query experiment by ID
-        experiment = db.query(Experiment).filter(Experiment.id == experiment_id).first()
+        # Query experiment by ID with row-level lock
+        experiment = db.query(Experiment).filter(
+            Experiment.id == experiment_id
+        ).with_for_update().first()
         
         if not experiment:
             raise HTTPException(
@@ -301,15 +318,31 @@ async def update_experiment_csv(
                 detail=f"Experiment with ID {experiment_id} not found"
             )
         
+        # Version check for optimistic locking
+        if request.expected_version is not None and request.expected_version != experiment.csv_version:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Version conflict: expected {request.expected_version}, current {experiment.csv_version}"
+            )
+        
+        # Backup current state for agent updates
+        if request.is_agent_update:
+            experiment.previous_csv = experiment.csv_data
+            experiment.agent_modified_at = datetime.now()
+            experiment.modification_source = 'agent'
+        else:
+            experiment.modification_source = 'user'
+        
         # Update the CSV data
         experiment.csv_data = request.csv_data
+        experiment.csv_version += 1
         experiment.updated_at = datetime.now()
         
         # Save changes
         db.commit()
         db.refresh(experiment)
         
-        logger.info(f"Updated CSV data for experiment: {experiment_id}")
+        logger.info(f"Updated CSV data for experiment: {experiment_id} (version: {experiment.csv_version}, source: {experiment.modification_source})")
         
         return _experiment_to_response(experiment)
         
@@ -328,6 +361,124 @@ async def update_experiment_csv(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to update experiment CSV: {str(e)}"
+        )
+
+
+@router.get("/experiments/{experiment_id}/diff")
+async def get_experiment_diff(
+    experiment_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get CSV differences between current and previous versions.
+    
+    Returns diff information for experiments modified by agents.
+    """
+    try:
+        # Query experiment by ID
+        experiment = db.query(Experiment).filter(Experiment.id == experiment_id).first()
+        
+        if not experiment:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Experiment with ID {experiment_id} not found"
+            )
+        
+        # Check if there's a previous version to compare
+        if not experiment.previous_csv:
+            return {
+                "experiment_id": experiment_id,
+                "has_diff": False,
+                "message": "No previous version available for comparison"
+            }
+        
+        return {
+            "experiment_id": experiment_id,
+            "has_diff": True,
+            "current_csv": experiment.csv_data,
+            "previous_csv": experiment.previous_csv,
+            "csv_version": experiment.csv_version,
+            "agent_modified_at": experiment.agent_modified_at,
+            "modification_source": experiment.modification_source
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error getting diff for experiment {experiment_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get experiment diff: {str(e)}"
+        )
+
+
+@router.post("/experiments/{experiment_id}/csv/accept-reject", response_model=ExperimentResponse)
+async def accept_reject_csv_changes(
+    experiment_id: str,
+    request: AcceptRejectChangesRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Accept or reject CSV changes made by an AI agent.
+    
+    Accept: Keeps the current CSV and clears the previous version.
+    Reject: Restores the previous CSV and discards agent changes.
+    """
+    try:
+        # Query experiment by ID with row-level lock
+        experiment = db.query(Experiment).filter(
+            Experiment.id == experiment_id
+        ).with_for_update().first()
+        
+        if not experiment:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Experiment with ID {experiment_id} not found"
+            )
+        
+        # Check if there are changes to accept/reject
+        if not experiment.previous_csv:
+            raise HTTPException(
+                status_code=400,
+                detail="No pending changes to accept or reject"
+            )
+        
+        if request.action == "accept":
+            # Accept changes: clear previous version
+            experiment.previous_csv = None
+            experiment.modification_source = 'user'
+            logger.info(f"Accepted CSV changes for experiment: {experiment_id}")
+        else:  # reject
+            # Reject changes: restore previous version
+            experiment.csv_data = experiment.previous_csv
+            experiment.previous_csv = None
+            experiment.modification_source = 'user'
+            experiment.csv_version += 1
+            logger.info(f"Rejected CSV changes for experiment: {experiment_id}")
+        
+        experiment.updated_at = datetime.now()
+        
+        # Save changes
+        db.commit()
+        db.refresh(experiment)
+        
+        return _experiment_to_response(experiment)
+        
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        logger.error(f"Database error processing accept/reject for experiment {experiment_id}: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error processing accept/reject for experiment {experiment_id}: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process accept/reject: {str(e)}"
         )
 
 

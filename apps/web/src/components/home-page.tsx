@@ -10,7 +10,7 @@
 import { Button } from "@/components/ui/button"
 import { ExperimentsCarousel } from "@/components/experiments-carousel"
 import { useExperimentStore } from "@/stores"
-import { FileText, Play } from "lucide-react"
+import { Microscope, Play } from "lucide-react"
 import type { Experiment } from "@/api/database"
 
 interface HomePageProps {
@@ -79,7 +79,7 @@ export function HomePage({ onNavigateToExperiment, onExperimentSelect }: HomePag
         <div className="flex flex-col items-center justify-center mb-8">
           {/* Logo and Title */}
           <div className="flex items-center gap-4 mb-8">
-            <FileText className="h-16 w-16 text-blue-400" />
+            <Microscope className="h-16 w-16 text-blue-400" />
             <h1
               className="text-6xl font-bold tracking-tight"
               style={{

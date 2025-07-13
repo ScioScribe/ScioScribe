@@ -155,6 +155,11 @@ export function handlePlanningWebSocketMessage(message: WebSocketMessage, contex
       handleSessionStatus(message.data, context)
       break
       
+    case "session_complete":
+      console.log("🎉 Processing session completion from WebSocket")
+      handleSessionComplete(message.data, context)
+      break
+      
     case "pong":
       console.log("🏓 Received pong from server (ignoring)")
       break
@@ -244,6 +249,13 @@ function handlePlanningUpdate(data: Record<string, unknown>, context: MessageHan
   }, "planning_update")
 }
 
+// Pending approval message shape including reference to preceding AI message
+interface PendingApprovalMessage extends Message {
+  followsMessageId?: string
+}
+
+// Global pending approval messages queue (array reference not reassigned)
+const pendingApprovalMessages: PendingApprovalMessage[] = []
 
 /**
  * Handles approval request events from WebSocket
@@ -264,8 +276,50 @@ function handlePlanningApprovalRequest(data: Record<string, unknown>, context: M
     response_type: "approval"
   }
   
-  console.log("➕ Adding raw approval message to chat from WebSocket")
-  setMessages((prev) => [...prev, rawMessage])
+  // Check if there's a recent AI message that might still be typing
+  setMessages((prevMessages) => {
+    const recentAiMessage = prevMessages
+      .filter(msg => msg.sender === "ai" && msg.mode === "plan" && msg.response_type === "text")
+      .pop()
+    
+    // If there's a recent AI message (within last 5 seconds), queue the approval
+    const isRecentMessage = recentAiMessage && 
+      (Date.now() - new Date(recentAiMessage.timestamp).getTime()) < 5000
+    
+    if (isRecentMessage) {
+      console.log("⏳ Queuing approval message - recent AI message detected, likely still typing")
+      
+      // Store in pending queue with a flag to identify which message it follows
+      pendingApprovalMessages.push({
+        ...rawMessage,
+        followsMessageId: recentAiMessage.id
+      })
+      
+      // Set up a fallback timeout in case typewriter callback doesn't fire
+      setTimeout(() => {
+        console.log("⏰ Fallback: Adding approval message after timeout")
+        showPendingApprovalIfExists(setMessages, recentAiMessage.id)
+      }, 3000) // 3 second fallback
+      
+      return prevMessages // Don't add message yet
+    } else {
+      console.log("➕ Adding approval message immediately - no recent AI message")
+      
+      // Check for duplicates even in immediate case
+      const isDuplicate = prevMessages.some(msg => 
+        msg.response_type === "approval" && 
+        msg.content === rawMessage.content &&
+        (Date.now() - new Date(msg.timestamp).getTime()) < 10000 // Within 10 seconds
+      )
+      
+      if (isDuplicate) {
+        console.log("⏭️ Skipping duplicate immediate approval message")
+        return prevMessages
+      }
+      
+      return [...prevMessages, rawMessage]
+    }
+  })
   
   // Update session state (preserve session continuity)
   safeUpdateSession(setPlanningSession, {
@@ -273,6 +327,50 @@ function handlePlanningApprovalRequest(data: Record<string, unknown>, context: M
     pending_approval: data,
     last_activity: new Date()
   }, "approval_request")
+}
+
+/**
+ * Shows pending approval message if it exists for the given message ID
+ */
+function showPendingApprovalIfExists(setMessages: (updater: (prev: Message[]) => Message[]) => void, messageId: string): void {
+  const pendingIndex = pendingApprovalMessages.findIndex(msg => 
+    msg.followsMessageId === messageId
+  )
+  
+  if (pendingIndex !== -1) {
+    const pendingMessage = pendingApprovalMessages[pendingIndex]
+    
+    // Remove from pending queue FIRST to prevent double-processing
+    pendingApprovalMessages.splice(pendingIndex, 1)
+    
+    // Remove the followsMessageId property before adding to messages
+    const cleanMessage = { ...pendingMessage }
+    delete (cleanMessage as PendingApprovalMessage).followsMessageId
+    
+    console.log("➕ Adding queued approval message after typewriter completion")
+    setMessages((prev) => {
+      // Double-check for duplicates before adding
+      const isDuplicate = prev.some(msg => 
+        msg.response_type === "approval" && 
+        msg.content === cleanMessage.content &&
+        (Date.now() - new Date(msg.timestamp).getTime()) < 10000 // Within 10 seconds
+      )
+      
+      if (isDuplicate) {
+        console.log("⏭️ Skipping duplicate approval message")
+        return prev
+      }
+      
+      return [...prev, cleanMessage]
+    })
+  }
+}
+
+/**
+ * Export function to be called when typewriter completes
+ */
+export function onTypewriterComplete(messageId: string, setMessages: (updater: (prev: Message[]) => Message[]) => void): void {
+  showPendingApprovalIfExists(setMessages, messageId)
 }
 
 /**
@@ -324,4 +422,48 @@ function handleSessionStatus(data: Record<string, unknown>, context: MessageHand
       last_activity: new Date()
     }, "session_status_update")
   }
+}
+
+/**
+ * Handles session completion events from WebSocket
+ * @param data Completion data (includes summary/message)
+ * @param context Message handler context
+ */
+function handleSessionComplete(data: Record<string, unknown>, context: MessageHandlerContext): void {
+  const { setMessages, setPlanningSession } = context
+
+  console.log("🎉 Session completed – final data:", data)
+
+  // Extract message and summary from backend payload
+  const completionMessage = (data.message as string) || "🎉 Experiment planning completed successfully!"
+  const summary = data.summary as Record<string, unknown> | undefined
+
+  // Build human-readable summary text if provided
+  let summaryText = ""
+  if (summary) {
+    const stagesCompleted = summary.stages_completed ?? "?"
+    const totalMessages = summary.total_messages ?? "?"
+    const objective = summary.experiment_objective ?? ""
+    summaryText = `\n\n**Summary**\n- Stages completed: ${stagesCompleted}\n- Total messages: ${totalMessages}${objective ? `\n- Objective: ${objective}` : ""}`
+  }
+
+  // Add final AI message to chat
+  const finalMessage: Message = {
+    id: (Date.now() + Math.random()).toString(),
+    content: `${completionMessage}${summaryText}`,
+    sender: "ai",
+    timestamp: new Date(),
+    mode: "plan",
+    response_type: "confirmation"
+  }
+
+  setMessages(prev => [...prev, finalMessage])
+
+  // Mark session as inactive (do NOT clear IDs so history can be referenced)
+  safeUpdateSession(setPlanningSession, {
+    is_active: false,
+    is_waiting_for_approval: false,
+    current_stage: "final_review",
+    last_activity: new Date()
+  }, "session_complete")
 } 

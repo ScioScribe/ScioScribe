@@ -14,6 +14,10 @@ export interface Experiment {
   experimental_plan?: string
   visualization_html?: string
   csv_data?: string
+  previous_csv?: string
+  csv_version: number
+  agent_modified_at?: string
+  modification_source: string
   created_at: string
   updated_at: string
 }
@@ -192,20 +196,35 @@ export async function updateExperimentHtml(id: string, html: string): Promise<Ex
  * 
  * @param id - The experiment ID
  * @param csv - The new CSV data
+ * @param options - Optional parameters for versioning
  * @returns Promise resolving to the updated experiment
  * @throws Error if the request fails or returns an error
  */
-export async function updateExperimentCsv(id: string, csv: string): Promise<Experiment> {
+export async function updateExperimentCsv(
+  id: string, 
+  csv: string,
+  options?: {
+    isAgentUpdate?: boolean
+    expectedVersion?: number
+  }
+): Promise<Experiment> {
   try {
     const response = await fetch(`${BASE_URL}/experiments/${id}/csv`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ csv_data: csv }),
+      body: JSON.stringify({ 
+        csv_data: csv,
+        is_agent_update: options?.isAgentUpdate || false,
+        expected_version: options?.expectedVersion
+      }),
     })
 
     if (!response.ok) {
+      if (response.status === 409) {
+        throw new Error('Version conflict: The data has been modified by another process')
+      }
       const errorData: DatabaseError = await response.json()
       throw new Error(`Failed to update experiment CSV: ${errorData.message}`)
     }
@@ -275,5 +294,78 @@ export async function deleteExperiment(id: string): Promise<void> {
       throw error
     }
     throw new Error('Unknown error occurred while deleting experiment')
+  }
+}
+
+export interface ExperimentDiff {
+  experiment_id: string
+  has_diff: boolean
+  current_csv?: string
+  previous_csv?: string
+  csv_version?: number
+  agent_modified_at?: string
+  modification_source?: string
+  message?: string
+}
+
+/**
+ * Get CSV differences for an experiment
+ * 
+ * @param id - The experiment ID
+ * @returns Promise resolving to diff information
+ * @throws Error if the request fails
+ */
+export async function getExperimentDiff(id: string): Promise<ExperimentDiff> {
+  try {
+    const response = await fetch(`${BASE_URL}/experiments/${id}/diff`)
+
+    if (!response.ok) {
+      const errorData: DatabaseError = await response.json()
+      throw new Error(`Failed to get experiment diff: ${errorData.message}`)
+    }
+
+    const result: ExperimentDiff = await response.json()
+    return result
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error
+    }
+    throw new Error('Unknown error occurred while getting experiment diff')
+  }
+}
+
+/**
+ * Accept or reject CSV changes for an experiment
+ * 
+ * @param id - The experiment ID
+ * @param action - 'accept' or 'reject'
+ * @returns Promise resolving to the updated experiment
+ * @throws Error if the request fails
+ */
+export async function acceptRejectCsvChanges(
+  id: string, 
+  action: 'accept' | 'reject'
+): Promise<Experiment> {
+  try {
+    const response = await fetch(`${BASE_URL}/experiments/${id}/csv/accept-reject`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ action }),
+    })
+
+    if (!response.ok) {
+      const errorData: DatabaseError = await response.json()
+      throw new Error(`Failed to ${action} CSV changes: ${errorData.message}`)
+    }
+
+    const result: Experiment = await response.json()
+    return result
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error
+    }
+    throw new Error(`Unknown error occurred while ${action}ing CSV changes`)
   }
 } 

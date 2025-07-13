@@ -1,16 +1,18 @@
 "use client"
 
-import React, { useState, useEffect, useCallback, useRef } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table"
 import { Button } from "../components/ui/button"
 import { Input } from "../components/ui/input"
-import { Upload, Download, Search, Loader2, Sparkles, Plus } from "lucide-react"
+import { Upload, Download, Search, Loader2, Sparkles, Plus, AlertCircle, Check, X } from "lucide-react"
 import { useToast } from "../components/ui/use-toast"
 import { useExperimentStore } from "../stores/experiment-store"
 import { parseCSVData, getCSVHeaders } from "../data/placeholder"
 import { generateHeadersFromPlan, uploadFile } from "../api/dataclean"
 import { convertTableToCSV } from "../utils/csv-utils"
+import { calculateCsvDiff, type RowDiff, type ChangeType } from "../utils/csv-diff"
+import { extractCsvFromDatacleanResponse } from "../utils/dataclean-response"
 import { cn } from "../shared/utils"
 
 interface DataTableViewerProps {
@@ -26,30 +28,71 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
   const [isGenerating, setIsGenerating] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   
+  // Diff state
+  const [csvDiff, setCsvDiff] = useState<Map<string, RowDiff>>(new Map())
+  const [showDiff, setShowDiff] = useState(false)
+  
   // File input ref
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Existing hooks
-  const { currentExperiment, editorText, updateExperimentCsvWithSave, highlightRows } = useExperimentStore()
+  // Existing hooks - Subscribe to store state including csvData for reactivity
+  const { 
+    currentExperiment, 
+    editorText, 
+    csvData: storeCsvData,
+    csvUpdateTimestamp,
+    isAgentUpdating,
+    updateExperimentCsvWithSave, 
+    updateCsvFromDatacleanResponse,
+    highlightRows,
+    previousCsv,
+    hasDiff,
+    acceptCsvChanges,
+    rejectCsvChanges
+  } = useExperimentStore()
   const { toast } = useToast()
 
+  // Use store data if available (from agent updates), otherwise fall back to prop
+  const effectiveCsvData = storeCsvData || csvData
+  
+  // Force immediate re-render when store data changes (from agent updates)
+  useEffect(() => {
+    if (storeCsvData) {
+      console.log("🚀 Store CSV data updated - forcing immediate DataTableViewer refresh")
+      console.log("🔍 Store CSV preview:", storeCsvData.substring(0, 100))
+      console.log("🔍 CSV update timestamp:", csvUpdateTimestamp)
+    }
+  }, [storeCsvData, csvUpdateTimestamp])
+  
   // Existing useEffect hooks
   useEffect(() => {
-    console.log("📊 DataTableViewer received csvData update:", csvData?.substring(0, 100))
+    console.log("📊 DataTableViewer csvData sources:", {
+      propCsvData: csvData?.substring(0, 50),
+      storeCsvData: storeCsvData?.substring(0, 50),
+      effectiveCsvData: effectiveCsvData?.substring(0, 50),
+      usingStoreData: !!storeCsvData
+    })
     
-    if (csvData) {
+    if (effectiveCsvData) {
       try {
-        // Ensure csvData is a string before parsing
-        if (typeof csvData !== 'string') {
-          console.error("csvData is not a string:", typeof csvData, csvData)
+        // Ensure effectiveCsvData is a string before parsing
+        if (typeof effectiveCsvData !== 'string') {
+          console.error("effectiveCsvData is not a string:", typeof effectiveCsvData, effectiveCsvData)
           setTableData([])
           setHeaders([])
           setFilteredData([])
           return
         }
         
-        const parsedData = parseCSVData(csvData)
-        const csvHeaders = getCSVHeaders(csvData)
+        const parsedData = parseCSVData(effectiveCsvData)
+        const csvHeaders = getCSVHeaders(effectiveCsvData)
+        
+        console.log("🔍 DEBUG: Parsed CSV data")
+        console.log("🔍 Row count:", parsedData.length)
+        console.log("🔍 Headers:", csvHeaders)
+        console.log("🔍 Sample row IDs:", parsedData.slice(0, 5).map(row => row.id))
+        console.log("🔍 Sample rows:", parsedData.slice(0, 2))
+        
         setTableData(parsedData)
         setHeaders(csvHeaders)
         setFilteredData(parsedData)
@@ -65,7 +108,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
       setHeaders([])
       setFilteredData([])
     }
-  }, [csvData])
+  }, [effectiveCsvData])
 
   useEffect(() => {
     if (searchTerm) {
@@ -79,6 +122,46 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
       setFilteredData(tableData)
     }
   }, [searchTerm, tableData])
+
+  // Calculate diff when there are changes to show
+  useEffect(() => {
+    if (hasDiff && effectiveCsvData && previousCsv) {
+      try {
+        console.log("🔍 DEBUG: Calculating CSV diff...")
+        console.log("🔍 Current CSV preview:", effectiveCsvData.substring(0, 200))
+        console.log("🔍 Previous CSV preview:", previousCsv.substring(0, 200))
+        
+        const diffResult = calculateCsvDiff(effectiveCsvData, previousCsv)
+        console.log("🔍 DEBUG: Diff calculation complete")
+        console.log("🔍 Diff map keys:", Array.from(diffResult.diffs.keys()))
+        console.log("🔍 Diff map entries:", Array.from(diffResult.diffs.entries()).map(([k, v]) => `${k}: ${v.changeType}`))
+        
+        // Cross-reference with table data to ensure ID consistency
+        if (tableData.length > 0) {
+          console.log("🔍 DEBUG: Table data row IDs:", tableData.slice(0, 10).map(r => r.id))
+          const missingInDiff = tableData.filter(row => !diffResult.diffs.has(row.id))
+          const extraInDiff = Array.from(diffResult.diffs.keys()).filter(id => !tableData.some(row => row.id === id))
+          
+          if (missingInDiff.length > 0) {
+            console.warn("🔍 WARNING: Table rows missing from diff:", missingInDiff.map(r => r.id))
+          }
+          if (extraInDiff.length > 0) {
+            console.log("🔍 INFO: Extra diff entries (removed rows):", extraInDiff)
+          }
+        }
+        
+        setCsvDiff(diffResult.diffs)
+        setShowDiff(true)
+      } catch (error) {
+        console.error("Error calculating CSV diff:", error)
+        setCsvDiff(new Map())
+        setShowDiff(false)
+      }
+    } else {
+      setCsvDiff(new Map())
+      setShowDiff(false)
+    }
+  }, [hasDiff, effectiveCsvData, previousCsv, tableData])
 
   // Debounce ref for CSV sync
   const csvSyncTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -106,6 +189,112 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
     // Immediately save to database
     const csvString = convertTableToCSV(tableData, headers)
     updateExperimentCsvWithSave(csvString)
+  }
+
+  // Utility functions for diff visualization
+  const getRowChangeType = (row: Record<string, string>): ChangeType => {
+    // Defensive check: ensure row has an ID
+    if (!row?.id) {
+      console.warn("🔍 WARNING: Row missing ID in getRowChangeType:", row)
+      return 'unchanged'
+    }
+    
+    // Use the actual row ID directly - no transformation needed!
+    const rowId = row.id
+    
+    console.log("🔍 DEBUG getRowChangeType:", {
+      rowId,
+      diffMapHasKey: csvDiff.has(rowId),
+      changeType: csvDiff.get(rowId)?.changeType,
+      allDiffKeys: Array.from(csvDiff.keys()).slice(0, 10) // Show first 10 keys
+    })
+    
+    // Defensive check: return unchanged if no diff data found
+    const diff = csvDiff.get(rowId)
+    return diff?.changeType || 'unchanged'
+  }
+
+  const getRowClassName = (row: Record<string, string>): string => {
+    if (!showDiff) return ''
+    
+    const changeType = getRowChangeType(row)
+    switch (changeType) {
+      case 'added':
+        return 'bg-green-50/30 dark:bg-green-900/20 border-l-2 border-green-400/40 dark:border-green-600/50'
+      case 'modified':
+        return 'bg-yellow-50/30 dark:bg-yellow-900/15 border-l-2 border-yellow-400/40 dark:border-yellow-600/40'
+      case 'removed':
+        return 'bg-red-100/50 border-l-2 border-red-300'
+      default:
+        return ''
+    }
+  }
+
+  const getCellClassName = (row: Record<string, string>, fieldName: string): string => {
+    if (!showDiff) return ''
+    
+    // Defensive check: ensure row has an ID and fieldName is provided
+    if (!row?.id || !fieldName) {
+      console.warn("🔍 WARNING: Missing row ID or fieldName in getCellClassName:", { rowId: row?.id, fieldName })
+      return ''
+    }
+    
+    // Use the actual row ID directly - no transformation needed!
+    const rowId = row.id
+    const diff = csvDiff.get(rowId)
+    
+    console.log("🔍 DEBUG getCellClassName:", {
+      rowId,
+      fieldName,
+      diffMapHasKey: csvDiff.has(rowId),
+      changeType: diff?.changeType,
+      changedFields: diff?.changedFields,
+      isFieldChanged: diff?.changedFields?.includes(fieldName)
+    })
+    
+    // Defensive check: ensure diff exists and has modified status with changed fields
+    if (diff?.changeType === 'modified' && diff.changedFields?.includes(fieldName)) {
+      return 'bg-yellow-50/40 dark:bg-yellow-900/20'
+    }
+    
+    return ''
+  }
+
+  // Calculate diff statistics
+  const getDiffStats = () => {
+    const stats = { added: 0, modified: 0, removed: 0, unchanged: 0 }
+    
+    csvDiff.forEach((diff) => {
+      stats[diff.changeType]++
+    })
+    
+    return stats
+  }
+
+  // Change summary component
+  const ChangeSummary = () => {
+    if (!showDiff) return null
+    
+    const stats = getDiffStats()
+    const totalChanges = stats.added + stats.modified + stats.removed
+    
+    if (totalChanges === 0) return null
+    
+    return (
+      <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded border border-blue-200 dark:border-blue-800">
+        <AlertCircle className="h-3 w-3 text-blue-500" />
+        <span>AI Changes:</span>
+        {stats.added > 0 && (
+          <span className="text-green-600 dark:text-green-400">+{stats.added} added</span>
+        )}
+        {stats.modified > 0 && (
+          <span className="text-yellow-600 dark:text-yellow-400">~{stats.modified} modified</span>
+        )}
+        {stats.removed > 0 && (
+          <span className="text-red-600 dark:text-red-400">-{stats.removed} removed</span>
+        )}
+      </div>
+    )
   }
 
   // Create a cell component to handle local state
@@ -198,7 +387,27 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
       if (response.success) {
         setHeaders(response.headers)
         setTableData([]) // Start with empty table
-        updateExperimentCsvWithSave(response.csv_data)
+        
+        // Use agent versioning system for CSV updates from generateHeadersFromPlan
+        try {
+          // Convert GenerateHeadersResponse to DatacleanResponse format
+          const datacleanResponse = {
+            response_type: "data_preview" as const,
+            message: "Headers generated successfully",
+            data: {
+              csv_data: response.csv_data,
+              headers: response.headers
+            }
+          }
+          await updateCsvFromDatacleanResponse(datacleanResponse)
+          console.log("✅ Headers generated with agent versioning")
+        } catch (csvError) {
+          console.warn("⚠️ Failed to use agent versioning, falling back to direct update:", csvError)
+          // Fallback to direct update if versioning fails
+          if (response.csv_data) {
+            updateExperimentCsvWithSave(response.csv_data)
+          }
+        }
         
         toast({
           title: "Headers generated",
@@ -270,42 +479,38 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
     try {
       const response = await uploadFile(file, currentExperiment?.id || "demo-experiment", "csv")
       
-      if (response.success && response.cleaned_data) {
-        let csvContent: string
+      if (response.success) {
+        console.log("📤 Processing upload response with agent versioning")
         
-        // Handle case where cleaned_data might be an array of objects instead of CSV string
-        if (typeof response.cleaned_data === 'string') {
-          csvContent = response.cleaned_data
-        } else if (Array.isArray(response.cleaned_data)) {
-          // Convert array of objects to CSV string
-          const data = response.cleaned_data as Array<Record<string, any>>
-          if (data.length > 0) {
-            const headers = Object.keys(data[0])
-            const rows = data.map(row => 
-              headers.map(header => {
-                const value = row[header]
-                // Handle values that contain commas or quotes
-                if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
-                  return `"${value.replace(/"/g, '""')}"`
-                }
-                return value
-              }).join(',')
-            )
-            csvContent = [headers.join(','), ...rows].join('\n')
-          } else {
-            throw new Error("No data returned from file processing")
+        // Use agent versioning system for file uploads
+        try {
+          // Convert ProcessFileCompleteResponse to DatacleanResponse format
+          const datacleanResponse = {
+            response_type: "data_preview" as const,
+            message: "File uploaded successfully",
+            data: {
+              cleaned_data: response.cleaned_data,
+              artifact_id: response.artifact_id
+            }
           }
-        } else {
-          throw new Error("Unexpected data format returned from server")
+          await updateCsvFromDatacleanResponse(datacleanResponse)
+          console.log("✅ File uploaded with agent versioning")
+        } catch (csvError) {
+          console.warn("⚠️ Failed to use agent versioning for upload, falling back to manual processing:", csvError)
+          
+          // Fallback to manual processing if versioning fails
+          if (response.cleaned_data) {
+            const csvContent = extractCsvFromDatacleanResponse(response, 'file-upload')
+            if (csvContent) {
+              await updateExperimentCsvWithSave(csvContent)
+              console.log("✅ File uploaded with fallback processing")
+            } else {
+              throw new Error("No valid CSV data found in upload response")
+            }
+          } else {
+            throw new Error("No cleaned_data in upload response")
+          }
         }
-        
-        console.log("📤 Uploading CSV to experiment store:", csvContent.substring(0, 100) + "...")
-        
-        // Update the experiment with the new CSV data
-        // This will trigger the useEffect to update the local state
-        await updateExperimentCsvWithSave(csvContent)
-        
-        console.log("✅ CSV uploaded to experiment store")
         
         toast({
           title: "File uploaded successfully",
@@ -348,19 +553,24 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
   }
 
   return (
-    <Card className="h-full flex flex-col dark:bg-gray-900 dark:border-gray-800 data-table-viewer w-full">
-      <CardHeader className="flex-shrink-0 pb-2">
+    <Card className="h-full flex flex-col shadow-lg border-0 bg-card/95 backdrop-blur-sm data-table-viewer w-full">
+      <CardHeader className="flex-shrink-0 pb-3 px-4 pt-4 border-b border-border/50">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2 dark:text-white">
-            <Upload className="h-4 w-4" />
-            Data Table
-            {tableData.length > 0 && (
-              <span className="text-xs text-muted-foreground dark:text-gray-400">
-                ({filteredData.length} of {tableData.length} rows)
-              </span>
-            )}
-            
-          </CardTitle>
+          <div className="flex flex-col gap-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground">
+              <div className="p-1.5 rounded-lg bg-green-50/40 dark:bg-green-900/25">
+                <Upload className="h-4 w-4 text-green-600 dark:text-green-400" />
+              </div>
+              Data Table
+              {isAgentUpdating && (
+                <div className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                  Agent updating...
+                </div>
+              )}
+              <ChangeSummary />
+            </CardTitle>
+          </div>
           
           <div className="flex items-center gap-2">
             <div className="relative">
@@ -422,21 +632,75 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
             >
               <Download className="h-3 w-3" />
             </Button>
+
+            {/* Accept/Reject Controls */}
+            {showDiff && (
+              <>
+                <div className="w-px h-4 bg-muted" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={async () => {
+                    try {
+                      await acceptCsvChanges()
+                      toast({
+                        title: "Changes accepted",
+                        description: "AI modifications have been accepted",
+                      })
+                    } catch {
+                      toast({
+                        title: "Error",
+                        description: "Failed to accept changes",
+                        variant: "destructive",
+                      })
+                    }
+                  }}
+                  className="text-green-600 hover:bg-green-50/40 dark:hover:bg-green-900/25"
+                  title="Accept all AI changes"
+                >
+                  <Check className="h-4 w-4" />
+                </Button>
+                
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={async () => {
+                    try {
+                      await rejectCsvChanges()
+                      toast({
+                        title: "Changes rejected",
+                        description: "AI modifications have been reverted",
+                      })
+                    } catch {
+                      toast({
+                        title: "Error",
+                        description: "Failed to reject changes",
+                        variant: "destructive",
+                      })
+                    }
+                  }}
+                  className="text-red-600 hover:bg-red-100 dark:hover:bg-red-900/30"
+                  title="Reject all AI changes"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </CardHeader>
 
-      <CardContent className="flex-1 flex flex-col min-h-0 p-0">
-        <div className="flex-1 min-h-0 border-t dark:border-gray-700 overflow-auto max-w-full">
+      <CardContent className="flex-1 flex flex-col min-h-0 p-0 bg-gradient-to-b from-card to-muted/20">
+        <div className="flex-1 min-h-0 border-t border-border/50 overflow-auto max-w-full backdrop-blur-sm">
           {headers.length > 0 ? (
             <div className="w-full overflow-x-auto">
               <Table className="min-w-full">
-              <TableHeader className="sticky top-0 bg-background dark:bg-gray-900">
-                <TableRow className="border-b dark:border-gray-700">
+              <TableHeader className="sticky top-0 bg-background/95 backdrop-blur-sm">
+                <TableRow className="border-b border-border/50">
                   {headers.map((header) => (
                     <TableHead 
                       key={header} 
-                      className="text-xs font-semibold text-gray-900 dark:text-gray-100 px-3 py-2"
+                      className="text-xs font-semibold text-foreground px-3 py-3"
                     >
                       {header.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
                     </TableHead>
@@ -444,32 +708,42 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredData.map((row) => (
-                  <TableRow 
-                    key={row.id} 
-                    className={cn(
-                      "border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800",
-                      highlightRows.has(row.id) && "bg-green-50 dark:bg-green-900/40"
-                    )}
-                  >
-                    {headers.map((header) => (
-                      <TableCell 
-                        key={`${row.id}-${header}`} 
-                        className="text-xs px-3 py-2 dark:text-gray-300"
-                      >
-                        <EditableCell 
-                          rowId={row.id} 
-                          header={header} 
-                          initialValue={row[header] || ''} 
-                        />
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
+                {filteredData.map((row) => {
+                  const rowChangeClass = getRowClassName(row)
+                  return (
+                    <TableRow 
+                      key={row.id} 
+                      className={cn(
+                        "border-b border-border/30 hover:bg-muted/50 transition-colors",
+                        highlightRows.has(row.id) && "bg-green-50/40 dark:bg-green-900/25",
+                        rowChangeClass
+                      )}
+                    >
+                      {headers.map((header) => {
+                        const cellChangeClass = getCellClassName(row, header)
+                        return (
+                          <TableCell 
+                            key={`${row.id}-${header}`} 
+                            className={cn(
+                              "text-xs px-3 py-2 text-foreground/90",
+                              cellChangeClass
+                            )}
+                          >
+                            <EditableCell 
+                              rowId={row.id} 
+                              header={header} 
+                              initialValue={row[header] || ''} 
+                            />
+                          </TableCell>
+                        )
+                      })}
+                    </TableRow>
+                  )
+                })}
                 
                 {/* Add Row Button */}
                 {headers.length > 0 && (
-                  <TableRow className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">
+                  <TableRow className="border-b border-border/30 hover:bg-muted/30 transition-colors">
                     <TableCell 
                       colSpan={headers.length} 
                       className="text-center py-3"
@@ -478,7 +752,7 @@ export function DataTableViewer({ csvData }: DataTableViewerProps) {
                         variant="ghost"
                         size="sm"
                         onClick={handleAddRow}
-                        className="h-6 px-3 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                        className="h-6 px-3 text-xs text-muted-foreground hover:text-foreground transition-colors"
                       >
                         <Plus className="h-3 w-3 mr-1" />
                         Add Row

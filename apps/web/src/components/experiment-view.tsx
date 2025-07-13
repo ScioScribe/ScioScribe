@@ -27,6 +27,7 @@ export function ExperimentView() {
     csvData,
     visualizationHtml,
     loadExperiments,
+    createExperiment,
     selectExperiment,
     updateEditorTextWithSave,
     updateVisualizationHtmlWithSave,
@@ -38,7 +39,17 @@ export function ExperimentView() {
   // Load experiments on component mount
   useEffect(() => {
     loadExperiments()
-  }, [])
+  }, [loadExperiments])
+
+  // Handle experiment creation from dropdown
+  const handleExperimentCreated = async () => {
+    try {
+      const newExperiment = await createExperiment()
+      selectExperiment(newExperiment)
+    } catch (error) {
+      console.error("Failed to create experiment:", error)
+    }
+  }
 
   // Show loading state
   if (isLoading) {
@@ -65,27 +76,36 @@ export function ExperimentView() {
 
   // Show normal app view when experiments exist
   return (
-    <div className="h-full bg-background dark overflow-hidden flex flex-col">
+    <div className="h-screen bg-background dark overflow-hidden flex flex-col">
       <Title 
         experiments={experiments}
         selectedExperiment={currentExperiment}
         onExperimentSelect={selectExperiment}
+        onExperimentCreated={handleExperimentCreated}
         onExperimentDelete={removeExperiment}
         experimentTitle={experimentTitle}
         onTitleChange={updateExperimentTitleWithSave}
       />
-      <div className="flex-1 grid gap-4 px-4 pb-4" style={{ gridTemplateColumns: "1.7fr 2fr 1fr" }}>
-        {/* Left Column */}
-        <div className="h-[95vh]">
-          <TextEditor value={editorText} onChange={updateEditorTextWithSave} />
+      
+      {/* Enhanced main layout with better spacing and flexible ratios */}
+      <div className="flex-1 grid gap-6 px-8 pb-8 pt-4 min-h-0 overflow-visible" style={{ 
+        gridTemplateColumns: "1.6fr 2.2fr 1.2fr",
+        gridTemplateRows: "1fr",
+        minHeight: "0"
+      }}>
+        {/* Left Column - Plan Editor */}
+        <div className="flex flex-col min-h-0 rounded-xl bg-gradient-to-b from-blue-50/80 to-blue-100/60 dark:from-blue-950/40 dark:to-blue-900/30 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden border border-blue-200/50 dark:border-blue-800/50">
+          <div className="flex-1 min-h-0">
+            <TextEditor value={editorText} onChange={updateEditorTextWithSave} />
+          </div>
         </div>
 
-        {/* Middle Section - Upper and Lower Boxes */}
-        <div className="flex flex-col gap-4 h-full">
-          <div className="h-[47vh] min-h-0">
+        {/* Middle Column - Data Table and Visualization */}
+        <div className="flex flex-col gap-8 min-h-0 overflow-visible py-2">
+          <div className="flex-1 min-h-0 rounded-xl bg-gradient-to-br from-emerald-50/80 to-emerald-100/60 dark:from-emerald-950/40 dark:to-emerald-900/30 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden border border-emerald-200/50 dark:border-emerald-800/50">
             <DataTableViewer csvData={csvData} />
           </div>
-          <div className="h-[47vh] min-h-0">
+          <div className="flex-1 min-h-0 rounded-xl bg-gradient-to-br from-purple-50/80 to-purple-100/60 dark:from-purple-950/40 dark:to-purple-900/30 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden border border-purple-200/50 dark:border-purple-800/50">
             <GraphViewer 
               htmlContent={visualizationHtml}
               onRefresh={refreshVisualization}
@@ -93,15 +113,17 @@ export function ExperimentView() {
           </div>
         </div>
 
-        {/* AI Chat */}
-        <div className="h-[95vh]">
-          <AiChat 
-            plan={editorText}
-            csv={csvData}
-            editorText={editorText} 
-            onPlanChange={updateEditorTextWithSave}
-            onVisualizationGenerated={updateVisualizationHtmlWithSave}
-          />
+        {/* Right Column - AI Chat */}
+        <div className="flex flex-col min-h-0 rounded-xl bg-gradient-to-b from-indigo-50/80 to-indigo-100/60 dark:from-indigo-950/40 dark:to-indigo-900/30 p-1 hover:shadow-lg transition-all duration-300 hover:scale-[1.01] overflow-hidden border border-indigo-200/50 dark:border-indigo-800/50">
+          <div className="flex-1 min-h-0">
+            <AiChat 
+              plan={editorText}
+              csv={csvData}
+              editorText={editorText} 
+              onPlanChange={updateEditorTextWithSave}
+              onVisualizationGenerated={updateVisualizationHtmlWithSave}
+            />
+          </div>
         </div>
       </div>
     </div>

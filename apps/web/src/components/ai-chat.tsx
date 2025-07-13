@@ -13,7 +13,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import { Card } from "@/components/ui/card"
 import { useExperimentStore } from "@/stores"
 import { useChatSessions } from "@/hooks/use-chat-sessions"
-import { handlePlanningWebSocketMessage } from "@/handlers/planning-message-handler"
+import { handlePlanningWebSocketMessage, onTypewriterComplete } from "@/handlers/planning-message-handler"
 import { handlePlanningMessage } from "@/handlers/planning-message-handler"
 import { handleExecuteMessage, createDatacleanWelcomeMessage } from "@/handlers/execute-message-handler"
 import { handleAnalysisMessage } from "@/handlers/analysis-message-handler"
@@ -21,13 +21,11 @@ import {
   createPlanningSession, 
   connectPlanningSession, 
   sendPlanningMessage, 
-  createPlanningHandlers,
-  retryPlanningConnection
+  createPlanningHandlers
 } from "@/api/planning"
 import { websocketManager } from "@/utils/streaming-connection-manager"
 import { ChatMessages } from "@/components/chat-messages"
 import { ChatInput } from "@/components/chat-input"
-import { ChatSuggestions } from "@/components/chat-suggestions"
 import type { Message, MessageHandlerContext, AiChatProps, WebSocketMessage } from "@/types/chat-types"
 
 export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChatProps) {
@@ -37,21 +35,19 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
-      content: "Welcome to ScioScribe! I can help you analyze your iris dataset and create visualizations. Try asking me to create charts or analyze the data patterns.",
+      content: "Welcome to ScioScribe! I'm your planning agent and I'll help you design comprehensive research experiments. Tell me about your research question or what you'd like to investigate.",
       sender: "ai",
       timestamp: new Date(),
-      mode: "analysis",
+      mode: "plan",
       response_type: "text"
     }
   ])
 
   const [inputValue, setInputValue] = useState("")
-  const [selectedMode, setSelectedMode] = useState("analysis")
+  const [selectedMode, setSelectedMode] = useState("plan")
   const [isLoading, setIsLoading] = useState(false)
-  const [showSuggestions, setShowSuggestions] = useState(false)
-  const [isConnected, setIsConnected] = useState(false)
-  const [connectionStatus, setConnectionStatus] = useState("disconnected")
-  const inputRef = useRef<HTMLInputElement>(null)
+
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   // Get experiment store actions
   const { updatePlanFromPlanningState, updatePlanFromPlanningMessage, updateCsvFromDatacleanResponse } = useExperimentStore()
@@ -79,10 +75,18 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     datacleanSessionRef.current = datacleanSession
   }, [datacleanSession])
 
+  // Create updateMessage function
+  const updateMessage = useCallback((messageId: string, updates: Partial<Message>) => {
+    setMessages(prev => prev.map(msg => 
+      msg.id === messageId ? { ...msg, ...updates } : msg
+    ))
+  }, [])
+
   // Create message handler context (memoized to prevent infinite re-renders)
    
   const messageHandlerContext: MessageHandlerContext = useMemo(() => ({
     setMessages,
+    updateMessage,
     setIsLoading,
     getPlanningSession: () => planningSessionRef.current,
     setPlanningSession: updatePlanningSession,
@@ -96,6 +100,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     csv
   }), [
     // Remove session objects from dependencies to prevent constant re-creation
+    updateMessage,
     updatePlanningSession,
     updateDatacleanSession,
     updatePlanFromPlanningState,
@@ -118,6 +123,16 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     }
     
     handlePlanningWebSocketMessage(message, messageHandlerContext)
+
+    // 🆕 Hide loading indicator after we receive the first meaningful response
+    if (
+      message.type === "planning_update" ||
+      message.type === "approval_request" ||
+      message.type === "error" ||
+      message.type === "session_complete"
+    ) {
+      setIsLoading(false)
+    }
   }, [messageHandlerContext])
 
   // WebSocket handlers
@@ -126,12 +141,9 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     handlePlanningWebSocketMessageWrapper,
     (error) => {
       console.error("❌ Planning WebSocket error:", error)
-      setIsConnected(false)
       
       // Handle different error types
       if (error.type === "max_reconnect_attempts") {
-        setConnectionStatus("failed")
-        
         const maxAttemptsMessage: Message = {
           id: (Date.now() + 1).toString(),
           content: `❌ **Connection Lost**\n\nUnable to reconnect. Please refresh the page to continue.`,
@@ -142,8 +154,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         }
         setMessages((prev) => [...prev, maxAttemptsMessage])
       } else {
-        setConnectionStatus("error")
-        
         const errorMessage: Message = {
           id: (Date.now() + 1).toString(),
           content: `⚠️ Connection interrupted. Attempting to reconnect...`,
@@ -157,23 +167,10 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     },
     () => {
       console.log("✅ Planning WebSocket connection opened")
-      setIsConnected(true)
-      setConnectionStatus("connected")
-      
-      const connectionMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: `✅ Connected. Ready to continue planning.`,
-        sender: "ai",
-        timestamp: new Date(),
-        mode: "plan",
-        response_type: "text"
-      }
-      setMessages((prev) => [...prev, connectionMessage])
+      // Connection message removed - no need to show status in chat
     },
     (event) => {
       console.log("🔒 Planning WebSocket connection closed:", event)
-      setIsConnected(false)
-      setConnectionStatus(event.wasClean ? "disconnected" : "reconnecting")
       
       if (!event.wasClean) {
         const disconnectMessage: Message = {
@@ -228,23 +225,12 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
           last_activity: new Date()
         })
         
-        // Add initial response message
-        const initialMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: `🎯 **Planning Your Experiment**\n\nAnalyzing: "${message}"\n\nI'll guide you through creating a comprehensive research plan.`,
-          sender: "ai",
-          timestamp: new Date(),
-          mode: "plan",
-          response_type: "text"
-        }
-        setMessages((prev) => [...prev, initialMessage])
+        // Initial response message removed - let the agent respond directly
         
         // Connect WebSocket
-        setConnectionStatus("connecting")
         const connection = connectPlanningSession(sessionResponse.session_id, planningHandlers)
         
         if (!connection) {
-          setConnectionStatus("error")
           throw new Error("Failed to establish WebSocket connection")
         }
         
@@ -294,8 +280,10 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         response_type: "error"
       }
       setMessages((prev) => [...prev, errorMessage])
+      // Ensure the loading indicator is dismissed on error
+      setIsLoading(false)
     }
-  }, [updatePlanningSession, planningHandlers, setMessages, handlePlanningMessage, messageHandlerContext])
+  }, [updatePlanningSession, planningHandlers, setMessages, messageHandlerContext])
 
   const handleExecuteMessageWithSession = useCallback(async (message: string) => {
     try {
@@ -335,11 +323,11 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         }
         
         // Session initialization already sent the user's message, so process the response
-        const response = sessionResponse.response as any
-        if (response && response.response_message) {
+        const response = sessionResponse.response
+        if (response && response.message) {
           const responseMessage: Message = {
             id: (Date.now() + 2).toString(),
-            content: response.response_message,
+            content: response.message,
             sender: "ai",
             timestamp: new Date(),
             mode: "execute",
@@ -357,53 +345,9 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     } catch (error) {
       console.error("❌ Execute message error:", error)
     }
-  }, [datacleanSession.is_active, initializeDatacleanSession, updateDatacleanSession, messageHandlerContext, csv, setMessages, handleExecuteMessage])
+  }, [datacleanSession.is_active, initializeDatacleanSession, updateDatacleanSession, messageHandlerContext, csv, setMessages])
 
-  // Auto-initialize CSV conversation when CSV data is available
-  const autoInitializeCsvConversation = useCallback(async () => {
-    try {
-      console.log("🧹 Auto-initializing CSV conversation with available data")
-      
-      // Initialize dataclean session with CSV data
-      const sessionResponse = await initializeDatacleanSession("demo-user", csv)
-      
-      // Create CSV analysis message 
-      const csvAnalysisMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: `🧹 **CSV Data Detected**\n\nI've detected CSV data in your experiment and automatically initialized a data cleaning session.\n\n**Session ID:** ${sessionResponse.session_id}\n\n**Dataset Preview:**\n- Processing your CSV data...\n- Analyzing data quality...\n- Preparing suggestions...\n\nI'm now analyzing your dataset. Feel free to ask me to:\n• Clean and fix data issues\n• Remove duplicates or missing values\n• Transform data formats\n• Generate quality reports\n\nWhat would you like me to help you with?`,
-        sender: "ai",
-        timestamp: new Date(),
-        mode: "execute",
-        response_type: "text"
-      }
-      
-      setMessages((prev) => [...prev, csvAnalysisMessage])
-      
-      // Process CSV data through the conversation system
-      if (csv && csv.trim()) {
-        console.log("📊 Sending CSV data for analysis")
-        
-        // Simulate sending CSV for analysis
-        await handleExecuteMessage(`I have CSV data ready for analysis. Please analyze this dataset: ${csv.substring(0, 200)}...`, messageHandlerContext)
-      }
-      
-      // Update session activity
-      updateDatacleanSession({ last_activity: new Date() })
-      
-    } catch (error) {
-      console.error("❌ Auto CSV initialization error:", error)
-      
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: `❌ **Auto-Initialization Failed**\n\nFailed to automatically initialize CSV conversation.\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}\n\nYou can still manually send messages to start the conversation.`,
-        sender: "ai",
-        timestamp: new Date(),
-        mode: "execute",
-        response_type: "error"
-      }
-      setMessages((prev) => [...prev, errorMessage])
-    }
-  }, [csv, initializeDatacleanSession, updateDatacleanSession, messageHandlerContext, setMessages, handleExecuteMessage])
+
 
   // Mode switching handler
   const handleModeSwitch = useCallback(async (newMode: string) => {
@@ -427,7 +371,7 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       // (Disabled) Auto-initialization of CSV conversation on mode switch.
       // Dataclean session will be created lazily when the user sends the first message.
     }
-  }, [selectedMode, setMessages, csv, datacleanSession.is_active, autoInitializeCsvConversation])
+  }, [selectedMode, setMessages])
 
   // Send message handler
   const handleSendMessage = useCallback(async () => {
@@ -473,8 +417,13 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         response_type: "error"
       }
       setMessages((prev) => [...prev, errorMessage])
-    } finally {
+      // Ensure the loading indicator is dismissed on error
       setIsLoading(false)
+    } finally {
+      // Dismiss loading indicator for non-planning modes once processing completes
+      if (selectedMode !== "plan") {
+        setIsLoading(false)
+      }
     }
   }, [inputValue, selectedMode, setMessages, setInputValue, setIsLoading, handlePlanningMessageWithWebSocket, handleExecuteMessageWithSession, messageHandlerContext])
 
@@ -486,45 +435,12 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     }
   }, [handleSendMessage])
 
-  const handleSuggestionClick = useCallback((suggestion: string) => {
-    setInputValue(suggestion)
-    setShowSuggestions(false)
-    inputRef.current?.focus()
-  }, [setInputValue, setShowSuggestions])
+  // Handle typewriter completion for approval message timing
+  const handleTypewriterComplete = useCallback((messageId: string) => {
+    onTypewriterComplete(messageId, setMessages)
+  }, [setMessages])
 
-  // Retry connection handler
-  const handleRetryConnection = useCallback(() => {
-    const currentSession = messageHandlerContext.getPlanningSession()
-    if (currentSession.session_id) {
-      console.log("🔄 Manual retry requested for session:", currentSession.session_id)
-      setConnectionStatus("connecting")
-      const success = retryPlanningConnection(currentSession.session_id)
-      
-      if (success) {
-        const retryMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: `🔄 Reconnecting...`,
-          sender: "ai",
-          timestamp: new Date(),
-          mode: "plan",
-          response_type: "text"
-        }
-        setMessages((prev) => [...prev, retryMessage])
-      } else {
-        setConnectionStatus("failed")
-        
-        const failedRetryMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: `❌ **Retry Failed**\n\nCould not initiate connection retry.\n\nPlease refresh the page and start a new session.`,
-          sender: "ai",
-          timestamp: new Date(),
-          mode: "plan",
-          response_type: "error"
-        }
-        setMessages((prev) => [...prev, failedRetryMessage])
-      }
-    }
-  }, [messageHandlerContext, setMessages])
+
 
   // We no longer forcibly close the planning WebSocket when the component
   // unmounts. The backend is responsible for terminating the session when
@@ -545,7 +461,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
       console.log("📊 Planning session:", planningSession)
       console.log("🧹 Dataclean session:", datacleanSession)
       console.log("📋 Total messages:", messages.length)
-      console.log("🔌 WebSocket connected:", isConnected)
       console.log("📋 Last 5 messages:", messages.slice(-5).map(m => ({
         id: m.id,
         sender: m.sender,
@@ -605,25 +520,14 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
   }, []) // Remove all dependencies to prevent recreation
 
   return (
-    <Card className="h-full flex flex-col bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-800">
+    <Card className="h-full flex flex-col shadow-lg border-0 bg-card/95 backdrop-blur-sm">
       {/* Chat Messages */}
       <ChatMessages
         messages={messages}
         isLoading={isLoading}
         selectedMode={selectedMode}
-        isConnected={isConnected}
-        connectionStatus={connectionStatus}
-        lastActivity={planningSession.last_activity}
-        onRetryConnection={handleRetryConnection}
+        onTypewriterComplete={handleTypewriterComplete}
       />
-
-      {/* Suggestions Panel */}
-      {showSuggestions && (
-        <ChatSuggestions
-          selectedMode={selectedMode}
-          onSuggestionClick={handleSuggestionClick}
-        />
-      )}
 
       {/* Input Area */}
       <ChatInput
@@ -632,7 +536,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         selectedMode={selectedMode}
         onModeChange={handleModeSwitch}
         onSendMessage={handleSendMessage}
-        onToggleSuggestions={useCallback(() => setShowSuggestions(prev => !prev), [setShowSuggestions])}
         onKeyPress={handleKeyPress}
         isLoading={isLoading}
         planningSession={planningSession}
