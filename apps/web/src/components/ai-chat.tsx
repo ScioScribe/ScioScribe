@@ -26,7 +26,6 @@ import {
 import { websocketManager } from "@/utils/streaming-connection-manager"
 import { ChatMessages } from "@/components/chat-messages"
 import { ChatInput } from "@/components/chat-input"
-import { ChatSuggestions } from "@/components/chat-suggestions"
 import type { Message, MessageHandlerContext, AiChatProps, WebSocketMessage } from "@/types/chat-types"
 
 export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChatProps) {
@@ -47,7 +46,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
   const [inputValue, setInputValue] = useState("")
   const [selectedMode, setSelectedMode] = useState("plan")
   const [isLoading, setIsLoading] = useState(false)
-  const [showSuggestions, setShowSuggestions] = useState(false)
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -437,12 +435,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
     }
   }, [handleSendMessage])
 
-  const handleSuggestionClick = useCallback((suggestion: string) => {
-    setInputValue(suggestion)
-    setShowSuggestions(false)
-    inputRef.current?.focus()
-  }, [setInputValue, setShowSuggestions])
-
   // Handle typewriter completion for approval message timing
   const handleTypewriterComplete = useCallback((messageId: string) => {
     onTypewriterComplete(messageId, setMessages)
@@ -537,14 +529,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         onTypewriterComplete={handleTypewriterComplete}
       />
 
-      {/* Suggestions Panel */}
-      {showSuggestions && (
-        <ChatSuggestions
-          selectedMode={selectedMode}
-          onSuggestionClick={handleSuggestionClick}
-        />
-      )}
-
       {/* Input Area */}
       <ChatInput
         inputValue={inputValue}
@@ -552,7 +536,6 @@ export function AiChat({ plan = "", csv = "", onVisualizationGenerated }: AiChat
         selectedMode={selectedMode}
         onModeChange={handleModeSwitch}
         onSendMessage={handleSendMessage}
-        onToggleSuggestions={useCallback(() => setShowSuggestions(prev => !prev), [setShowSuggestions])}
         onKeyPress={handleKeyPress}
         isLoading={isLoading}
         planningSession={planningSession}

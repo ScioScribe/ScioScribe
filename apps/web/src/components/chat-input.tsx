@@ -19,7 +19,6 @@ interface ChatInputProps {
   selectedMode: string
   onModeChange: (mode: string) => void
   onSendMessage: () => void
-  onToggleSuggestions: () => void
   onKeyPress: (e: React.KeyboardEvent) => void
   isLoading: boolean
   planningSession: SessionState
@@ -33,7 +32,6 @@ export function ChatInput({
   selectedMode,
   onModeChange,
   onSendMessage,
-  onToggleSuggestions,
   onKeyPress,
   isLoading,
   planningSession,
@@ -69,16 +67,6 @@ export function ChatInput({
             datacleanSession={datacleanSession}
           />
         </div>
-        {/* Suggestions toggle */}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onToggleSuggestions}
-          className="text-xs"
-          disabled={isLoading}
-        >
-          Suggestions
-        </Button>
       </div>
 
       {/* Input Field */}
